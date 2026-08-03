@@ -1,38 +1,56 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
 import { supabase } from "./supabaseClient";
+import { generateBusinessRegistrationDoc, generateHouseholdBusinessDoc, soThanhChuTien } from "./docGen";
+import NGANH_NGHE_CAP4 from "./nganhNgheData";
 import {
-  Package, Truck, ClipboardList, BarChart3, Bell, LogOut, CheckCircle2, XCircle,
-  Plus, Search, ChevronRight, Inbox, Warehouse, TrendingUp, TrendingDown, Wallet,
-  AlertTriangle, Clock, Loader2, Lock, User, X, Pencil, Trash2, Download, Users,
-  ShieldCheck, ArrowDownCircle, ArrowUpCircle, Boxes, Receipt, FileText,
+  Users, ClipboardList, BarChart3, Bell, LogOut, CheckCircle2, XCircle,
+  UserPlus, TrendingUp, Wallet, Building2, AlertTriangle, Clock, Camera,
+  ChevronRight, Inbox, ClipboardCheck, FileText, DollarSign, HeartHandshake,
+  Plus, Search, ArrowLeft, ShieldCheck, Receipt, Download, Loader2, Lock, User,
 } from "lucide-react";
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell,
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  PieChart, Pie, Cell, AreaChart, Area, Legend,
 } from "recharts";
 
 /* ============================================================================
-   QUẢN LÝ KHO NVL & THÀNH PHẨM — React + Supabase.
-   Danh mục gốc (NCC, SP/NVL/TP, Mã doanh thu, Mã xuất) → Nhập hàng → Xuất hàng
-   → Báo cáo nhập/xuất → Tồn kho (bình quân gia quyền).
+   QUẢN LÝ ĐƠN HÀNG NMT — bản triển khai thật (React + Supabase).
+   Dữ liệu (khách hàng, đơn hàng, chi phí, tài khoản) lưu trong Supabase Postgres.
+   Ảnh CCCD và file PDF giấy phép lưu trong Supabase Storage.
    ========================================================================= */
 
 // ---------------------------------------------------------------------------
-// HẰNG SỐ
+// HẰNG SỐ NGHIỆP VỤ
 // ---------------------------------------------------------------------------
-const ROLE_META = {
-  nhan_vien_kho: { label: "Nhân viên kho", color: "bg-teal-50 text-teal-700 border-teal-200" },
-  quan_ly: { label: "Quản lý", color: "bg-slate-800 text-white border-slate-800" },
+const PROCEDURE_TYPES = [
+  { key: "mo_hkd", label: "Mở HKD" },
+  { key: "mo_cty", label: "Mở Công ty" },
+  { key: "cham_dut_mst", label: "Chấm dứt MST KD" },
+];
+const procedureLabel = (k) => PROCEDURE_TYPES.find((p) => p.key === k)?.label || k;
+
+const ORDER_STATUS = {
+  cho_xu_ly: { label: "Chờ xử lý", color: "bg-slate-100 text-slate-600 border-slate-200" },
+  da_tiep_nhan: { label: "Đã tiếp nhận", color: "bg-sky-50 text-sky-700 border-sky-200" },
+  trinh_lanh_dao: { label: "Trình lãnh đạo", color: "bg-amber-50 text-amber-700 border-amber-200" },
+  duoc_chap_thuan: { label: "Được chấp thuận", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  gui_giay_phep: { label: "Đã gửi giấy phép", color: "bg-teal-50 text-teal-700 border-teal-200" },
+  hoan_thanh: { label: "Đã hoàn thành", color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+  da_thanh_toan: { label: "Đã thanh toán", color: "bg-emerald-100 text-emerald-800 border-emerald-300" },
+  chua_duoc_chap_thuan: { label: "Chưa được chấp thuận", color: "bg-rose-50 text-rose-700 border-rose-200" },
 };
-const PAYMENT_TYPE_META = {
-  tien_mat: { label: "Tiền mặt", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
-  cong_no: { label: "Công nợ", color: "bg-amber-50 text-amber-700 border-amber-200" },
-  noi_bo: { label: "Nội bộ", color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+const STATUS_FLOW = ["cho_xu_ly", "da_tiep_nhan", "trinh_lanh_dao", "duoc_chap_thuan", "gui_giay_phep"];
+const RESOLVED_STATUSES = ["duoc_chap_thuan", "gui_giay_phep", "hoan_thanh", "da_thanh_toan", "chua_duoc_chap_thuan"];
+
+const CARE_STEPS = {
+  mo_hkd: ["Mở tài khoản HKD", "Gửi sổ cho khách", "Hướng dẫn khách kê khai thuế", "Tư vấn kế toán thuế"],
+  mo_cty: ["Mở tài khoản HKD", "Mua chữ ký số", "Kê khai thuế ban đầu", "Tư vấn kế toán thuế"],
+  cham_dut_mst: ["Hoàn thành chấm dứt đăng ký kinh doanh"],
 };
-const CLASSIFICATION_META = {
-  NL: { label: "Nguyên vật liệu", color: "bg-teal-50 text-teal-700 border-teal-200" },
-  TP: { label: "Thành phẩm", color: "bg-purple-50 text-purple-700 border-purple-200" },
-};
-const SESSION_KEY = "kho_session_employee_id";
+
+const WARDS = ["Phường Thành Sen", "Phường Bắc Hà", "Phường Thạch Hà"];
+const VNID_BUCKET = "vnid-photos";
+const LICENSE_BUCKET = "license-pdfs";
 
 // ---------------------------------------------------------------------------
 // HÀM TIỆN ÍCH
@@ -41,188 +59,92 @@ function fmtMoney(n) {
   const v = Number(n) || 0;
   return v.toLocaleString("vi-VN") + " đ";
 }
-function fmtNumber(n) {
+function shortMoney(n) {
   const v = Number(n) || 0;
-  return v.toLocaleString("vi-VN", { maximumFractionDigits: 3 });
+  if (v >= 1_000_000_000) return (v / 1_000_000_000).toFixed(1).replace(/\.0$/, "") + " tỷ";
+  if (v >= 1_000_000) return (v / 1_000_000).toFixed(1).replace(/\.0$/, "") + " tr";
+  if (v >= 1_000) return (v / 1_000).toFixed(0) + " k";
+  return String(v);
 }
 function fmtDate(d) {
   if (!d) return "—";
   return new Date(d).toLocaleDateString("vi-VN");
 }
-function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
 }
-function daysAgoISO(n) {
-  const d = new Date();
-  d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+function isWeekend(d) {
+  const day = d.getDay();
+  return day === 0 || day === 6;
 }
-function stripDiacritics(str) {
-  return (str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
+function addBusinessDays(date, n) {
+  let d = startOfDay(date);
+  let added = 0;
+  while (added < n) {
+    d.setDate(d.getDate() + 1);
+    if (!isWeekend(d)) added++;
+  }
+  return d;
 }
+function businessDaysSince(date) {
+  let d = startOfDay(date);
+  const now = startOfDay(new Date());
+  let count = 0;
+  while (d < now) {
+    d.setDate(d.getDate() + 1);
+    if (d <= now && !isWeekend(d)) count++;
+  }
+  return count;
+}
+function monthKey(d) {
+  const dt = new Date(d);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+}
+const CHART_COLORS = ["#4338ca", "#d97706", "#0891b2", "#e11d48", "#65a30d", "#9333ea"];
+const CHART_TOOLTIP_STYLE = {
+  contentStyle: { borderRadius: 12, border: "1px solid #e2e8f0", boxShadow: "0 4px 16px rgba(15,23,42,.08)", fontSize: 12.5 },
+  labelStyle: { color: "#334155", fontWeight: 600, marginBottom: 4 },
+};
 
 // ---------------------------------------------------------------------------
-// TỰ ĐỘNG GỢI Ý MÃ MỚI — nhảy tiếp theo mã lớn nhất hiện có
+// MAPPER: chuyển đổi giữa cột snake_case của Supabase và object camelCase dùng
+// trong giao diện
 // ---------------------------------------------------------------------------
-function nextSupplierCode(suppliers) {
-  let max = 0;
-  suppliers.forEach((s) => {
-    const m = /^cc(\d+)$/i.exec((s.code || "").trim());
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  });
-  return "cc" + String(max + 1).padStart(3, "0");
-}
-function nextProductCode(products, classification) {
-  let max = classification === "TP" ? 50000 : 10000;
-  products
-    .filter((p) => p.classification === classification && /^\d+$/.test(p.code))
-    .forEach((p) => { max = Math.max(max, parseInt(p.code, 10)); });
-  return String(max + 1);
-}
-function nextSimpleCode(list, prefix) {
-  let max = 0;
-  list.forEach((x) => {
-    const m = new RegExp(`^${prefix}(\\d+)$`, "i").exec((x.code || "").trim());
-    if (m) max = Math.max(max, parseInt(m[1], 10));
-  });
-  return prefix + String(max + 1).padStart(2, "0");
-}
-
-// ---------------------------------------------------------------------------
-// MAPPER: snake_case (Supabase) <-> camelCase (giao diện)
-// ---------------------------------------------------------------------------
-function mapEmployee(e) {
+function customerFromRow(r) {
   return {
-    id: e.id, username: e.username, name: e.name, role: e.role,
-    mustChangePassword: !!e.must_change_password, passwordChangeDeadline: e.password_change_deadline || null,
+    id: r.id, name: r.name, cccd: r.cccd, phone: r.phone, address: r.address, ward: r.ward,
+    industries: Array.isArray(r.industries) ? r.industries : [], referrer: r.referrer, vnidPhoto: r.vnid_photo_url,
+    employeeId: r.employee_id, createdAt: r.created_at,
   };
 }
-function mapSupplier(s) {
-  return { id: s.id, code: s.code, name: s.name, paymentType: s.payment_type, createdAt: s.created_at };
-}
-function mapRevenueCode(r) {
-  return { id: r.id, code: r.code, name: r.name, createdAt: r.created_at };
-}
-function mapExportCode(r) {
-  return { id: r.id, code: r.code, name: r.name, createdAt: r.created_at };
-}
-function mapProduct(p) {
+function orderFromRow(r) {
   return {
-    id: p.id, code: p.code, name: p.name, unit: p.unit,
-    groupCode: p.group_code || "", groupName: p.group_name || "",
-    classification: p.classification, createdAt: p.created_at,
+    id: r.id, orderCode: r.order_code, customerId: r.customer_id, employeeId: r.employee_id,
+    procedureType: r.procedure_type, status: r.status, createdAt: r.created_at, receivedAt: r.received_at,
+    leaderAt: r.leader_at, approvedAt: r.approved_at, rejectedAt: r.rejected_at,
+    overdueReason: r.overdue_reason || "", licensePdfData: r.license_pdf_url, licensePdfName: r.license_pdf_name,
+    licenseSentAt: r.license_sent_at, confirmedAt: r.confirmed_at, revenue: r.revenue, cost: r.cost,
+    laborFee: r.labor_fee, completedAt: r.completed_at, careSteps: r.care_steps || {},
+    companyName: r.company_name, capital: r.capital, ownerDob: r.owner_dob, ownerGender: r.owner_gender,
+    ownerEmail: r.owner_email, ownerProvince: r.owner_province || "Hà Tĩnh",
+    hqAddress: r.hq_address, hqWard: r.hq_ward, hqProvince: r.hq_province || "Hà Tĩnh",
+    industries: Array.isArray(r.industries) ? r.industries : [],
   };
 }
-function mapStockOpening(o) {
-  return {
-    id: o.id, productId: o.product_id, asOfDate: o.as_of_date,
-    quantity: Number(o.quantity) || 0, unitPrice: Number(o.unit_price) || 0,
-    note: o.note || "", createdAt: o.created_at,
-  };
-}
-function mapImportRecord(r) {
-  return {
-    id: r.id, orderNumber: r.order_number || "", receiptCode: r.receipt_code,
-    supplierId: r.supplier_id, productId: r.product_id,
-    quantity: Number(r.quantity) || 0, unitPrice: Number(r.unit_price) || 0, totalAmount: Number(r.total_amount) || 0,
-    paymentType: r.payment_type, importDate: r.import_date, createdBy: r.created_by, createdAt: r.created_at,
-  };
-}
-function mapExportRecord(r) {
-  return {
-    id: r.id, orderNumber: r.order_number || "", receiptCode: r.receipt_code,
-    revenueCodeId: r.revenue_code_id, exportCodeId: r.export_code_id, productId: r.product_id,
-    lineType: r.line_type, quantity: Number(r.quantity) || 0, unitPrice: Number(r.unit_price) || 0,
-    totalAmount: Number(r.total_amount) || 0, exportDate: r.export_date, createdBy: r.created_by, createdAt: r.created_at,
-  };
+function expenseFromRow(r) {
+  return { id: r.id, date: r.date, description: r.description, amount: Number(r.amount), createdAt: r.created_at };
 }
 
-async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp] = await Promise.all([
-    supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
-    supabase.from("suppliers").select("*").order("code"),
-    supabase.from("revenue_codes").select("*").order("code"),
-    supabase.from("export_codes").select("*").order("code"),
-    supabase.from("products").select("*").order("code"),
-    supabase.from("stock_opening").select("*").order("as_of_date", { ascending: false }),
-    supabase.from("import_records").select("*").order("import_date", { ascending: false }).order("created_at", { ascending: false }),
-    supabase.from("export_records").select("*").order("export_date", { ascending: false }).order("created_at", { ascending: false }),
-  ]);
-  [emp, sup, rev, exc, prod, open, imp, exp].forEach((r) => { if (r.error) console.error(r.error); });
-  return {
-    employees: (emp.data || []).map(mapEmployee),
-    suppliers: (sup.data || []).map(mapSupplier),
-    revenueCodes: (rev.data || []).map(mapRevenueCode),
-    exportCodes: (exc.data || []).map(mapExportCode),
-    products: (prod.data || []).map(mapProduct),
-    stockOpenings: (open.data || []).map(mapStockOpening),
-    importRecords: (imp.data || []).map(mapImportRecord),
-    exportRecords: (exp.data || []).map(mapExportRecord),
-  };
-}
-
-// ---------------------------------------------------------------------------
-// TÍNH TỒN KHO & GIÁ BÌNH QUÂN GIA QUYỀN
-// ---------------------------------------------------------------------------
-function latestOpening(productId, stockOpenings) {
-  const list = stockOpenings.filter((o) => o.productId === productId).sort((a, b) => new Date(b.asOfDate) - new Date(a.asOfDate));
-  return list[0] || null;
-}
-
-// Giá bình quân gia quyền HIỆN TẠI của 1 sản phẩm: (giá trị tồn đầu + giá trị
-// nhập từ mốc tồn đầu tới nay) / (số lượng tồn đầu + số lượng nhập tương ứng).
-function computeAvgPrice(productId, { stockOpenings, importRecords }) {
-  const opening = latestOpening(productId, stockOpenings);
-  const baseQty = opening?.quantity || 0;
-  const baseValue = opening ? opening.quantity * opening.unitPrice : 0;
-  const baseDate = opening?.asOfDate || "1970-01-01";
-  const imports = importRecords.filter((r) => r.productId === productId && r.importDate > baseDate);
-  const importQty = imports.reduce((s, r) => s + r.quantity, 0);
-  const importValue = imports.reduce((s, r) => s + r.totalAmount, 0);
-  const totalQty = baseQty + importQty;
-  const totalValue = baseValue + importValue;
-  if (totalQty <= 0) return 0;
-  return totalValue / totalQty;
-}
-
-// Tồn kho (số lượng) của 1 sản phẩm tính đến hết 1 ngày cụ thể.
-function stockAsOf(productId, asOfDate, { stockOpenings, importRecords, exportRecords }) {
-  const opening = latestOpening(productId, stockOpenings);
-  const baseQty = opening?.quantity || 0;
-  const baseDate = opening?.asOfDate || "1970-01-01";
-  const imports = importRecords.filter((r) => r.productId === productId && r.importDate > baseDate && r.importDate <= asOfDate);
-  const exports = exportRecords.filter((r) => r.productId === productId && r.exportDate > baseDate && r.exportDate <= asOfDate);
-  return baseQty + imports.reduce((s, r) => s + r.quantity, 0) - exports.reduce((s, r) => s + r.quantity, 0);
-}
-
-// Báo cáo Nhập-Xuất-Tồn cho 1 sản phẩm trong khoảng [from, to] (Tác vụ 6).
-function nktForProduct(productId, from, to, data) {
-  const { stockOpenings, importRecords, exportRecords } = data;
-  const dayBeforeFrom = new Date(from);
-  dayBeforeFrom.setDate(dayBeforeFrom.getDate() - 1);
-  const openingQty = stockAsOf(productId, dayBeforeFrom.toISOString().slice(0, 10), data);
-  const avgPrice = computeAvgPrice(productId, data);
-  const importsInRange = importRecords.filter((r) => r.productId === productId && r.importDate >= from && r.importDate <= to);
-  const exportsInRange = exportRecords.filter((r) => r.productId === productId && r.exportDate >= from && r.exportDate <= to);
-  const importQty = importsInRange.reduce((s, r) => s + r.quantity, 0);
-  const importValue = importsInRange.reduce((s, r) => s + r.totalAmount, 0);
-  const exportQty = exportsInRange.reduce((s, r) => s + r.quantity, 0);
-  const exportValue = exportsInRange.reduce((s, r) => s + r.totalAmount, 0);
-  const closingQty = openingQty + importQty - exportQty;
-  return {
-    openingQty, openingValue: openingQty * avgPrice,
-    importQty, importValue,
-    exportQty, exportValue,
-    closingQty, closingValue: closingQty * avgPrice,
-    avgPrice,
-  };
-}
-
-// Sinh mã phiếu tự động — VD NK-20260803-0001 / XK-20260803-0001
-function genReceiptCode(prefix, existingCount) {
-  const d = new Date();
-  const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-  return `${prefix}-${ymd}-${String(existingCount + 1).padStart(4, "0")}`;
+// Tải file lên Supabase Storage, trả về { url, name }
+async function uploadFile(bucket, file) {
+  const ext = file.name.includes(".") ? file.name.split(".").pop() : "dat";
+  const path = `${crypto.randomUUID()}.${ext}`;
+  const { error } = await supabase.storage.from(bucket).upload(path, file);
+  if (error) throw error;
+  const { data } = supabase.storage.from(bucket).getPublicUrl(path);
+  return { url: data.publicUrl, name: file.name };
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +156,7 @@ function Card({ children, className = "" }) {
 function SectionTitle({ icon: Icon, title, subtitle }) {
   return (
     <div className="flex items-start gap-3 mb-4">
-      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-700 to-teal-900 text-white flex items-center justify-center shrink-0 shadow-sm shadow-teal-900/20">
+      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-700 to-indigo-900 text-white flex items-center justify-center shrink-0 shadow-sm shadow-indigo-900/20">
         <Icon size={19} />
       </div>
       <div>
@@ -254,13 +176,12 @@ function EmptyState({ icon: Icon, text }) {
     </div>
   );
 }
-function MetricCard({ label, value, icon: Icon, accent = "teal" }) {
+function MetricCard({ label, value, icon: Icon, accent = "indigo" }) {
   const a = {
-    teal: { text: "text-teal-700", bg: "bg-teal-50", bar: "bg-teal-600" },
+    indigo: { text: "text-indigo-700", bg: "bg-indigo-50", bar: "bg-indigo-600" },
     amber: { text: "text-amber-700", bg: "bg-amber-50", bar: "bg-amber-600" },
     emerald: { text: "text-emerald-700", bg: "bg-emerald-50", bar: "bg-emerald-600" },
     rose: { text: "text-rose-700", bg: "bg-rose-50", bar: "bg-rose-600" },
-    indigo: { text: "text-indigo-700", bg: "bg-indigo-50", bar: "bg-indigo-600" },
   }[accent];
   return (
     <div className="relative bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 flex items-center gap-3 overflow-hidden">
@@ -278,9 +199,13 @@ function MetricCard({ label, value, icon: Icon, accent = "teal" }) {
 function Badge({ children, className = "" }) {
   return <span className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border ${className}`}>{children}</span>;
 }
+function StatusBadge({ status }) {
+  const s = ORDER_STATUS[status] || ORDER_STATUS.cho_xu_ly;
+  return <Badge className={s.color}>{s.label}</Badge>;
+}
 function PrimaryButton({ children, className = "", ...props }) {
   return (
-    <button {...props} className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-b from-teal-700 to-teal-800 text-white text-sm font-medium shadow-sm hover:from-teal-800 hover:to-teal-900 active:scale-[0.98] transition disabled:opacity-40 disabled:cursor-not-allowed ${className}`}>
+    <button {...props} className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-b from-indigo-700 to-indigo-800 text-white text-sm font-medium shadow-sm hover:from-indigo-800 hover:to-indigo-900 active:scale-[0.98] transition disabled:opacity-40 disabled:cursor-not-allowed ${className}`}>
       {children}
     </button>
   );
@@ -292,59 +217,291 @@ function GhostButton({ children, className = "", ...props }) {
     </button>
   );
 }
-function DangerButton({ children, className = "", ...props }) {
-  return (
-    <button {...props} className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-rose-300 bg-white text-rose-700 text-sm font-medium hover:bg-rose-50 active:scale-[0.98] transition disabled:opacity-40 ${className}`}>
-      {children}
-    </button>
-  );
-}
 function TextField({ label, hint, ...props }) {
   return (
     <label className="block">
       {label && <span className="block text-xs font-medium text-slate-600 mb-1">{label}</span>}
-      <input {...props} className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm transition focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600" />
+      <input {...props} className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm transition focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-600" />
       {hint && <span className="block text-[11px] text-slate-400 mt-1">{hint}</span>}
     </label>
   );
 }
-function SelectField({ label, children, hint, ...props }) {
+function SelectField({ label, children, ...props }) {
   return (
     <label className="block">
       {label && <span className="block text-xs font-medium text-slate-600 mb-1">{label}</span>}
-      <select {...props} className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white transition focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600">
+      <select {...props} className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white transition focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-600">
         {children}
       </select>
-      {hint && <span className="block text-[11px] text-slate-400 mt-1">{hint}</span>}
     </label>
   );
 }
-function Toast({ toast }) {
-  if (!toast) return null;
+
+// Bỏ dấu tiếng Việt để tìm kiếm không phân biệt có dấu/không dấu
+function stripDiacritics(str) {
+  return (str || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d").replace(/Đ/g, "D")
+    .toLowerCase();
+}
+
+// Ô "Ngành nghề kinh doanh" có gợi ý tự động: gõ mã ngành cấp 4 (VD 0111) hoặc
+// gõ tên/từ khoá ngành (có dấu hoặc không dấu đều được) sẽ hiện danh sách gợi ý.
+function IndustryField({ label, value, onChange, className = "" }) {
+  const [query, setQuery] = useState(value || "");
+  const [open, setOpen] = useState(false);
+  const [highlight, setHighlight] = useState(0);
+
+  useEffect(() => setQuery(value || ""), [value]);
+
+  const suggestions = useMemo(() => {
+    const q = query.trim();
+    if (!q) return [];
+    const qNorm = stripDiacritics(q);
+    const byCode = q.replace(/\D/g, "").length >= 2 ? NGANH_NGHE_CAP4.filter((n) => n.code.startsWith(q.replace(/\D/g, ""))) : [];
+    const byName = NGANH_NGHE_CAP4.filter((n) => stripDiacritics(n.name).includes(qNorm));
+    const merged = [...byCode, ...byName.filter((n) => !byCode.includes(n))];
+    return merged.slice(0, 8);
+  }, [query]);
+
+  const pick = (item) => {
+    const text = `${item.code} - ${item.name}`;
+    setQuery(text);
+    onChange(text);
+    setOpen(false);
+  };
+
+  const handleInput = (e) => {
+    const v = e.target.value;
+    setQuery(v);
+    onChange(v);
+    setOpen(true);
+    setHighlight(0);
+  };
+
+  const handleKeyDown = (e) => {
+    if (!open || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); setHighlight((h) => Math.min(h + 1, suggestions.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); pick(suggestions[highlight]); }
+    else if (e.key === "Escape") { setOpen(false); }
+  };
+
   return (
-    <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg shadow-slate-900/30 flex items-center gap-2 animate-[fadeIn_.2s_ease-out]">
-      <CheckCircle2 size={15} className="text-emerald-400 shrink-0" /> {toast}
+    <label className={`block relative ${className}`}>
+      {label && <span className="block text-xs font-medium text-slate-600 mb-1">{label}</span>}
+      <input
+        value={query}
+        onChange={handleInput}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setTimeout(() => setOpen(false), 150)}
+        onKeyDown={handleKeyDown}
+        placeholder="Gõ mã ngành cấp 4 (VD: 0111) hoặc tên ngành..."
+        className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm transition focus:outline-none focus:ring-2 focus:ring-indigo-500/40 focus:border-indigo-600"
+      />
+      {open && suggestions.length > 0 && (
+        <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-64 overflow-y-auto">
+          {suggestions.map((item, i) => (
+            <button
+              type="button"
+              key={item.code}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => pick(item)}
+              className={`w-full text-left px-3 py-2 text-sm flex items-start gap-2 ${i === highlight ? "bg-indigo-50" : "hover:bg-slate-50"}`}
+            >
+              <span className="text-indigo-600 font-medium shrink-0">{item.code}</span>
+              <span className="text-slate-700">{item.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </label>
+  );
+}
+
+// Danh sách ngành, nghề kinh doanh — cho phép thêm nhiều ngành, mỗi ngành có ô
+// "Chi tiết ngành nghề" riêng, và đánh dấu đúng 1 ngành là "Ngành chính" (radio
+// chọn 1 trong nhiều), khớp đúng cấu trúc bảng trong hồ sơ đăng ký thật.
+function IndustryListEditor({ industries, onChange }) {
+  const [picker, setPicker] = useState("");
+
+  const addIndustry = (value) => {
+    const m = (value || "").trim().match(/^(\d{3,5})\s*-\s*(.+)$/);
+    if (!m) { setPicker(value); return; }
+    const code = m[1];
+    const name = m[2].trim();
+    if (industries.some((it) => it.code === code)) { setPicker(""); return; }
+    const next = [...industries, { code, name, detail: "", isPrimary: industries.length === 0 }];
+    onChange(next);
+    setPicker("");
+  };
+
+  const removeIndustry = (idx) => {
+    const removed = industries[idx];
+    let next = industries.filter((_, i) => i !== idx);
+    if (removed?.isPrimary && next.length > 0 && !next.some((it) => it.isPrimary)) {
+      next = next.map((it, i) => (i === 0 ? { ...it, isPrimary: true } : it));
+    }
+    onChange(next);
+  };
+
+  const setPrimary = (idx) => {
+    onChange(industries.map((it, i) => ({ ...it, isPrimary: i === idx })));
+  };
+
+  const setDetail = (idx, detail) => {
+    onChange(industries.map((it, i) => (i === idx ? { ...it, detail } : it)));
+  };
+
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <div className="px-4 py-3 bg-slate-50 border-b border-slate-200">
+        <p className="text-sm font-semibold text-slate-800">Danh sách ngành nghề kinh doanh</p>
+        <p className="text-xs text-slate-400">{industries.length} ngành nghề đã thêm</p>
+      </div>
+
+      {industries.length > 0 && (
+        <div className="hidden sm:grid grid-cols-[80px_1fr_140px_70px] gap-3 px-4 py-2 text-xs font-medium text-slate-400 border-b border-slate-100">
+          <span>MÃ NGÀNH</span><span>TÊN NGÀNH, NGHỀ</span><span>NGÀNH CHÍNH</span><span></span>
+        </div>
+      )}
+
+      <div className="divide-y divide-slate-100">
+        {industries.map((it, idx) => (
+          <div key={idx} className="px-4 py-3">
+            <div className="grid sm:grid-cols-[80px_1fr_140px_70px] gap-3 items-start">
+              <span className="font-semibold text-teal-700 text-sm">{it.code || "—"}</span>
+              <span className="text-sm text-slate-700">{it.name}</span>
+              <label className="flex items-center gap-1.5 text-xs text-slate-600 cursor-pointer">
+                <input type="radio" checked={it.isPrimary} onChange={() => setPrimary(idx)} className="accent-teal-700" />
+                {it.isPrimary ? "Ngành chính" : "Chọn"}
+              </label>
+              <button type="button" onClick={() => removeIndustry(idx)} className="text-xs text-rose-600 border border-rose-200 rounded-lg px-2 py-1 hover:bg-rose-50 justify-self-start sm:justify-self-auto">Xóa</button>
+            </div>
+            <div className="mt-2">
+              <span className="block text-xs font-medium text-slate-600 mb-1">Chi tiết ngành nghề</span>
+              <textarea
+                value={it.detail}
+                onChange={(e) => setDetail(idx, e.target.value)}
+                placeholder={`Nhập nội dung hoạt động cụ thể của ngành ${it.code || ""}...`}
+                rows={2}
+                className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="p-4 bg-slate-50/60">
+        <IndustryField label="Thêm ngành nghề (mã cấp 4)" value={picker} onChange={addIndustry} />
+      </div>
+    </div>
+  );
+}
+
+function Toast({ message, onClose }) {
+  React.useEffect(() => {
+    const t = setTimeout(onClose, 3000);
+    return () => clearTimeout(t);
+  }, [onClose]);
+  return (
+    <div className="fixed bottom-5 right-5 z-50 bg-slate-900 text-white text-sm px-4 py-2.5 rounded-xl shadow-lg shadow-slate-900/30 flex items-center gap-2">
+      <CheckCircle2 size={15} className="text-emerald-400 shrink-0" /> {message}
     </div>
   );
 }
 function FullScreenLoader() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <Loader2 size={28} className="text-teal-600 animate-spin" />
+      <Loader2 size={28} className="text-indigo-600 animate-spin" />
     </div>
   );
 }
-function fmtCountdown(ms) {
-  if (ms <= 0) return "00:00:00";
-  const totalSec = Math.floor(ms / 1000);
-  const h = String(Math.floor(totalSec / 3600)).padStart(2, "0");
-  const m = String(Math.floor((totalSec % 3600) / 60)).padStart(2, "0");
-  const s = String(totalSec % 60).padStart(2, "0");
-  return `${h}:${m}:${s}`;
+
+// ---------------------------------------------------------------------------
+// LOGIC DẪN XUẤT: hạn xử lý, cảnh báo quá hạn, công nợ
+// ---------------------------------------------------------------------------
+const LATE_PENALTY_AMOUNT = 100_000;
+
+function useDerivedOrders(orders) {
+  return useMemo(() => {
+    return orders.map((o) => {
+      let approvalDeadline = null, approvalOverdue = false, approvalDaysElapsed = 0;
+      if (o.receivedAt) {
+        approvalDeadline = addBusinessDays(o.receivedAt, 3);
+        approvalDaysElapsed = businessDaysSince(o.receivedAt);
+        approvalOverdue = !RESOLVED_STATUSES.includes(o.status) && approvalDaysElapsed >= 3;
+      }
+      let paymentDeadline = null, paymentOverdue = false;
+      if (o.approvedAt) {
+        paymentDeadline = addBusinessDays(o.approvedAt, 2);
+        paymentOverdue = o.status !== "da_thanh_toan" && businessDaysSince(o.approvedAt) >= 2;
+      }
+      const isCompleted = o.status === "da_thanh_toan";
+      const isLatePenalty = approvalOverdue && !o.overdueReason;
+      const latePenaltyAmount = isLatePenalty ? LATE_PENALTY_AMOUNT : 0;
+      return { ...o, approvalDeadline, approvalOverdue, paymentDeadline, paymentOverdue, isCompleted, isLatePenalty, latePenaltyAmount };
+    });
+  }, [orders]);
+}
+
+function useNotifications(derivedOrders, customers) {
+  return useMemo(() => {
+    const list = [];
+    derivedOrders.forEach((o) => {
+      const cust = customers.find((c) => c.id === o.customerId);
+      if (o.status === "chua_duoc_chap_thuan") {
+        list.push({
+          id: `${o.id}_rejected`, orderId: o.id, type: "chua_chap_thuan",
+          message: `Đơn ${o.orderCode} (${cust?.name || "?"}) đã bị đánh dấu CHƯA ĐƯỢC CHẤP THUẬN. Lý do: "${o.overdueReason || "(chưa điền)"}".`,
+          severity: "danger", createdAt: o.rejectedAt || o.approvalDeadline,
+        });
+      } else if (o.approvalOverdue) {
+        list.push({
+          id: `${o.id}_approval`, orderId: o.id, type: "qua_han_chap_thuan",
+          message: `Đơn ${o.orderCode} (${cust?.name || "?"}) đã quá 3 ngày làm việc kể từ khi tiếp nhận mà chưa được chấp thuận.` +
+            (o.overdueReason ? ` Lý do nhân viên báo cáo: "${o.overdueReason}".` : ` Nhân viên chưa điền lý do — đã tự động ghi nhận chậm tiến độ và trừ ${fmtMoney(LATE_PENALTY_AMOUNT)} tiền công.`),
+          severity: o.overdueReason ? "warning" : "danger", createdAt: o.approvalDeadline,
+        });
+      }
+      if (o.paymentOverdue) {
+        list.push({
+          id: `${o.id}_debt`, orderId: o.id, type: "cong_no",
+          message: `Đơn ${o.orderCode} (${cust?.name || "?"}) đã quá 2 ngày làm việc kể từ khi được chấp thuận mà chưa hoàn tất thanh toán — cần thu hồi công nợ.`,
+          severity: "warning", createdAt: o.paymentDeadline,
+        });
+      }
+    });
+    return list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }, [derivedOrders, customers]);
+}
+
+function useEmployeeNotifications(myDerivedOrders) {
+  return useMemo(() => {
+    const list = [];
+    myDerivedOrders.forEach((o) => {
+      if (o.status === "hoan_thanh") {
+        list.push({
+          id: `${o.id}_confirmed`, orderId: o.id, type: "xac_nhan",
+          message: `Đơn ${o.orderCode} đã được quản lý xác nhận hoàn thành. Đang chờ cập nhật doanh thu / chi phí / tiền công.`,
+          severity: "info", createdAt: o.confirmedAt || o.createdAt,
+        });
+      }
+      if (o.status === "da_thanh_toan") {
+        list.push({
+          id: `${o.id}_paid`, orderId: o.id, type: "da_thanh_toan",
+          message: `Đơn ${o.orderCode} đã hoàn tất và được ghi nhận thanh toán. Tiền công của bạn: ${fmtMoney(o.laborFee)}.`,
+          severity: "success", createdAt: o.completedAt || o.createdAt,
+        });
+      }
+    });
+    return list.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }, [myDerivedOrders]);
 }
 
 // ---------------------------------------------------------------------------
-// ĐĂNG NHẬP — bcrypt qua RPC, chặn brute-force
+// MÀN HÌNH ĐĂNG NHẬP — tài khoản thật (bảng employees trong Supabase)
 // ---------------------------------------------------------------------------
 function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState("");
@@ -352,71 +509,43 @@ function LoginScreen({ onLogin }) {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  const LOCK_KEY_PREFIX = "kho_login_fail_";
-  const MAX_ATTEMPTS = 5;
-  const LOCK_MINUTES = 5;
-  const getFailState = (u) => { try { return JSON.parse(localStorage.getItem(LOCK_KEY_PREFIX + u) || "null"); } catch { return null; } };
-  const setFailState = (u, s) => { try { localStorage.setItem(LOCK_KEY_PREFIX + u, JSON.stringify(s)); } catch {} };
-
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!username.trim() || !password) { setError("Vui lòng nhập tên đăng nhập và mật khẩu."); return; }
-    const u = username.trim();
-    const fail = getFailState(u);
-    if (fail && fail.count >= MAX_ATTEMPTS) {
-      const remainMs = fail.lockedAt + LOCK_MINUTES * 60_000 - Date.now();
-      if (remainMs > 0) { setError(`Bạn đã nhập sai quá ${MAX_ATTEMPTS} lần. Vui lòng thử lại sau ${Math.ceil(remainMs / 60000)} phút.`); return; }
-      setFailState(u, null);
-    }
+    if (!username.trim() || !password) return;
     setError(""); setLoading(true);
-    try {
-      const { data, error: qErr } = await supabase.rpc("verify_employee_login", { p_username: u, p_password: password });
-      if (qErr) throw qErr;
-      const employee = Array.isArray(data) ? data[0] : data;
-      if (!employee) {
-        const prev = getFailState(u) || { count: 0 };
-        const nextCount = prev.count + 1;
-        setFailState(u, { count: nextCount, lockedAt: nextCount >= MAX_ATTEMPTS ? Date.now() : null });
-        setError(nextCount >= MAX_ATTEMPTS ? `Sai mật khẩu quá ${MAX_ATTEMPTS} lần. Tài khoản bị khoá tạm ${LOCK_MINUTES} phút.` : "Tên đăng nhập hoặc mật khẩu không đúng.");
-        return;
-      }
-      if (employee.locked) { setError("Tài khoản đã bị khoá do không đổi mật khẩu đúng hạn. Vui lòng liên hệ Quản lý."); return; }
-      setFailState(u, null);
-      let mapped = mapEmployee(employee);
-      if (mapped.mustChangePassword && !mapped.passwordChangeDeadline) {
-        const { data: deadline } = await supabase.rpc("start_password_deadline", { p_employee_id: mapped.id });
-        if (deadline) mapped = { ...mapped, passwordChangeDeadline: deadline };
-      }
-      onLogin(mapped);
-    } catch (err) {
-      console.error(err);
-      setError("Không kết nối được máy chủ, vui lòng thử lại.");
-    } finally {
-      setLoading(false);
-    }
+    const { data, error: qErr } = await supabase
+      .from("employees")
+      .select("id,name,username,role")
+      .eq("username", username.trim())
+      .eq("password", password)
+      .maybeSingle();
+    setLoading(false);
+    if (qErr) { setError("Không thể kết nối máy chủ. Vui lòng thử lại."); return; }
+    if (!data) { setError("Sai tên đăng nhập hoặc mật khẩu."); return; }
+    onLogin(data);
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-teal-50 via-slate-50 to-slate-50 px-4 py-10">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-indigo-50 via-slate-50 to-slate-50 px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-700 to-teal-900 mx-auto mb-3 flex items-center justify-center shadow-lg shadow-teal-900/25">
-            <Warehouse size={26} className="text-white" />
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-indigo-700 to-indigo-900 mx-auto mb-3 flex items-center justify-center shadow-lg shadow-indigo-900/25">
+            <FileText size={26} className="text-white" />
           </div>
-          <h1 className="text-2xl font-semibold text-slate-800 tracking-tight">Quản lý Kho NVL &amp; Thành phẩm</h1>
-          <p className="text-sm text-slate-500 mt-1">Đăng nhập bằng tài khoản nhân sự</p>
+          <h1 className="text-2xl font-semibold text-slate-800 tracking-tight">Quản lý đơn hàng NMT</h1>
+          <p className="text-sm text-slate-500 mt-1">Đăng nhập bằng tài khoản nhân viên</p>
         </div>
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200/80 shadow-xl shadow-slate-900/5 p-5 space-y-4">
           <label className="block">
             <span className="block text-xs font-medium text-slate-600 mb-1">Tên đăng nhập</span>
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 focus-within:ring-2 focus-within:ring-teal-500/40 focus-within:border-teal-600">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 focus-within:ring-2 focus-within:ring-indigo-500/40 focus-within:border-indigo-600">
               <User size={15} className="text-slate-400 shrink-0" />
-              <input value={username} onChange={(e) => setUsername(e.target.value)} className="flex-1 text-sm outline-none" placeholder="vd: nvkho1" autoFocus />
+              <input value={username} onChange={(e) => setUsername(e.target.value)} className="flex-1 text-sm outline-none" placeholder="vd: nv1" autoFocus />
             </div>
           </label>
           <label className="block">
             <span className="block text-xs font-medium text-slate-600 mb-1">Mật khẩu</span>
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 focus-within:ring-2 focus-within:ring-teal-500/40 focus-within:border-teal-600">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 focus-within:ring-2 focus-within:ring-indigo-500/40 focus-within:border-indigo-600">
               <Lock size={15} className="text-slate-400 shrink-0" />
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="flex-1 text-sm outline-none" placeholder="••••••" />
             </div>
@@ -431,1130 +560,1257 @@ function LoginScreen({ onLogin }) {
   );
 }
 
-function ChangePasswordForm({ currentUser, onSuccess, onCancel, mandatory }) {
-  const [oldPassword, setOldPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [error, setError] = useState("");
+// ---------------------------------------------------------------------------
+// NHÂN VIÊN — PHÂN HỆ 1: THÔNG TIN KHÁCH HÀNG
+// ---------------------------------------------------------------------------
+function CustomerFormCard({ onSubmit }) {
+  const [form, setForm] = useState({ name: "", cccd: "", phone: "", address: "", ward: WARDS[0], industries: [], referrer: "" });
+  const [photoFile, setPhotoFile] = useState(null);
+  const [preview, setPreview] = useState(null);
   const [saving, setSaving] = useState(false);
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  const handlePhoto = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoFile(file);
+    const reader = new FileReader();
+    reader.onload = () => setPreview(reader.result);
+    reader.readAsDataURL(file);
+  };
 
   const submit = async () => {
-    if (!oldPassword || !newPassword || !confirmPassword) { setError("Vui lòng điền đủ các ô."); return; }
-    if (newPassword.length < 6) { setError("Mật khẩu mới cần ít nhất 6 ký tự."); return; }
-    if (newPassword !== confirmPassword) { setError("Mật khẩu xác nhận không khớp."); return; }
-    setError(""); setSaving(true);
-    try {
-      const { data, error: qErr } = await supabase.rpc("change_own_password", {
-        p_employee_id: currentUser.id, p_old_password: oldPassword, p_new_password: newPassword,
-      });
-      if (qErr) throw qErr;
-      if (!data) { setError("Mật khẩu hiện tại không đúng."); return; }
-      onSuccess();
-    } catch (err) {
-      console.error(err);
-      setError("Không đổi được mật khẩu, vui lòng thử lại.");
-    } finally {
-      setSaving(false);
-    }
+    if (!form.phone || !form.address || saving) return;
+    setSaving(true);
+    await onSubmit({ ...form, photoFile });
+    setSaving(false);
+    setForm({ name: "", cccd: "", phone: "", address: "", ward: WARDS[0], industries: [], referrer: "" });
+    setPhotoFile(null);
+    setPreview(null);
   };
 
   return (
-    <div className="space-y-3">
-      <TextField label="Mật khẩu hiện tại" type="password" value={oldPassword} onChange={(e) => setOldPassword(e.target.value)} />
-      <TextField label="Mật khẩu mới (tối thiểu 6 ký tự)" type="password" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-      <TextField label="Xác nhận mật khẩu mới" type="password" value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
-      {error && <p className="text-sm text-rose-600 flex items-center gap-1.5"><AlertTriangle size={14} /> {error}</p>}
-      <div className="flex gap-2">
-        <PrimaryButton type="button" onClick={submit} disabled={saving} className={mandatory ? "w-full justify-center" : ""}>
-          {saving ? "Đang lưu..." : "Đổi mật khẩu"}
-        </PrimaryButton>
-        {!mandatory && onCancel && <GhostButton type="button" onClick={onCancel}>Hủy</GhostButton>}
+    <Card className="p-4 sm:p-5">
+      <p className="font-semibold text-slate-800 text-sm mb-3">Thêm khách hàng mới</p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
+        <TextField label="Tên khách hàng" value={form.name} onChange={set("name")} placeholder="Không bắt buộc, giúp dễ nhận diện" />
+        <TextField label="Số CCCD" value={form.cccd} onChange={set("cccd")} placeholder="12 số trên căn cước công dân" />
+        <TextField label="Số điện thoại *" value={form.phone} onChange={set("phone")} placeholder="09xxxxxxxx" />
+        <TextField label="Địa chỉ *" value={form.address} onChange={set("address")} placeholder="Số nhà, đường..." />
+        <TextField label="Phường" value={form.ward} onChange={set("ward")} placeholder="Phường..." />
+        <div className="sm:col-span-2">
+          <IndustryListEditor industries={form.industries} onChange={(list) => setForm((f) => ({ ...f, industries: list }))} />
+        </div>
+        <TextField label="Người giới thiệu" value={form.referrer} onChange={set("referrer")} placeholder="Tên người giới thiệu khách hàng này (nếu có)" className="sm:col-span-2" />
       </div>
-    </div>
+      <div className="mb-4">
+        <span className="block text-xs font-medium text-slate-600 mb-1">Ảnh chụp VNID (căn cước công dân)</span>
+        <label className="flex items-center gap-3 p-3 rounded-xl border border-dashed border-slate-300 hover:border-indigo-400 hover:bg-indigo-50/40 transition cursor-pointer">
+          <span className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden">
+            {preview ? <img src={preview} alt="VNID" className="w-full h-full object-cover" /> : <Camera size={17} className="text-slate-400" />}
+          </span>
+          <span className="text-xs text-slate-500">{preview ? "Đã chọn ảnh — bấm để đổi ảnh khác" : "Bấm để chụp / tải ảnh VNID lên"}</span>
+          <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhoto} />
+        </label>
+      </div>
+      <PrimaryButton onClick={submit} disabled={saving}>
+        {saving ? <Loader2 size={15} className="animate-spin" /> : <UserPlus size={15} />} Lưu khách hàng
+      </PrimaryButton>
+    </Card>
   );
 }
 
-function ForcePasswordChangeGate({ currentUser, onChanged, onLogout }) {
-  const [now, setNow] = useState(Date.now());
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(t);
-  }, []);
-  const deadline = currentUser.passwordChangeDeadline ? new Date(currentUser.passwordChangeDeadline).getTime() : null;
-  const remainMs = deadline ? deadline - now : null;
-  const expired = remainMs !== null && remainMs <= 0;
-
+function CustomerModule({ currentUser, customers, onAddCustomer }) {
+  const mine = customers.filter((c) => c.employeeId === currentUser.id);
+  const [q, setQ] = useState("");
+  const filtered = mine.filter((c) => !q || c.phone.includes(q) || (c.cccd || "").includes(q) || (c.name || "").toLowerCase().includes(q.toLowerCase()));
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-rose-50 via-slate-50 to-slate-50 px-4 py-10">
-      <div className="w-full max-w-sm">
-        <div className="text-center mb-6">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-rose-600 to-rose-700 mx-auto mb-3 flex items-center justify-center shadow-lg shadow-rose-900/25">
-            <Lock size={26} className="text-white" />
-          </div>
-          <h1 className="text-xl font-semibold text-slate-800">Yêu cầu đổi mật khẩu</h1>
-          <p className="text-sm text-slate-500 mt-1">Vì lý do bảo mật, bạn cần đặt mật khẩu mới trước khi tiếp tục sử dụng.</p>
-          {!expired && deadline && <p className="text-sm text-rose-600 font-semibold mt-2">Thời gian còn lại: {fmtCountdown(remainMs)}</p>}
-          {expired && <p className="text-sm text-rose-600 font-semibold mt-2">Đã hết hạn 24 giờ — tài khoản đã bị khoá. Vui lòng liên hệ Quản lý.</p>}
+    <div className="space-y-5">
+      <SectionTitle icon={Users} title="Thông tin khách hàng" subtitle="Khách hàng bạn phụ trách" />
+      <CustomerFormCard onSubmit={onAddCustomer} />
+      <Card className="p-0 overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex items-center gap-2">
+          <Search size={15} className="text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm theo tên, số điện thoại hoặc CCCD..." className="flex-1 text-sm outline-none" />
         </div>
-        {!expired ? (
-          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xl shadow-slate-900/5 p-5">
-            <ChangePasswordForm currentUser={currentUser} mandatory onSuccess={onChanged} />
-          </div>
+        {filtered.length === 0 ? (
+          <EmptyState icon={Users} text="Chưa có khách hàng nào." />
         ) : (
-          <GhostButton className="w-full justify-center" onClick={onLogout}>Đăng xuất</GhostButton>
+          <div className="divide-y divide-slate-100">
+            {filtered.map((c) => (
+              <div key={c.id} className="p-4 flex items-center gap-3">
+                <span className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden">
+                  {c.vnidPhoto ? <img src={c.vnidPhoto} alt="" className="w-full h-full object-cover" /> : <Users size={16} className="text-slate-400" />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-800 truncate">{c.name || "(Chưa đặt tên)"} · {c.phone}</p>
+                  <p className="text-xs text-slate-400 truncate">CCCD: {c.cccd || "—"} · {c.address}, {c.ward} · {c.industry || "—"}</p>
+                  {c.referrer && <p className="text-xs text-indigo-500 truncate">Người giới thiệu: {c.referrer}</p>}
+                </div>
+              </div>
+            ))}
+          </div>
         )}
-      </div>
+      </Card>
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// DANH MỤC GỐC — Nhà cung cấp / NVL & TP / Mã doanh thu / Mã xuất
+// NHÂN VIÊN — PHÂN HỆ 2: TẠO ĐƠN HÀNG
 // ---------------------------------------------------------------------------
-function AddSupplierForm({ suppliers, onAdd }) {
-  const [code, setCode] = useState(() => nextSupplierCode(suppliers));
-  const [name, setName] = useState("");
-  const [paymentType, setPaymentType] = useState("cong_no");
+function OrderCreateModule({ currentUser, customers, orders, onCreateOrder }) {
+  const mineCustomers = customers.filter((c) => c.employeeId === currentUser.id);
+  const [customerId, setCustomerId] = useState(mineCustomers[0]?.id || "");
+  const [procedureType, setProcedureType] = useState(PROCEDURE_TYPES[0].key);
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (!customerId && mineCustomers[0]) setCustomerId(mineCustomers[0].id);
+  }, [mineCustomers, customerId]);
+
+  const nextCode = () => `NMT-${String(orders.length + 1).padStart(4, "0")}`;
 
   const submit = async () => {
-    if (!code.trim() || !name.trim()) { setError("Vui lòng nhập đủ Mã và Tên nhà cung cấp."); return; }
-    setError(""); setSaving(true);
-    try {
-      await onAdd({ code: code.trim(), name: name.trim(), paymentType });
-      setCode(nextSupplierCode([...suppliers, { code }]));
-      setName("");
-    } catch (e) {
-      setError(e.message || "Không lưu được, vui lòng thử lại.");
-    } finally {
-      setSaving(false);
-    }
+    if (!customerId || saving) return;
+    setSaving(true);
+    await onCreateOrder(customerId, procedureType, nextCode());
+    setSaving(false);
   };
 
   return (
-    <Card className="p-4 sm:p-5 mb-4">
-      <p className="font-semibold text-slate-800 text-sm mb-3">Thêm nhà cung cấp mới</p>
-      <div className="grid sm:grid-cols-3 gap-3 mb-3">
-        <TextField label="Mã NCC (gợi ý tự động)" value={code} onChange={(e) => setCode(e.target.value)} />
-        <TextField label="Tên nhà cung cấp" value={name} onChange={(e) => setName(e.target.value)} className="sm:col-span-2" />
-        <SelectField label="Hình thức thanh toán mặc định" value={paymentType} onChange={(e) => setPaymentType(e.target.value)} className="sm:col-span-3">
-          <option value="cong_no">Công nợ</option>
-          <option value="tien_mat">Tiền mặt</option>
-          <option value="noi_bo">Nội bộ</option>
-        </SelectField>
-      </div>
-      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Thêm nhà cung cấp</PrimaryButton>
-    </Card>
+    <div className="space-y-5">
+      <SectionTitle icon={ClipboardList} title="Tạo đơn hàng" subtitle="Mã đơn hàng được tự động sinh" />
+      <Card className="p-4 sm:p-5 space-y-3">
+        {mineCustomers.length === 0 ? (
+          <EmptyState icon={Users} text="Bạn cần thêm khách hàng trước khi tạo đơn hàng." />
+        ) : (
+          <>
+            <SelectField label="Khách hàng" value={customerId} onChange={(e) => setCustomerId(e.target.value)}>
+              {mineCustomers.map((c) => <option key={c.id} value={c.id}>{c.name || c.phone} — {c.phone}</option>)}
+            </SelectField>
+            <SelectField label="Loại hình thủ tục" value={procedureType} onChange={(e) => setProcedureType(e.target.value)}>
+              {PROCEDURE_TYPES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}
+            </SelectField>
+            <div className="text-xs text-slate-500">Mã đơn hàng dự kiến: <span className="font-semibold text-slate-700">{nextCode()}</span></div>
+            <PrimaryButton onClick={submit} disabled={saving}>
+              {saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Tạo đơn hàng
+            </PrimaryButton>
+          </>
+        )}
+      </Card>
+    </div>
   );
 }
 
-function SupplierList({ suppliers }) {
-  const [q, setQ] = useState("");
-  const filtered = q ? suppliers.filter((s) => stripDiacritics(s.name).includes(stripDiacritics(q)) || s.code.toLowerCase().includes(q.toLowerCase())) : suppliers;
+// Thanh bước tiến độ dạng tích chọn.
+function OrderProgressStepper({ status, onStepClick }) {
+  const currentIndex = STATUS_FLOW.indexOf(status);
   return (
-    <Card className="p-0 overflow-hidden">
-      <div className="p-4 border-b border-slate-100 flex items-center gap-2">
-        <Search size={15} className="text-slate-400" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm theo mã hoặc tên..." className="flex-1 text-sm outline-none" />
-      </div>
-      {filtered.length === 0 ? <EmptyState icon={Truck} text="Chưa có nhà cung cấp nào." /> : (
-        <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
-          {filtered.map((s) => (
-            <div key={s.id} className="p-3.5 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-slate-800">{s.name}</p>
-                <p className="text-xs text-slate-400">Mã: {s.code}</p>
-              </div>
-              <Badge className={PAYMENT_TYPE_META[s.paymentType]?.color}>{PAYMENT_TYPE_META[s.paymentType]?.label}</Badge>
-            </div>
-          ))}
+    <div className="flex items-center mb-1">
+      {STATUS_FLOW.map((s, i) => {
+        const done = i < currentIndex;
+        const current = i === currentIndex;
+        const clickable = i === currentIndex + 1;
+        return (
+          <React.Fragment key={s}>
+            {i > 0 && <span className={`flex-1 h-0.5 ${i <= currentIndex ? "bg-indigo-600" : "bg-slate-200"}`} />}
+            <button
+              type="button"
+              onClick={() => onStepClick(s, i)}
+              title={done ? `${ORDER_STATUS[s].label} — đã hoàn tất, không thể sửa lại` : ORDER_STATUS[s].label}
+              className="flex flex-col items-center gap-1 shrink-0 px-1 cursor-pointer"
+            >
+              <span
+                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold border-2 transition ${
+                  done ? "bg-indigo-600 border-indigo-600 text-white"
+                  : current ? "bg-white border-indigo-600 text-indigo-700"
+                  : clickable ? "bg-indigo-50 border-indigo-600 text-indigo-700 ring-4 ring-indigo-100 hover:bg-indigo-100"
+                  : "bg-white border-slate-200 text-slate-300 hover:border-slate-300"
+                }`}
+              >
+                {done ? <CheckCircle2 size={15} /> : i + 1}
+              </span>
+              <span className={`text-[10px] text-center leading-tight w-16 ${current ? "text-indigo-700 font-medium" : done ? "text-slate-500" : clickable ? "text-indigo-700 font-medium" : "text-slate-400"}`}>
+                {ORDER_STATUS[s].label}
+              </span>
+            </button>
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+}
+
+function ConfirmDialog({ title, message, confirmLabel = "Xác nhận", danger, onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5">
+        <div className="flex items-center gap-2 mb-2">
+          <AlertTriangle size={18} className={danger ? "text-rose-600" : "text-amber-600"} />
+          <p className="font-semibold text-slate-800">{title}</p>
         </div>
-      )}
-    </Card>
-  );
-}
-
-function AddProductForm({ products, onAdd }) {
-  const [classification, setClassification] = useState("NL");
-  const [code, setCode] = useState(() => nextProductCode(products, "NL"));
-  const [name, setName] = useState("");
-  const [unit, setUnit] = useState("");
-  const [groupCode, setGroupCode] = useState("N10");
-  const [groupName, setGroupName] = useState("FOOD");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => { setCode(nextProductCode(products, classification)); }, [classification]);
-
-  const submit = async () => {
-    if (!code.trim() || !name.trim() || !unit.trim()) { setError("Vui lòng nhập đủ Mã, Tên và Đơn vị tính."); return; }
-    setError(""); setSaving(true);
-    try {
-      await onAdd({ code: code.trim(), name: name.trim(), unit: unit.trim(), groupCode: groupCode.trim(), groupName: groupName.trim(), classification });
-      setCode(nextProductCode([...products, { code, classification }], classification));
-      setName(""); setUnit("");
-    } catch (e) {
-      setError(e.message || "Không lưu được, vui lòng thử lại.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card className="p-4 sm:p-5 mb-4">
-      <p className="font-semibold text-slate-800 text-sm mb-3">Thêm sản phẩm mới (Nguyên vật liệu / Thành phẩm)</p>
-      <div className="grid sm:grid-cols-3 gap-3 mb-3">
-        <SelectField label="Phân loại" value={classification} onChange={(e) => setClassification(e.target.value)}>
-          <option value="NL">Nguyên vật liệu (NL)</option>
-          <option value="TP">Thành phẩm (TP)</option>
-        </SelectField>
-        <TextField label="Mã SP (gợi ý tự động)" value={code} onChange={(e) => setCode(e.target.value)} />
-        <TextField label="Đơn vị tính" value={unit} onChange={(e) => setUnit(e.target.value)} placeholder="kg, cái, bó, đĩa..." />
-        <TextField label="Tên sản phẩm" value={name} onChange={(e) => setName(e.target.value)} className="sm:col-span-3" />
-        <TextField label="Mã nhóm" value={groupCode} onChange={(e) => setGroupCode(e.target.value)} />
-        <TextField label="Mã nhóm lớn" value={groupName} onChange={(e) => setGroupName(e.target.value)} className="sm:col-span-2" />
-      </div>
-      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Thêm sản phẩm</PrimaryButton>
-    </Card>
-  );
-}
-
-function ProductList({ products }) {
-  const [q, setQ] = useState("");
-  const [filter, setFilter] = useState("all");
-  let filtered = filter === "all" ? products : products.filter((p) => p.classification === filter);
-  if (q) filtered = filtered.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(q)) || p.code.includes(q));
-  return (
-    <Card className="p-0 overflow-hidden">
-      <div className="p-4 border-b border-slate-100 flex flex-wrap items-center gap-2">
-        <Search size={15} className="text-slate-400" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm theo mã hoặc tên..." className="flex-1 min-w-[140px] text-sm outline-none" />
-        <select value={filter} onChange={(e) => setFilter(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
-          <option value="all">Tất cả</option>
-          <option value="NL">Nguyên vật liệu</option>
-          <option value="TP">Thành phẩm</option>
-        </select>
-      </div>
-      {filtered.length === 0 ? <EmptyState icon={Package} text="Chưa có sản phẩm nào." /> : (
-        <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
-          {filtered.map((p) => (
-            <div key={p.id} className="p-3.5 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm font-medium text-slate-800 truncate">{p.name}</p>
-                <p className="text-xs text-slate-400">Mã: {p.code} · ĐVT: {p.unit} · {p.groupCode}/{p.groupName}</p>
-              </div>
-              <Badge className={CLASSIFICATION_META[p.classification]?.color}>{p.classification}</Badge>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function AddSimpleCodeForm({ list, prefix, label, onAdd }) {
-  const [code, setCode] = useState(() => nextSimpleCode(list, prefix));
-  const [name, setName] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const submit = async () => {
-    if (!code.trim() || !name.trim()) { setError("Vui lòng nhập đủ Mã và Tên."); return; }
-    setError(""); setSaving(true);
-    try {
-      await onAdd({ code: code.trim(), name: name.trim() });
-      setCode(nextSimpleCode([...list, { code }], prefix));
-      setName("");
-    } catch (e) {
-      setError(e.message || "Không lưu được, vui lòng thử lại.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card className="p-4 sm:p-5 mb-4">
-      <p className="font-semibold text-slate-800 text-sm mb-3">Thêm {label.toLowerCase()} mới</p>
-      <div className="grid sm:grid-cols-3 gap-3 mb-3">
-        <TextField label="Mã (gợi ý tự động)" value={code} onChange={(e) => setCode(e.target.value)} />
-        <TextField label={`Tên ${label.toLowerCase()}`} value={name} onChange={(e) => setName(e.target.value)} className="sm:col-span-2" />
-      </div>
-      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Thêm {label.toLowerCase()}</PrimaryButton>
-    </Card>
-  );
-}
-
-function SimpleCodeList({ list, icon: Icon, emptyText }) {
-  const [q, setQ] = useState("");
-  const filtered = q ? list.filter((x) => stripDiacritics(x.name).includes(stripDiacritics(q)) || x.code.toLowerCase().includes(q.toLowerCase())) : list;
-  return (
-    <Card className="p-0 overflow-hidden">
-      <div className="p-4 border-b border-slate-100 flex items-center gap-2">
-        <Search size={15} className="text-slate-400" />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm theo mã hoặc tên..." className="flex-1 text-sm outline-none" />
-      </div>
-      {filtered.length === 0 ? <EmptyState icon={Icon} text={emptyText} /> : (
-        <div className="divide-y divide-slate-100 max-h-96 overflow-y-auto">
-          {filtered.map((x) => (
-            <div key={x.id} className="p-3.5">
-              <p className="text-sm font-medium text-slate-800">{x.name}</p>
-              <p className="text-xs text-slate-400">Mã: {x.code}</p>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function DanhMucModule({ data, onAddSupplier, onAddProduct, onAddRevenueCode, onAddExportCode }) {
-  const [tab, setTab] = useState("ncc");
-  const TABS = [
-    { key: "ncc", label: "Nhà cung cấp", icon: Truck },
-    { key: "sp", label: "NVL & Thành phẩm", icon: Package },
-    { key: "dt", label: "Mã doanh thu", icon: TrendingUp },
-    { key: "xuat", label: "Mã xuất", icon: ArrowUpCircle },
-  ];
-  return (
-    <div>
-      <SectionTitle icon={Boxes} title="Danh mục" subtitle="Dữ liệu gốc — thêm mới bất cứ lúc nào, mã tự động gợi ý" />
-      <div className="flex gap-1 mb-4 overflow-x-auto">
-        {TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition ${tab === t.key ? "bg-teal-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100"}`}>
-            <t.icon size={15} /> {t.label}
+        <p className="text-sm text-slate-600 mb-5">{message}</p>
+        <div className="flex justify-end gap-2">
+          <GhostButton onClick={onCancel}>Huỷ, kiểm tra lại</GhostButton>
+          <button
+            onClick={onConfirm}
+            className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-sm font-medium transition ${danger ? "bg-rose-600 hover:bg-rose-700" : "bg-indigo-700 hover:bg-indigo-800"}`}
+          >
+            {confirmLabel}
           </button>
-        ))}
+        </div>
       </div>
-      {tab === "ncc" && (<><AddSupplierForm suppliers={data.suppliers} onAdd={onAddSupplier} /><SupplierList suppliers={data.suppliers} /></>)}
-      {tab === "sp" && (<><AddProductForm products={data.products} onAdd={onAddProduct} /><ProductList products={data.products} /></>)}
-      {tab === "dt" && (<><AddSimpleCodeForm list={data.revenueCodes} prefix="DT" label="Mã doanh thu" onAdd={onAddRevenueCode} /><SimpleCodeList list={data.revenueCodes} icon={TrendingUp} emptyText="Chưa có mã doanh thu nào." /></>)}
-      {tab === "xuat" && (<><AddSimpleCodeForm list={data.exportCodes} prefix="MX" label="Mã xuất" onAdd={onAddExportCode} /><SimpleCodeList list={data.exportCodes} icon={ArrowUpCircle} emptyText="Chưa có mã xuất nào." /></>)}
     </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// NHẬP HÀNG — Tác vụ 2 (nhập liệu) + Tác vụ 3 (báo cáo nhập)
-// ---------------------------------------------------------------------------
-function NhapHangForm({ data, currentUser, onSubmit }) {
-  const [orderNumber, setOrderNumber] = useState("");
-  const [supplierId, setSupplierId] = useState(data.suppliers[0]?.id || "");
-  const [productId, setProductId] = useState(data.products.find((p) => p.classification === "NL")?.id || "");
-  const [quantity, setQuantity] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
-  const [productQuery, setProductQuery] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+// Danh sách nhân sự công ty được uỷ quyền nộp hồ sơ HKD thay khách hàng —
+// mỗi người ứng với 1 tài khoản nhân viên. Khi tạo Giấy uỷ quyền, hệ thống tự
+// chọn đúng người theo tên tài khoản đang đăng nhập (có thể đổi lại thủ công).
+const UY_QUYEN_PROFILES = [
+  {
+    hoTen: "TRẦN VIỆT HƯNG", gioiTinh: "Nam", ngaySinh: "14/04/1990",
+    cccd: "008090011162", diaChi: "Số 175 Phố Huế, Phường Hai Bà Trưng, Thành phố Hà Nội",
+    dienThoai: "0911799111", email: "hungviettq@gmail.com",
+  },
+  {
+    hoTen: "NGUYỄN MINH ĐỨC", gioiTinh: "Nam", ngaySinh: "09/09/1999",
+    cccd: "001099011128", diaChi: "136 Hàng Cỏ, Phường Cửa Nam, Hà Nội",
+    dienThoai: "0966448150", email: "ngminhduc59@gmail.com",
+  },
+  {
+    hoTen: "NGUYỄN MINH TUỆ", gioiTinh: "Nam", ngaySinh: "22/03/2001",
+    cccd: "008201003889", diaChi: "Số 175 Phố Huế, Phường Hai Bà Trưng, Thành phố Hà Nội",
+    dienThoai: "0394379676", email: "",
+  },
+];
 
-  const supplier = data.suppliers.find((s) => s.id === supplierId);
-  const product = data.products.find((p) => p.id === productId);
-  const totalAmount = (Number(quantity) || 0) * (Number(unitPrice) || 0);
-
-  const productMatches = productQuery
-    ? data.products.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(productQuery)) || p.code.includes(productQuery)).slice(0, 8)
-    : [];
-
-  const submit = async () => {
-    if (!supplierId || !productId || !quantity || !unitPrice) { setError("Vui lòng điền đủ NCC, Sản phẩm, Số lượng, Đơn giá."); return; }
-    setError(""); setSaving(true);
-    try {
-      await onSubmit({
-        orderNumber: orderNumber.trim(), supplierId, productId,
-        quantity: Number(quantity), unitPrice: Number(unitPrice), totalAmount,
-        paymentType: supplier?.paymentType || "cong_no",
-      });
-      setOrderNumber(""); setQuantity(""); setUnitPrice(""); setProductQuery("");
-    } catch (e) {
-      setError(e.message || "Không lưu được, vui lòng thử lại.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card className="p-4 sm:p-5 mb-5">
-      <p className="font-semibold text-slate-800 text-sm mb-3">Nhập hàng mới</p>
-      <div className="grid sm:grid-cols-2 gap-3 mb-3">
-        <TextField label="Đơn số (tự đặt, không bắt buộc)" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} />
-        <SelectField label="Nhà cung cấp" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-          {data.suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
-        </SelectField>
-        <label className="block sm:col-span-2 relative">
-          <span className="block text-xs font-medium text-slate-600 mb-1">Sản phẩm</span>
-          <input
-            value={productQuery || (product ? `${product.code} — ${product.name}` : "")}
-            onChange={(e) => { setProductQuery(e.target.value); setProductId(""); }}
-            placeholder="Gõ mã hoặc tên sản phẩm..."
-            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
-          />
-          {productMatches.length > 0 && !productId && (
-            <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
-              {productMatches.map((p) => (
-                <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { setProductId(p.id); setProductQuery(""); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
-                  <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </label>
-        <TextField label={`Số lượng${product ? ` (${product.unit})` : ""}`} type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-        <TextField label="Đơn giá (đ)" type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
-        <div className="sm:col-span-2 bg-teal-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm">
-          <span className="text-teal-700">Thành tiền</span>
-          <span className="font-semibold text-teal-800">{fmtMoney(totalAmount)}</span>
-        </div>
-        {supplier && (
-          <p className="text-xs text-slate-400 sm:col-span-2 -mt-1">Tình trạng thanh toán sẽ tự ghi: <Badge className={PAYMENT_TYPE_META[supplier.paymentType]?.color}>{PAYMENT_TYPE_META[supplier.paymentType]?.label}</Badge></p>
-        )}
-      </div>
-      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <ArrowDownCircle size={15} />} Lưu phiếu nhập</PrimaryButton>
-    </Card>
-  );
+function stripDiacriticsUQ(str) {
+  return (str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase().trim();
 }
 
-function NhapHangList({ data }) {
-  const rows = data.importRecords.slice(0, 30);
-  return (
-    <Card className="p-0 overflow-hidden">
-      <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử nhập hàng gần đây</p></div>
-      {rows.length === 0 ? <EmptyState icon={Inbox} text="Chưa có phiếu nhập nào." /> : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-              <th className="px-3 py-2">Mã phiếu</th><th className="px-3 py-2">Ngày</th><th className="px-3 py-2">NCC</th>
-              <th className="px-3 py-2">Sản phẩm</th><th className="px-3 py-2 text-right">SL</th><th className="px-3 py-2 text-right">Đơn giá</th>
-              <th className="px-3 py-2 text-right">Thành tiền</th><th className="px-3 py-2">TT thanh toán</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((r) => {
-                const s = data.suppliers.find((x) => x.id === r.supplierId);
-                const p = data.products.find((x) => x.id === r.productId);
-                return (
-                  <tr key={r.id} className="border-b border-slate-50 last:border-0">
-                    <td className="px-3 py-2 text-slate-500">{r.receiptCode}</td>
-                    <td className="px-3 py-2 text-slate-500">{fmtDate(r.importDate)}</td>
-                    <td className="px-3 py-2">{s?.name || "—"}</td>
-                    <td className="px-3 py-2">{p?.name || "—"}</td>
-                    <td className="px-3 py-2 text-right">{fmtNumber(r.quantity)} {p?.unit}</td>
-                    <td className="px-3 py-2 text-right">{fmtMoney(r.unitPrice)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{fmtMoney(r.totalAmount)}</td>
-                    <td className="px-3 py-2"><Badge className={PAYMENT_TYPE_META[r.paymentType]?.color}>{PAYMENT_TYPE_META[r.paymentType]?.label}</Badge></td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
-  );
+function findUyQuyenProfile(name) {
+  const target = stripDiacriticsUQ(name);
+  return UY_QUYEN_PROFILES.find((p) => stripDiacriticsUQ(p.hoTen) === target) || null;
 }
 
-function NhapHangModule({ data, currentUser, onSubmit }) {
-  return (
-    <div>
-      <SectionTitle icon={ArrowDownCircle} title="Nhập hàng" subtitle="Ghi nhận nhập hàng từ nhà cung cấp" />
-      <NhapHangForm data={data} currentUser={currentUser} onSubmit={onSubmit} />
-      <NhapHangList data={data} />
-    </div>
-  );
+function isoToDDMMYYYY(iso) {
+  if (!iso) return "";
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
 }
 
-// ---------------------------------------------------------------------------
-// BÁO CÁO NHẬP — Tác vụ 3: theo ngày, NCC, nhóm sản phẩm, tình trạng thanh toán
-// ---------------------------------------------------------------------------
-function BaoCaoNhapModule({ data }) {
-  const [from, setFrom] = useState(daysAgoISO(30));
-  const [to, setTo] = useState(todayISO());
-  const [supplierId, setSupplierId] = useState("");
-  const [groupCode, setGroupCode] = useState("");
-  const [paymentType, setPaymentType] = useState("");
-
-  const filtered = data.importRecords.filter((r) => {
-    if (r.importDate < from || r.importDate > to) return false;
-    if (supplierId && r.supplierId !== supplierId) return false;
-    if (paymentType && r.paymentType !== paymentType) return false;
-    if (groupCode) {
-      const p = data.products.find((x) => x.id === r.productId);
-      if (!p || p.groupCode !== groupCode) return false;
-    }
-    return true;
+// Form thu thập/điền lại thông tin còn thiếu rồi tự động điền vào mẫu
+// "Giấy đề nghị đăng ký doanh nghiệp — Công ty TNHH một thành viên" và tải về.
+function BusinessRegModal({ order, customer, onSave, onClose }) {
+  const [form, setForm] = useState({
+    hoTen: (customer?.name || "").toUpperCase(),
+    ngaySinh: order.ownerDob || "",
+    gioiTinh: order.ownerGender || "Nam",
+    soCccd: customer?.cccd || "",
+    dienThoai: customer?.phone || "",
+    email: order.ownerEmail || "",
+    diaChi1: customer?.address || "",
+    xaPhuong1: customer?.ward || "",
+    tinhTp1: order.ownerProvince || "Hà Tĩnh",
+    tenCongTy: order.companyName || "",
+    diaChi2: order.hqAddress || customer?.address || "",
+    xaPhuong2: order.hqWard || customer?.ward || "",
+    tinhTp2: order.hqProvince || "Hà Tĩnh",
+    vonDieuLe: order.capital ?? "",
+    industries: order.industries?.length ? order.industries : (customer?.industries || []),
   });
-
-  const totalAmount = filtered.reduce((s, r) => s + r.totalAmount, 0);
-  const totalByPayment = { tien_mat: 0, cong_no: 0, noi_bo: 0 };
-  filtered.forEach((r) => { totalByPayment[r.paymentType] = (totalByPayment[r.paymentType] || 0) + r.totalAmount; });
-
-  const bySupplier = useMemo(() => {
-    const map = new Map();
-    filtered.forEach((r) => {
-      const s = data.suppliers.find((x) => x.id === r.supplierId);
-      const key = s?.name || "Không rõ";
-      map.set(key, (map.get(key) || 0) + r.totalAmount);
-    });
-    return [...map.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 10);
-  }, [filtered]);
-
-  const groupCodes = [...new Set(data.products.map((p) => p.groupCode).filter(Boolean))];
-
-  return (
-    <div>
-      <SectionTitle icon={BarChart3} title="Báo cáo nhập hàng" subtitle="Lọc theo ngày, nhà cung cấp, nhóm sản phẩm, tình trạng thanh toán" />
-      <Card className="p-4 mb-5">
-        <div className="grid sm:grid-cols-4 gap-3">
-          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-          <SelectField label="Nhà cung cấp" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-            <option value="">Tất cả</option>
-            {data.suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </SelectField>
-          <SelectField label="Nhóm sản phẩm" value={groupCode} onChange={(e) => setGroupCode(e.target.value)}>
-            <option value="">Tất cả</option>
-            {groupCodes.map((g) => <option key={g} value={g}>{g}</option>)}
-          </SelectField>
-          <SelectField label="Tình trạng thanh toán" value={paymentType} onChange={(e) => setPaymentType(e.target.value)} className="sm:col-span-2">
-            <option value="">Tất cả</option>
-            <option value="tien_mat">Tiền mặt</option>
-            <option value="cong_no">Công nợ</option>
-            <option value="noi_bo">Nội bộ</option>
-          </SelectField>
-        </div>
-      </Card>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-        <MetricCard label="Tổng giá trị nhập" value={fmtMoney(totalAmount)} icon={ArrowDownCircle} accent="teal" />
-        <MetricCard label="Tiền mặt" value={fmtMoney(totalByPayment.tien_mat)} icon={Wallet} accent="emerald" />
-        <MetricCard label="Công nợ" value={fmtMoney(totalByPayment.cong_no)} icon={Receipt} accent="amber" />
-        <MetricCard label="Nội bộ" value={fmtMoney(totalByPayment.noi_bo)} icon={Boxes} accent="indigo" />
-      </div>
-      <Card className="p-4 sm:p-5 mb-5">
-        <p className="font-semibold text-slate-800 text-sm mb-3">Top nhà cung cấp theo giá trị nhập</p>
-        {bySupplier.length === 0 ? <EmptyState icon={BarChart3} text="Chưa có dữ liệu." /> : (
-          <div style={{ width: "100%", height: 260 }}>
-            <ResponsiveContainer>
-              <BarChart data={bySupplier} layout="vertical" margin={{ left: 10 }}>
-                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
-                <XAxis type="number" tickFormatter={(v) => fmtNumber(v)} tick={{ fontSize: 11 }} />
-                <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(v) => fmtMoney(v)} />
-                <Bar dataKey="value" fill="#0f766e" radius={[0, 6, 6, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        )}
-      </Card>
-      <Card className="p-0 overflow-hidden">
-        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Chi tiết ({filtered.length} dòng)</p></div>
-        {filtered.length === 0 ? <EmptyState icon={Inbox} text="Không có dữ liệu phù hợp bộ lọc." /> : (
-          <div className="overflow-x-auto max-h-96 overflow-y-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Mã phiếu</th><th className="px-3 py-2">NCC</th>
-                <th className="px-3 py-2">Sản phẩm</th><th className="px-3 py-2 text-right">SL</th><th className="px-3 py-2 text-right">Thành tiền</th><th className="px-3 py-2">TT</th>
-              </tr></thead>
-              <tbody>
-                {filtered.map((r) => {
-                  const s = data.suppliers.find((x) => x.id === r.supplierId);
-                  const p = data.products.find((x) => x.id === r.productId);
-                  return (
-                    <tr key={r.id} className="border-b border-slate-50 last:border-0">
-                      <td className="px-3 py-2 text-slate-500">{fmtDate(r.importDate)}</td>
-                      <td className="px-3 py-2 text-slate-500">{r.receiptCode}</td>
-                      <td className="px-3 py-2">{s?.name}</td>
-                      <td className="px-3 py-2">{p?.name}</td>
-                      <td className="px-3 py-2 text-right">{fmtNumber(r.quantity)} {p?.unit}</td>
-                      <td className="px-3 py-2 text-right font-medium">{fmtMoney(r.totalAmount)}</td>
-                      <td className="px-3 py-2"><Badge className={PAYMENT_TYPE_META[r.paymentType]?.color}>{PAYMENT_TYPE_META[r.paymentType]?.label}</Badge></td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// XUẤT HÀNG — Tác vụ 4: 1 phiếu xuất gồm nhiều dòng NVL (tiêu hao) và/hoặc
-// TP (bán ra), dùng chung Đơn số / Mã doanh thu / Mã xuất / Ngày.
-// ---------------------------------------------------------------------------
-function XuatHangForm({ data, currentUser, onSubmit }) {
-  const [orderNumber, setOrderNumber] = useState("");
-  const [revenueCodeId, setRevenueCodeId] = useState(data.revenueCodes[0]?.id || "");
-  const [exportCodeId, setExportCodeId] = useState(data.exportCodes[0]?.id || "");
-  const [lines, setLines] = useState([]);
-  const [lineType, setLineType] = useState("NVL");
-  const [productQuery, setProductQuery] = useState("");
-  const [productId, setProductId] = useState("");
-  const [quantity, setQuantity] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 
-  const productPool = data.products.filter((p) => p.classification === lineType);
-  const productMatches = productQuery
-    ? productPool.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(productQuery)) || p.code.includes(productQuery)).slice(0, 8)
-    : [];
-  const selectedProduct = data.products.find((p) => p.id === productId);
-  const avgPrice = selectedProduct && lineType === "NVL" ? computeAvgPrice(selectedProduct.id, data) : 0;
-  const currentStock = selectedProduct ? stockAsOf(selectedProduct.id, todayISO(), data) : 0;
+  const vonBangChu = form.vonDieuLe ? soThanhChuTien(form.vonDieuLe) : "";
 
-  const addLine = () => {
-    if (!productId || !quantity) { setError("Chọn sản phẩm và nhập số lượng trước khi thêm dòng."); return; }
-    const price = lineType === "NVL" ? avgPrice : Number(unitPrice) || 0;
-    if (lineType === "TP" && !unitPrice) { setError("Dòng thành phẩm cần nhập đơn giá bán."); return; }
+  const submit = async () => {
+    if (!form.hoTen || !form.tenCongTy || !form.vonDieuLe) {
+      setError("Vui lòng điền đủ Họ tên, Tên công ty và Vốn điều lệ.");
+      return;
+    }
+    if (form.industries.length === 0) {
+      setError("Vui lòng thêm ít nhất 1 ngành nghề kinh doanh.");
+      return;
+    }
     setError("");
-    setLines((prev) => [...prev, {
-      key: Math.random().toString(36).slice(2),
-      lineType, productId, quantity: Number(quantity), unitPrice: price,
-      totalAmount: Number(quantity) * price,
-    }]);
-    setProductId(""); setProductQuery(""); setQuantity(""); setUnitPrice("");
-  };
-
-  const removeLine = (key) => setLines((prev) => prev.filter((l) => l.key !== key));
-
-  const totalNVL = lines.filter((l) => l.lineType === "NVL").reduce((s, l) => s + l.totalAmount, 0);
-  const totalTP = lines.filter((l) => l.lineType === "TP").reduce((s, l) => s + l.totalAmount, 0);
-
-  const submit = async () => {
-    if (lines.length === 0) { setError("Cần thêm ít nhất 1 dòng NVL hoặc TP."); return; }
-    setError(""); setSaving(true);
+    setGenerating(true);
     try {
-      await onSubmit({ orderNumber: orderNumber.trim(), revenueCodeId: revenueCodeId || null, exportCodeId: exportCodeId || null, lines });
-      setOrderNumber(""); setLines([]);
-    } catch (e) {
-      setError(e.message || "Không lưu được, vui lòng thử lại.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card className="p-4 sm:p-5 mb-5">
-      <p className="font-semibold text-slate-800 text-sm mb-3">Xuất hàng mới</p>
-      <div className="grid sm:grid-cols-3 gap-3 mb-4">
-        <TextField label="Đơn số (tự đặt, không bắt buộc)" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} />
-        <SelectField label="Mã doanh thu" value={revenueCodeId} onChange={(e) => setRevenueCodeId(e.target.value)}>
-          <option value="">— Không chọn —</option>
-          {data.revenueCodes.map((r) => <option key={r.id} value={r.id}>{r.code} — {r.name}</option>)}
-        </SelectField>
-        <SelectField label="Mã xuất" value={exportCodeId} onChange={(e) => setExportCodeId(e.target.value)}>
-          <option value="">— Không chọn —</option>
-          {data.exportCodes.map((r) => <option key={r.id} value={r.id}>{r.code} — {r.name}</option>)}
-        </SelectField>
-      </div>
-
-      <div className="bg-slate-50 rounded-xl p-3 mb-4">
-        <p className="text-xs font-medium text-slate-600 mb-2">Thêm dòng nguyên liệu / thành phẩm</p>
-        <div className="grid sm:grid-cols-4 gap-2 mb-2">
-          <SelectField value={lineType} onChange={(e) => { setLineType(e.target.value); setProductId(""); setProductQuery(""); }}>
-            <option value="NVL">Nguyên vật liệu (NVL)</option>
-            <option value="TP">Thành phẩm (TP)</option>
-          </SelectField>
-          <label className="block relative sm:col-span-3">
-            <input
-              value={productQuery || (selectedProduct ? `${selectedProduct.code} — ${selectedProduct.name}` : "")}
-              onChange={(e) => { setProductQuery(e.target.value); setProductId(""); }}
-              placeholder={lineType === "NVL" ? "Gõ mã/tên nguyên liệu..." : "Gõ mã/tên thành phẩm..."}
-              className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
-            />
-            {productMatches.length > 0 && !productId && (
-              <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
-                {productMatches.map((p) => (
-                  <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { setProductId(p.id); setProductQuery(""); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
-                    <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </label>
-        </div>
-        {selectedProduct && (
-          <p className="text-xs text-slate-500 mb-2">
-            Tồn hiện tại: <span className="font-medium">{fmtNumber(currentStock)} {selectedProduct.unit}</span>
-            {lineType === "NVL" && <> · Giá bình quân gia quyền: <span className="font-medium">{fmtMoney(avgPrice)}</span>/{selectedProduct.unit}</>}
-          </p>
-        )}
-        <div className="grid sm:grid-cols-3 gap-2">
-          <TextField placeholder={`Số lượng${selectedProduct ? ` (${selectedProduct.unit})` : ""}`} type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-          {lineType === "TP" ? (
-            <TextField placeholder="Đơn giá bán (đ)" type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
-          ) : (
-            <div className="px-3 py-2 rounded-xl border border-dashed border-slate-300 text-xs text-slate-400 flex items-center">Đơn giá tự tính (bình quân gia quyền)</div>
-          )}
-          <GhostButton type="button" onClick={addLine}><Plus size={14} /> Thêm dòng</GhostButton>
-        </div>
-      </div>
-
-      {lines.length > 0 && (
-        <div className="mb-4 space-y-1.5">
-          {lines.map((l) => {
-            const p = data.products.find((x) => x.id === l.productId);
-            return (
-              <div key={l.key} className="flex items-center justify-between text-sm bg-white border border-slate-200 rounded-lg px-3 py-2">
-                <div className="flex items-center gap-2 min-w-0">
-                  <Badge className={CLASSIFICATION_META[l.lineType]?.color}>{l.lineType}</Badge>
-                  <span className="truncate">{p?.name} — {fmtNumber(l.quantity)} {p?.unit} × {fmtMoney(l.unitPrice)}</span>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <span className="font-medium">{fmtMoney(l.totalAmount)}</span>
-                  <button onClick={() => removeLine(l.key)} className="text-slate-400 hover:text-rose-600"><X size={14} /></button>
-                </div>
-              </div>
-            );
-          })}
-          <div className="flex items-center justify-between text-xs text-slate-500 pt-1">
-            <span>Tổng giá vốn NVL: <span className="font-medium text-slate-700">{fmtMoney(totalNVL)}</span></span>
-            <span>Tổng doanh thu TP: <span className="font-medium text-slate-700">{fmtMoney(totalTP)}</span></span>
-          </div>
-        </div>
-      )}
-
-      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <ArrowUpCircle size={15} />} Lưu phiếu xuất</PrimaryButton>
-    </Card>
-  );
-}
-
-function XuatHangList({ data }) {
-  const rows = data.exportRecords.slice(0, 40);
-  return (
-    <Card className="p-0 overflow-hidden">
-      <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử xuất hàng gần đây</p></div>
-      {rows.length === 0 ? <EmptyState icon={Inbox} text="Chưa có phiếu xuất nào." /> : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-              <th className="px-3 py-2">Mã phiếu</th><th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Loại</th>
-              <th className="px-3 py-2">Sản phẩm</th><th className="px-3 py-2 text-right">SL</th><th className="px-3 py-2 text-right">Thành tiền</th>
-              <th className="px-3 py-2">Mã doanh thu</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((r) => {
-                const p = data.products.find((x) => x.id === r.productId);
-                const rc = data.revenueCodes.find((x) => x.id === r.revenueCodeId);
-                return (
-                  <tr key={r.id} className="border-b border-slate-50 last:border-0">
-                    <td className="px-3 py-2 text-slate-500">{r.receiptCode}</td>
-                    <td className="px-3 py-2 text-slate-500">{fmtDate(r.exportDate)}</td>
-                    <td className="px-3 py-2"><Badge className={CLASSIFICATION_META[r.lineType]?.color}>{r.lineType}</Badge></td>
-                    <td className="px-3 py-2">{p?.name || "—"}</td>
-                    <td className="px-3 py-2 text-right">{fmtNumber(r.quantity)} {p?.unit}</td>
-                    <td className="px-3 py-2 text-right font-medium">{fmtMoney(r.totalAmount)}</td>
-                    <td className="px-3 py-2 text-slate-500">{rc?.name || "—"}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function XuatHangModule({ data, currentUser, onSubmit }) {
-  return (
-    <div>
-      <SectionTitle icon={ArrowUpCircle} title="Xuất hàng" subtitle="Ghi nhận tiêu hao nguyên liệu và bán thành phẩm" />
-      <XuatHangForm data={data} currentUser={currentUser} onSubmit={onSubmit} />
-      <XuatHangList data={data} />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// BÁO CÁO XUẤT — Tác vụ 5: theo loại hình doanh thu & theo nguồn (mã xuất)
-// Giá vốn = tổng Thành tiền các dòng NVL cùng mã; Doanh thu = tổng Thành tiền
-// các dòng TP cùng mã. Lợi nhuận = Doanh thu - Giá vốn.
-// ---------------------------------------------------------------------------
-function profitReportBy(records, codeList, codeField, from, to) {
-  const filtered = records.filter((r) => r.exportDate >= from && r.exportDate <= to);
-  const totalRevenueAll = filtered.filter((r) => r.lineType === "TP").reduce((s, r) => s + r.totalAmount, 0);
-  const rows = codeList.map((c) => {
-    const lines = filtered.filter((r) => r[codeField] === c.id);
-    const giaVon = lines.filter((r) => r.lineType === "NVL").reduce((s, r) => s + r.totalAmount, 0);
-    const doanhThu = lines.filter((r) => r.lineType === "TP").reduce((s, r) => s + r.totalAmount, 0);
-    const loiNhuan = doanhThu - giaVon;
-    return {
-      name: c.name, giaVon, doanhThu, loiNhuan,
-      tiTrong: totalRevenueAll > 0 ? (doanhThu / totalRevenueAll) * 100 : 0,
-      tiSuat: doanhThu > 0 ? (loiNhuan / doanhThu) * 100 : 0,
-    };
-  }).filter((r) => r.giaVon > 0 || r.doanhThu > 0);
-  const totals = rows.reduce((acc, r) => ({ giaVon: acc.giaVon + r.giaVon, doanhThu: acc.doanhThu + r.doanhThu, loiNhuan: acc.loiNhuan + r.loiNhuan }), { giaVon: 0, doanhThu: 0, loiNhuan: 0 });
-  return { rows: rows.sort((a, b) => b.doanhThu - a.doanhThu), totals };
-}
-
-function ProfitTable({ title, rows, totals }) {
-  return (
-    <Card className="p-4 sm:p-5 mb-5">
-      <p className="font-semibold text-slate-800 text-sm mb-3">{title}</p>
-      {rows.length === 0 ? <EmptyState icon={BarChart3} text="Chưa có dữ liệu trong khoảng thời gian này." /> : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-              <th className="px-3 py-2">Tên</th><th className="px-3 py-2 text-right">Giá vốn</th><th className="px-3 py-2 text-right">Doanh thu</th>
-              <th className="px-3 py-2 text-right">Tỉ trọng DT</th><th className="px-3 py-2 text-right">Lợi nhuận</th><th className="px-3 py-2 text-right">Tỉ suất LN</th>
-            </tr></thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr key={i} className="border-b border-slate-50 last:border-0">
-                  <td className="px-3 py-2 font-medium text-slate-700">{r.name}</td>
-                  <td className="px-3 py-2 text-right text-slate-500">{fmtMoney(r.giaVon)}</td>
-                  <td className="px-3 py-2 text-right">{fmtMoney(r.doanhThu)}</td>
-                  <td className="px-3 py-2 text-right text-slate-500">{r.tiTrong.toFixed(1)}%</td>
-                  <td className={`px-3 py-2 text-right font-medium ${r.loiNhuan >= 0 ? "text-emerald-700" : "text-rose-600"}`}>{fmtMoney(r.loiNhuan)}</td>
-                  <td className="px-3 py-2 text-right text-slate-500">{r.tiSuat.toFixed(1)}%</td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t-2 border-slate-200 font-semibold text-slate-800">
-                <td className="px-3 py-2">TỔNG</td>
-                <td className="px-3 py-2 text-right">{fmtMoney(totals.giaVon)}</td>
-                <td className="px-3 py-2 text-right">{fmtMoney(totals.doanhThu)}</td>
-                <td className="px-3 py-2 text-right">—</td>
-                <td className={`px-3 py-2 text-right ${totals.loiNhuan >= 0 ? "text-emerald-700" : "text-rose-600"}`}>{fmtMoney(totals.loiNhuan)}</td>
-                <td className="px-3 py-2 text-right">{totals.doanhThu > 0 ? ((totals.loiNhuan / totals.doanhThu) * 100).toFixed(1) : "0.0"}%</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function BaoCaoXuatModule({ data }) {
-  const [from, setFrom] = useState(daysAgoISO(30));
-  const [to, setTo] = useState(todayISO());
-
-  const byRevenue = profitReportBy(data.exportRecords, data.revenueCodes, "revenueCodeId", from, to);
-  const byExportCode = profitReportBy(data.exportRecords, data.exportCodes, "exportCodeId", from, to);
-
-  return (
-    <div>
-      <SectionTitle icon={BarChart3} title="Báo cáo xuất hàng" subtitle="Doanh thu, giá vốn, lợi nhuận theo loại hình & nguồn doanh thu" />
-      <Card className="p-4 mb-5">
-        <div className="grid sm:grid-cols-2 gap-3">
-          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </div>
-      </Card>
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
-        <MetricCard label="Tổng doanh thu" value={fmtMoney(byRevenue.totals.doanhThu)} icon={TrendingUp} accent="teal" />
-        <MetricCard label="Tổng giá vốn" value={fmtMoney(byRevenue.totals.giaVon)} icon={Receipt} accent="amber" />
-        <MetricCard label="Tổng lợi nhuận" value={fmtMoney(byRevenue.totals.loiNhuan)} icon={Wallet} accent="emerald" />
-      </div>
-      <ProfitTable title="I. Báo cáo theo loại hình doanh thu (Mã doanh thu)" rows={byRevenue.rows} totals={byRevenue.totals} />
-      <ProfitTable title="II. Báo cáo theo nguồn doanh thu (Mã xuất)" rows={byExportCode.rows} totals={byExportCode.totals} />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// TỒN KHO — Tác vụ 6: Nhập - Xuất - Tồn theo mã SP/NVL/TP + chỉnh tồn đầu
-// ---------------------------------------------------------------------------
-function StockOpeningForm({ data, currentUser, onSubmit }) {
-  const [productId, setProductId] = useState("");
-  const [productQuery, setProductQuery] = useState("");
-  const [asOfDate, setAsOfDate] = useState(todayISO());
-  const [quantity, setQuantity] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
-  const [note, setNote] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  const productMatches = productQuery
-    ? data.products.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(productQuery)) || p.code.includes(productQuery)).slice(0, 8)
-    : [];
-  const selectedProduct = data.products.find((p) => p.id === productId);
-
-  const submit = async () => {
-    if (!productId || !asOfDate || quantity === "") { setError("Vui lòng chọn sản phẩm, ngày chốt và số lượng."); return; }
-    setError(""); setSaving(true);
-    try {
-      await onSubmit({ productId, asOfDate, quantity: Number(quantity), unitPrice: Number(unitPrice) || 0, note: note.trim() });
-      setProductId(""); setProductQuery(""); setQuantity(""); setUnitPrice(""); setNote("");
-    } catch (e) {
-      setError(e.message || "Không lưu được, vui lòng thử lại.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card className="p-4 sm:p-5 mb-5">
-      <p className="font-semibold text-slate-800 text-sm mb-1">Chốt / điều chỉnh tồn đầu kỳ</p>
-      <p className="text-xs text-slate-500 mb-3">Dùng khi kiểm kho thực tế — mốc này sẽ là gốc để tính tồn kho & giá bình quân gia quyền cho các lần nhập/xuất sau đó.</p>
-      <div className="grid sm:grid-cols-2 gap-3 mb-3">
-        <label className="block relative">
-          <span className="block text-xs font-medium text-slate-600 mb-1">Sản phẩm</span>
-          <input
-            value={productQuery || (selectedProduct ? `${selectedProduct.code} — ${selectedProduct.name}` : "")}
-            onChange={(e) => { setProductQuery(e.target.value); setProductId(""); }}
-            placeholder="Gõ mã/tên sản phẩm..."
-            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
-          />
-          {productMatches.length > 0 && !productId && (
-            <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
-              {productMatches.map((p) => (
-                <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { setProductId(p.id); setProductQuery(""); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50">
-                  <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </label>
-        <TextField label="Ngày chốt" type="date" value={asOfDate} onChange={(e) => setAsOfDate(e.target.value)} />
-        <TextField label={`Số lượng thực tế${selectedProduct ? ` (${selectedProduct.unit})` : ""}`} type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-        <TextField label="Đơn giá (đ)" type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
-        <TextField label="Ghi chú" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
-      </div>
-      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />} Lưu mốc tồn đầu</PrimaryButton>
-    </Card>
-  );
-}
-
-function TonKhoModule({ data, currentUser, onSaveOpening }) {
-  const [from, setFrom] = useState(daysAgoISO(30));
-  const [to, setTo] = useState(todayISO());
-  const [classification, setClassification] = useState("all");
-  const [q, setQ] = useState("");
-  const isQuanLy = currentUser.role === "quan_ly";
-
-  let products = classification === "all" ? data.products : data.products.filter((p) => p.classification === classification);
-  if (q) products = products.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(q)) || p.code.includes(q));
-
-  const rows = products.map((p) => ({ product: p, ...nktForProduct(p.id, from, to, data) }));
-  const totals = rows.reduce((acc, r) => ({
-    openingValue: acc.openingValue + r.openingValue, importValue: acc.importValue + r.importValue,
-    exportValue: acc.exportValue + r.exportValue, closingValue: acc.closingValue + r.closingValue,
-  }), { openingValue: 0, importValue: 0, exportValue: 0, closingValue: 0 });
-
-  return (
-    <div>
-      <SectionTitle icon={Warehouse} title="Tồn kho — Nhập - Xuất - Tồn" subtitle="Theo dõi tồn đầu, nhập, xuất, tồn cuối theo từng sản phẩm" />
-      {isQuanLy && <StockOpeningForm data={data} currentUser={currentUser} onSubmit={onSaveOpening} />}
-      <Card className="p-4 mb-5">
-        <div className="grid sm:grid-cols-4 gap-3">
-          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-          <SelectField label="Phân loại" value={classification} onChange={(e) => setClassification(e.target.value)}>
-            <option value="all">Tất cả</option>
-            <option value="NL">Nguyên vật liệu</option>
-            <option value="TP">Thành phẩm</option>
-          </SelectField>
-          <TextField label="Tìm sản phẩm" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Mã hoặc tên..." />
-        </div>
-      </Card>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-        <MetricCard label="Giá trị tồn đầu" value={fmtMoney(totals.openingValue)} icon={Boxes} accent="indigo" />
-        <MetricCard label="Giá trị nhập" value={fmtMoney(totals.importValue)} icon={ArrowDownCircle} accent="teal" />
-        <MetricCard label="Giá trị xuất" value={fmtMoney(totals.exportValue)} icon={ArrowUpCircle} accent="amber" />
-        <MetricCard label="Giá trị tồn cuối" value={fmtMoney(totals.closingValue)} icon={Warehouse} accent="emerald" />
-      </div>
-      <Card className="p-0 overflow-hidden">
-        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Chi tiết theo sản phẩm ({rows.length})</p></div>
-        {rows.length === 0 ? <EmptyState icon={Package} text="Chưa có sản phẩm nào." /> : (
-          <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                <th className="px-3 py-2">Sản phẩm</th><th className="px-3 py-2">Loại</th>
-                <th className="px-3 py-2 text-right">Tồn đầu</th><th className="px-3 py-2 text-right">Nhập</th>
-                <th className="px-3 py-2 text-right">Xuất</th><th className="px-3 py-2 text-right">Tồn cuối</th>
-                <th className="px-3 py-2 text-right">Giá trị tồn cuối</th>
-              </tr></thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.product.id} className="border-b border-slate-50 last:border-0">
-                    <td className="px-3 py-2">
-                      <p className="font-medium text-slate-700">{r.product.name}</p>
-                      <p className="text-xs text-slate-400">{r.product.code}</p>
-                    </td>
-                    <td className="px-3 py-2"><Badge className={CLASSIFICATION_META[r.product.classification]?.color}>{r.product.classification}</Badge></td>
-                    <td className="px-3 py-2 text-right">{fmtNumber(r.openingQty)} {r.product.unit}</td>
-                    <td className="px-3 py-2 text-right text-teal-700">+{fmtNumber(r.importQty)}</td>
-                    <td className="px-3 py-2 text-right text-rose-600">-{fmtNumber(r.exportQty)}</td>
-                    <td className="px-3 py-2 text-right font-medium">{fmtNumber(r.closingQty)} {r.product.unit}</td>
-                    <td className="px-3 py-2 text-right font-medium">{fmtMoney(r.closingValue)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-      <p className="text-xs text-slate-400 mt-3">* Giá trị tính theo giá bình quân gia quyền hiện tại của từng sản phẩm (tồn đầu kỳ gần nhất + toàn bộ nhập kể từ mốc đó).</p>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// TÀI KHOẢN (Quản lý) — tra cứu + đặt lại mật khẩu
-// ---------------------------------------------------------------------------
-function ResetPasswordModal({ currentUser, employee, onClose, onSuccess }) {
-  const [adminPassword, setAdminPassword] = useState("");
-  const [newPassword, setNewPassword] = useState("123456");
-  const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-
-  const submit = async () => {
-    if (!adminPassword) { setError("Vui lòng nhập mật khẩu của chính bạn để xác nhận."); return; }
-    if (!newPassword || newPassword.length < 6) { setError("Mật khẩu mới cần ít nhất 6 ký tự."); return; }
-    setError(""); setSaving(true);
-    try {
-      const { data, error: qErr } = await supabase.rpc("admin_reset_password", {
-        p_admin_id: currentUser.id, p_admin_password: adminPassword,
-        p_target_employee_id: employee.id, p_new_password: newPassword,
+      const now = new Date();
+      const nganhList = form.industries.map((ind, i) => ({
+        stt: String(i + 1),
+        ten: ind.detail.trim() ? `${ind.name}\nChi tiết: ${ind.detail.trim()}` : ind.name,
+        ma: ind.code,
+        chinh: ind.isPrimary ? "X" : "",
+      }));
+      const data = {
+        ho_ten: form.hoTen.toUpperCase(),
+        ngay_sinh: isoToDDMMYYYY(form.ngaySinh),
+        gioi_tinh: form.gioiTinh,
+        so_cccd: form.soCccd,
+        dia_chi_1: form.diaChi1,
+        xa_phuong_1: form.xaPhuong1,
+        tinh_tp_1: form.tinhTp1,
+        dien_thoai: form.dienThoai,
+        email: form.email,
+        ten_cong_ty: form.tenCongTy.toUpperCase(),
+        dia_chi_2: form.diaChi2,
+        xa_phuong_2: form.xaPhuong2,
+        tinh_tp_2: form.tinhTp2,
+        von_dieu_le: Number(form.vonDieuLe).toLocaleString("vi-VN"),
+        von_bang_chu: vonBangChu,
+        ngay_lap: String(now.getDate()).padStart(2, "0"),
+        thang_lap: String(now.getMonth() + 1).padStart(2, "0"),
+        nam_lap: String(now.getFullYear()),
+        tinh_lap: form.tinhTp2 || "Hà Tĩnh",
+        nganh_list: nganhList,
+      };
+      await generateBusinessRegistrationDoc(data, `GiayDeNghiDKDN_${order.orderCode}.docx`);
+      await onSave({
+        companyName: form.tenCongTy, capital: Number(form.vonDieuLe) || null,
+        ownerDob: form.ngaySinh || null, ownerGender: form.gioiTinh, ownerEmail: form.email,
+        ownerProvince: form.tinhTp1, hqAddress: form.diaChi2, hqWard: form.xaPhuong2, hqProvince: form.tinhTp2,
+        industries: form.industries,
       });
-      if (qErr) throw qErr;
-      if (!data) { setError("Mật khẩu của bạn không đúng."); return; }
-      onSuccess();
-    } catch (e) {
-      console.error(e);
-      setError("Không đặt lại được mật khẩu, vui lòng thử lại.");
+      onClose();
+    } catch (err) {
+      setError(err.message || "Có lỗi khi tạo file.");
     } finally {
-      setSaving(false);
+      setGenerating(false);
     }
   };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5">
+      <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-5 max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between mb-1">
-          <p className="font-semibold text-slate-800 flex items-center gap-2"><Lock size={17} className="text-teal-700" /> Đặt lại mật khẩu</p>
-          <button onClick={onClose}><X size={18} className="text-slate-400" /></button>
+          <p className="font-semibold text-slate-800 flex items-center gap-2"><FileText size={18} className="text-indigo-700" /> Tạo Giấy đề nghị đăng ký doanh nghiệp</p>
+          <button onClick={onClose}><XCircle size={18} className="text-slate-400" /></button>
         </div>
-        <p className="text-sm text-slate-500 mb-4">Cho tài khoản: <span className="font-medium text-slate-700">{employee.name}</span> ({employee.username})</p>
-        <div className="space-y-3">
-          <TextField label="Mật khẩu tạm thời mới" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
-          <p className="text-[11px] text-slate-400 -mt-2">Nhân viên sẽ bị bắt buộc đổi mật khẩu này trong 24h ở lần đăng nhập tiếp theo.</p>
-          <TextField label="Xác nhận: mật khẩu của chính bạn" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} />
-          {error && <p className="text-sm text-rose-600 flex items-center gap-1.5"><AlertTriangle size={14} /> {error}</p>}
-          <div className="flex gap-2">
-            <PrimaryButton type="button" onClick={submit} disabled={saving}>{saving ? "Đang lưu..." : "Đặt lại mật khẩu"}</PrimaryButton>
-            <GhostButton type="button" onClick={onClose}>Hủy</GhostButton>
-          </div>
+        <p className="text-xs text-slate-500 mb-4">Kiểm tra/bổ sung thông tin bên dưới — hệ thống sẽ tự động điền vào mẫu chính thức (Công ty TNHH một thành viên) và tải file Word về máy.</p>
+
+        <p className="text-xs font-semibold text-slate-600 mb-2">Chủ sở hữu / Người đại diện theo pháp luật</p>
+        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+          <TextField label="Họ tên (viết hoa)" value={form.hoTen} onChange={set("hoTen")} className="sm:col-span-2" />
+          <TextField label="Ngày sinh" type="date" value={form.ngaySinh} onChange={set("ngaySinh")} />
+          <SelectField label="Giới tính" value={form.gioiTinh} onChange={set("gioiTinh")}>
+            <option value="Nam">Nam</option>
+            <option value="Nữ">Nữ</option>
+          </SelectField>
+          <TextField label="Số CCCD" value={form.soCccd} onChange={set("soCccd")} />
+          <TextField label="Điện thoại" value={form.dienThoai} onChange={set("dienThoai")} />
+          <TextField label="Email" value={form.email} onChange={set("email")} className="sm:col-span-2" />
+          <TextField label="Địa chỉ liên lạc (số nhà, đường...)" value={form.diaChi1} onChange={set("diaChi1")} className="sm:col-span-2" />
+          <TextField label="Xã/Phường" value={form.xaPhuong1} onChange={set("xaPhuong1")} />
+          <TextField label="Tỉnh/Thành phố" value={form.tinhTp1} onChange={set("tinhTp1")} />
+        </div>
+
+        <p className="text-xs font-semibold text-slate-600 mb-2">Thông tin công ty</p>
+        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+          <TextField label="Tên công ty (tiếng Việt, viết hoa)" value={form.tenCongTy} onChange={set("tenCongTy")} className="sm:col-span-2" />
+          <TextField label="Địa chỉ trụ sở chính" value={form.diaChi2} onChange={set("diaChi2")} className="sm:col-span-2" />
+          <TextField label="Xã/Phường (trụ sở)" value={form.xaPhuong2} onChange={set("xaPhuong2")} />
+          <TextField label="Tỉnh/Thành phố (trụ sở)" value={form.tinhTp2} onChange={set("tinhTp2")} />
+          <TextField label="Vốn điều lệ (VNĐ)" type="number" value={form.vonDieuLe} onChange={set("vonDieuLe")} className="sm:col-span-2" />
+          {vonBangChu && <p className="text-xs text-slate-500 sm:col-span-2 -mt-2">Bằng chữ: <span className="italic">{vonBangChu}</span></p>}
+        </div>
+
+        <p className="text-xs font-semibold text-slate-600 mb-2">Ngành, nghề kinh doanh</p>
+        <div className="mb-4">
+          <IndustryListEditor industries={form.industries} onChange={(list) => setForm((f) => ({ ...f, industries: list }))} />
+        </div>
+
+        {error && <p className="text-xs text-rose-600 mb-3 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <GhostButton onClick={onClose} disabled={generating}>Huỷ</GhostButton>
+          <PrimaryButton onClick={submit} disabled={generating}>
+            {generating ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Tạo &amp; tải file Word
+          </PrimaryButton>
         </div>
       </div>
     </div>
   );
 }
 
-function AddEmployeeForm({ onAdd }) {
-  const [username, setUsername] = useState("");
-  const [name, setName] = useState("");
-  const [role, setRole] = useState("nhan_vien_kho");
-  const [adminPassword, setAdminPassword] = useState("");
-  const [saving, setSaving] = useState(false);
+// Nút mở form tạo hồ sơ — chỉ hiện với đơn "Mở Công ty"
+// Form thu thập/điền lại thông tin cho "Giấy đề nghị đăng ký Hộ kinh doanh +
+// Giấy uỷ quyền" (đơn "Mở HKD") và tải về.
+function HouseholdRegModal({ order, customer, currentUser, onSave, onClose }) {
+  const [form, setForm] = useState({
+    hoTen: (customer?.name || "").toUpperCase(),
+    ngaySinh: order.ownerDob || "",
+    gioiTinh: order.ownerGender || "Nam",
+    soCccd: customer?.cccd || "",
+    dienThoai: customer?.phone || "",
+    tenHoKd: order.companyName || "",
+    diaChiTruSo: order.hqAddress || customer?.address || "",
+    phuong: order.hqWard || customer?.ward || "",
+    tinhTp: order.hqProvince || "Hà Tĩnh",
+    industries: order.industries?.length ? order.industries : (customer?.industries || []),
+    vonKinhDoanh: order.capital ?? "",
+    diaChiCaNhan: customer?.address || "",
+    phuongCaNhan: customer?.ward || "",
+    tinhTpCaNhan: order.ownerProvince || "Hà Tĩnh",
+  });
+  const [uqIndex, setUqIndex] = useState(() => {
+    const matched = findUyQuyenProfile(currentUser?.name);
+    const idx = matched ? UY_QUYEN_PROFILES.indexOf(matched) : 0;
+    return idx >= 0 ? idx : 0;
+  });
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const uyQuyen = UY_QUYEN_PROFILES[uqIndex];
+
+  const vonBangChu = form.vonKinhDoanh ? soThanhChuTien(form.vonKinhDoanh) : "";
 
   const submit = async () => {
-    if (!username.trim() || !name.trim()) { setError("Vui lòng nhập đủ tên đăng nhập và họ tên."); return; }
-    if (!adminPassword) { setError("Vui lòng nhập mật khẩu của chính bạn để xác nhận."); return; }
-    setError(""); setSaving(true);
+    if (!form.hoTen || !form.tenHoKd || !form.vonKinhDoanh) {
+      setError("Vui lòng điền đủ Họ tên, Tên hộ kinh doanh và Vốn kinh doanh.");
+      return;
+    }
+    if (form.industries.length === 0) {
+      setError("Vui lòng thêm ít nhất 1 ngành nghề kinh doanh.");
+      return;
+    }
+    setError("");
+    setGenerating(true);
     try {
-      await onAdd({ username: username.trim(), name: name.trim(), role, adminPassword });
-      setUsername(""); setName(""); setAdminPassword("");
-    } catch (e) {
-      setError(e.message || "Không tạo được tài khoản.");
+      const now = new Date();
+      const nganhList = form.industries.map((ind, i) => ({
+        stt: String(i + 1),
+        ten: ind.detail.trim() ? `${ind.name}\nChi tiết: ${ind.detail.trim()}` : ind.name,
+        ma: ind.code,
+        chinh: ind.isPrimary ? "X" : "",
+      }));
+      const data = {
+        ngay_lap: String(now.getDate()).padStart(2, "0"),
+        thang_lap: String(now.getMonth() + 1).padStart(2, "0"),
+        nam_lap: String(now.getFullYear()),
+        tinh_tp: form.tinhTp || "Hà Tĩnh",
+        phuong: form.phuong,
+        ho_ten: form.hoTen.toUpperCase(),
+        ngay_sinh_ngay: form.ngaySinh ? String(new Date(form.ngaySinh).getDate()).padStart(2, "0") : "",
+        ngay_sinh_thang: form.ngaySinh ? String(new Date(form.ngaySinh).getMonth() + 1).padStart(2, "0") : "",
+        ngay_sinh_nam: form.ngaySinh ? String(new Date(form.ngaySinh).getFullYear()) : "",
+        gioi_tinh: form.gioiTinh,
+        so_cccd: form.soCccd,
+        dien_thoai: form.dienThoai,
+        ten_ho_kd: form.tenHoKd.toUpperCase(),
+        dia_chi_tru_so: form.diaChiTruSo,
+        nganh_list: nganhList,
+        von_kinh_doanh: Number(form.vonKinhDoanh).toLocaleString("vi-VN"),
+        von_bang_chu: vonBangChu,
+        dia_chi_ca_nhan: form.diaChiCaNhan,
+        phuong_ca_nhan: form.phuongCaNhan,
+        tinh_tp_ca_nhan: form.tinhTpCaNhan || "Hà Tĩnh",
+        uq_ho_ten: uyQuyen.hoTen,
+        uq_gioi_tinh: uyQuyen.gioiTinh,
+        uq_ngay_sinh: uyQuyen.ngaySinh,
+        uq_cccd: uyQuyen.cccd,
+        uq_dia_chi: uyQuyen.diaChi,
+        uq_dien_thoai: uyQuyen.dienThoai,
+        uq_email: uyQuyen.email || "",
+      };
+      await generateHouseholdBusinessDoc(data, `GiayDeNghiHKD_${order.orderCode}.docx`);
+      await onSave({
+        companyName: form.tenHoKd, capital: Number(form.vonKinhDoanh) || null,
+        ownerDob: form.ngaySinh || null, ownerGender: form.gioiTinh, ownerEmail: order.ownerEmail,
+        ownerProvince: form.tinhTpCaNhan, hqAddress: form.diaChiTruSo, hqWard: form.phuong, hqProvince: form.tinhTp,
+        industries: form.industries,
+      });
+      onClose();
+    } catch (err) {
+      setError(err.message || "Có lỗi khi tạo file.");
     } finally {
-      setSaving(false);
+      setGenerating(false);
     }
   };
 
   return (
-    <Card className="p-4 sm:p-5 mb-5">
-      <p className="font-semibold text-slate-800 text-sm mb-3">Tạo tài khoản mới</p>
-      <div className="grid sm:grid-cols-3 gap-3 mb-3">
-        <TextField label="Tên đăng nhập" value={username} onChange={(e) => setUsername(e.target.value)} placeholder="vd: nvkho2" />
-        <TextField label="Họ tên" value={name} onChange={(e) => setName(e.target.value)} />
-        <SelectField label="Vai trò" value={role} onChange={(e) => setRole(e.target.value)}>
-          <option value="nhan_vien_kho">Nhân viên kho</option>
-          <option value="quan_ly">Quản lý</option>
-        </SelectField>
-        <TextField label="Xác nhận: mật khẩu của chính bạn" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} className="sm:col-span-3" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-2xl w-full p-5 max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between mb-1">
+          <p className="font-semibold text-slate-800 flex items-center gap-2"><FileText size={18} className="text-indigo-700" /> Tạo Giấy đề nghị đăng ký HKD + Giấy uỷ quyền</p>
+          <button onClick={onClose}><XCircle size={18} className="text-slate-400" /></button>
+        </div>
+        <p className="text-xs text-slate-500 mb-4">Kiểm tra/bổ sung thông tin bên dưới — hệ thống sẽ tự động điền vào cả 2 mẫu (Giấy đề nghị đăng ký Hộ kinh doanh + Giấy uỷ quyền) và tải file Word về máy. Phần "Bên nhận uỷ quyền" đã cố định sẵn theo nhân sự công ty.</p>
+
+        <p className="text-xs font-semibold text-slate-600 mb-2">Chủ hộ kinh doanh</p>
+        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+          <TextField label="Họ tên (viết hoa)" value={form.hoTen} onChange={set("hoTen")} className="sm:col-span-2" />
+          <TextField label="Ngày sinh" type="date" value={form.ngaySinh} onChange={set("ngaySinh")} />
+          <SelectField label="Giới tính" value={form.gioiTinh} onChange={set("gioiTinh")}>
+            <option value="Nam">Nam</option>
+            <option value="Nữ">Nữ</option>
+          </SelectField>
+          <TextField label="Số CCCD" value={form.soCccd} onChange={set("soCccd")} />
+          <TextField label="Điện thoại" value={form.dienThoai} onChange={set("dienThoai")} />
+          <TextField label="Địa chỉ liên lạc cá nhân (số nhà, đường...)" value={form.diaChiCaNhan} onChange={set("diaChiCaNhan")} className="sm:col-span-2" />
+          <TextField label="Xã/Phường (cá nhân)" value={form.phuongCaNhan} onChange={set("phuongCaNhan")} />
+          <TextField label="Tỉnh/Thành phố (cá nhân)" value={form.tinhTpCaNhan} onChange={set("tinhTpCaNhan")} />
+        </div>
+
+        <p className="text-xs font-semibold text-slate-600 mb-2">Hộ kinh doanh</p>
+        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+          <TextField label="Tên hộ kinh doanh (không cần ghi 'HỘ KINH DOANH')" value={form.tenHoKd} onChange={set("tenHoKd")} className="sm:col-span-2" />
+          <TextField label="Địa chỉ trụ sở" value={form.diaChiTruSo} onChange={set("diaChiTruSo")} className="sm:col-span-2" />
+          <TextField label="Xã/Phường (trụ sở, nơi đăng ký)" value={form.phuong} onChange={set("phuong")} />
+          <TextField label="Tỉnh/Thành phố (trụ sở)" value={form.tinhTp} onChange={set("tinhTp")} />
+          <TextField label="Vốn kinh doanh (VNĐ)" type="number" value={form.vonKinhDoanh} onChange={set("vonKinhDoanh")} className="sm:col-span-2" />
+          {vonBangChu && <p className="text-xs text-slate-500 sm:col-span-2 -mt-2">Bằng chữ: <span className="italic">{vonBangChu}</span></p>}
+        </div>
+
+        <p className="text-xs font-semibold text-slate-600 mb-2">Ngành, nghề kinh doanh</p>
+        <div className="mb-4">
+          <IndustryListEditor industries={form.industries} onChange={(list) => setForm((f) => ({ ...f, industries: list }))} />
+        </div>
+
+        <p className="text-xs font-semibold text-slate-600 mb-2">Người nhận uỷ quyền (nhân sự công ty nộp hồ sơ)</p>
+        <div className="mb-4">
+          <SelectField label="Chọn người nhận uỷ quyền" value={uqIndex} onChange={(e) => setUqIndex(Number(e.target.value))}>
+            {UY_QUYEN_PROFILES.map((p, i) => <option key={p.cccd} value={i}>{p.hoTen}</option>)}
+          </SelectField>
+          <p className="text-[11px] text-slate-400 mt-1">Tự động chọn theo tài khoản đang đăng nhập — có thể đổi lại nếu người khác đứng ra nộp hồ sơ.</p>
+        </div>
+
+        {error && <p className="text-xs text-rose-600 mb-3 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+
+        <div className="flex justify-end gap-2">
+          <GhostButton onClick={onClose} disabled={generating}>Huỷ</GhostButton>
+          <PrimaryButton onClick={submit} disabled={generating}>
+            {generating ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />} Tạo &amp; tải file Word
+          </PrimaryButton>
+        </div>
       </div>
-      <p className="text-xs text-slate-400 mb-3">Mật khẩu mặc định ban đầu: <span className="font-mono font-medium">123456</span> — tài khoản sẽ bị bắt buộc đổi mật khẩu trong 24h ở lần đăng nhập đầu tiên.</p>
-      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Tạo tài khoản</PrimaryButton>
-    </Card>
+    </div>
   );
 }
 
-function TaiKhoanModule({ currentUser, employees, onAddEmployee }) {
-  const [query, setQuery] = useState("");
-  const [resetting, setResetting] = useState(null);
-  const q = query.trim().toLowerCase();
-  const filtered = q ? employees.filter((e) => e.name?.toLowerCase().includes(q) || e.username?.toLowerCase().includes(q)) : employees;
+// Nút mở form tạo hồ sơ — chọn đúng mẫu theo loại thủ tục ("Mở Công ty" hoặc
+// "Mở HKD"); không hiện với các loại thủ tục khác.
+function BusinessRegDocButton({ order, customer, currentUser, onSave, className = "" }) {
+  const [open, setOpen] = useState(false);
+  if (order.procedureType !== "mo_cty" && order.procedureType !== "mo_hkd") return null;
+  const label = order.procedureType === "mo_cty" ? "Tạo Giấy đề nghị ĐKDN" : "Tạo Giấy đề nghị ĐKHKD";
+  return (
+    <>
+      <GhostButton className={`!py-1.5 !text-xs ${className}`} onClick={() => setOpen(true)}>
+        <FileText size={13} /> {label}
+      </GhostButton>
+      {open && order.procedureType === "mo_cty" && (
+        <BusinessRegModal order={order} customer={customer} onSave={onSave} onClose={() => setOpen(false)} />
+      )}
+      {open && order.procedureType === "mo_hkd" && (
+        <HouseholdRegModal order={order} customer={customer} currentUser={currentUser} onSave={onSave} onClose={() => setOpen(false)} />
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NHÂN VIÊN — PHÂN HỆ 3: TRẠNG THÁI ĐƠN HÀNG
+// ---------------------------------------------------------------------------
+
+function OrderStatusRow({ order, customer, currentUser, onAdvance, onMarkRejected, onRetry, onSendLicense, onSaveCompanyInfo, isNew }) {
+  const [reason, setReason] = useState(order.overdueReason || "");
+  const [confirmStep, setConfirmStep] = useState(null);
+  const [stepMsg, setStepMsg] = useState("");
+  const [uploadingLicense, setUploadingLicense] = useState(false);
+  const [licenseFile, setLicenseFile] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const currentIndex = STATUS_FLOW.indexOf(order.status);
+  const nextStatus = STATUS_FLOW[currentIndex + 1];
+  const isRejected = order.status === "chua_duoc_chap_thuan";
+
+  React.useEffect(() => {
+    if (!stepMsg) return;
+    const t = setTimeout(() => setStepMsg(""), 3000);
+    return () => clearTimeout(t);
+  }, [stepMsg]);
+
+  const handleStepClick = (step, index) => {
+    if (busy) return;
+    if (index === currentIndex + 1) {
+      if (step === "duoc_chap_thuan") setConfirmStep(step);
+      else if (step === "gui_giay_phep") setUploadingLicense(true);
+      else runAsync(() => onAdvance(order.id, step));
+    } else if (index <= currentIndex) {
+      setStepMsg(`Bước "${ORDER_STATUS[step].label}" đã hoàn tất trước đó — không thể sửa lại.`);
+    } else {
+      setStepMsg(`Cần thực hiện lần lượt từng bước. Bước tiếp theo cần chọn là "${ORDER_STATUS[nextStatus]?.label}".`);
+    }
+  };
+
+  const runAsync = async (fn) => {
+    setBusy(true);
+    await fn();
+    setBusy(false);
+  };
+
+  const handlePickPdf = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setLicenseFile({ name: file.name, raw: file });
+  };
+
+  const submitRejection = () => {
+    if (!reason.trim() || busy) return;
+    runAsync(() => onMarkRejected(order.id, reason));
+  };
+
+  if (order.status === "hoan_thanh" || order.status === "da_thanh_toan") {
+    const paid = order.status === "da_thanh_toan";
+    return (
+      <div className={`p-4 rounded-xl border ${paid ? "border-emerald-300 bg-emerald-50/40" : "border-indigo-200 bg-indigo-50/40"}`}>
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div>
+            <p className="text-sm font-semibold text-slate-800">{order.orderCode} · {procedureLabel(order.procedureType)}</p>
+            <p className="text-xs text-slate-500">{customer?.name || customer?.phone || "?"} · Tạo ngày {fmtDate(order.createdAt)}</p>
+          </div>
+          <StatusBadge status={order.status} />
+        </div>
+        <div className="space-y-1.5 text-xs">
+          <p className="flex items-center gap-1.5 text-slate-500"><CheckCircle2 size={13} className="text-emerald-600" /> Đã gửi giấy phép lên nhóm{order.licenseSentAt ? ` (${fmtDate(order.licenseSentAt)})` : ""}</p>
+          <p className="flex items-center gap-1.5 text-slate-500"><CheckCircle2 size={13} className="text-emerald-600" /> Quản lý đã xác nhận đơn hàng{order.confirmedAt ? ` (${fmtDate(order.confirmedAt)})` : ""}</p>
+          <p className={`flex items-center gap-1.5 ${paid ? "text-slate-500" : "text-indigo-600"}`}>
+            {paid ? <CheckCircle2 size={13} className="text-emerald-600" /> : <Clock size={13} />}
+            {paid ? `Đã thanh toán${order.completedAt ? ` (${fmtDate(order.completedAt)})` : ""}` : "Đang chờ quản lý cập nhật doanh thu / chi phí / tiền công"}
+          </p>
+        </div>
+        {paid && (
+          <div className="mt-3 pt-3 border-t border-emerald-100">
+            <p className="text-xs text-slate-500">Tiền công của bạn cho đơn này:</p>
+            <p className="text-base font-semibold text-emerald-700">{fmtMoney(order.laborFee)}</p>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (isRejected) {
+    return (
+      <div className="p-4 rounded-xl border border-rose-300 bg-rose-50/50">
+        <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <div>
+            <p className="text-sm font-semibold text-slate-800">{order.orderCode} · {procedureLabel(order.procedureType)}</p>
+            <p className="text-xs text-slate-500">{customer?.name || customer?.phone || "?"} · Tạo ngày {fmtDate(order.createdAt)}</p>
+          </div>
+          <StatusBadge status={order.status} />
+        </div>
+        <div className="p-3 rounded-lg bg-white border border-rose-200 mb-3">
+          <p className="text-xs font-medium text-rose-700 flex items-center gap-1 mb-1"><XCircle size={13} /> Lý do chưa được chấp thuận</p>
+          <p className="text-sm text-slate-700">{order.overdueReason || "—"}</p>
+        </div>
+        <p className="text-xs text-slate-500 mb-2">Cảnh báo đã được gửi tới tài khoản quản lý. Nếu vấn đề đã được khắc phục, bạn có thể trình lại lãnh đạo.</p>
+        <GhostButton className="!text-xs" disabled={busy} onClick={() => runAsync(() => onRetry(order.id))}>
+          {busy ? <Loader2 size={13} className="animate-spin" /> : <ArrowLeft size={13} className="rotate-180" />} Trình lại lãnh đạo
+        </GhostButton>
+      </div>
+    );
+  }
 
   return (
-    <div>
-      <SectionTitle icon={ShieldCheck} title="Quản lý tài khoản" subtitle={`${employees.length} tài khoản nhân sự`} />
-      <AddEmployeeForm onAdd={onAddEmployee} />
-      <Card className="p-3 mb-4 flex items-center gap-2">
-        <Search size={15} className="text-slate-400 shrink-0" />
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Tìm theo tên hoặc tên đăng nhập..." className="flex-1 text-sm outline-none" />
-      </Card>
-      {filtered.length === 0 ? (
-        <EmptyState icon={Search} text="Không tìm thấy tài khoản phù hợp." />
+    <div className={`p-4 rounded-xl border transition ${isNew ? "border-emerald-300 bg-emerald-50/50 ring-2 ring-emerald-200" : order.approvalOverdue ? "border-rose-300 bg-rose-50/40" : "border-slate-200"}`}>
+      {isNew && (
+        <p className="text-xs font-medium text-emerald-700 flex items-center gap-1 mb-2">
+          <CheckCircle2 size={13} /> Vừa tạo thành công
+        </p>
+      )}
+      <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+        <div>
+          <p className="text-sm font-semibold text-slate-800">{order.orderCode} · {procedureLabel(order.procedureType)}</p>
+          <p className="text-xs text-slate-500">{customer?.name || customer?.phone || "?"} · Tạo ngày {fmtDate(order.createdAt)}</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <BusinessRegDocButton order={order} customer={customer} currentUser={currentUser} onSave={(fields) => onSaveCompanyInfo(order.id, fields)} />
+          <StatusBadge status={order.status} />
+        </div>
+      </div>
+
+      <OrderProgressStepper status={order.status} onStepClick={handleStepClick} />
+
+      {stepMsg && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5 mb-2 flex items-center gap-1.5">
+          <AlertTriangle size={12} className="shrink-0" /> {stepMsg}
+        </p>
+      )}
+
+      {order.receivedAt && (
+        <p className="text-xs text-slate-500 mb-2 flex items-center gap-1">
+          <Clock size={12} /> Hạn chấp thuận (3 ngày làm việc kể từ khi tiếp nhận): <span className="font-medium text-slate-700">{fmtDate(order.approvalDeadline)}</span>
+        </p>
+      )}
+
+      {order.status === "trinh_lanh_dao" && (
+        <div className={`mb-2 p-3 rounded-lg border ${order.approvalOverdue ? "bg-rose-100/70 border-rose-200" : "bg-slate-50 border-slate-200"}`}>
+          <p className="text-xs font-medium text-rose-700 flex items-center gap-1 mb-2">
+            <AlertTriangle size={13} />
+            {order.isLatePenalty
+              ? `Đã tự động ghi nhận CHẬM TIẾN ĐỘ và trừ ${fmtMoney(LATE_PENALTY_AMOUNT)} tiền công do quá 3 ngày làm việc mà chưa được chấp thuận và chưa điền lý do.`
+              : "Nếu lãnh đạo không duyệt đơn này, điền lý do bên dưới rồi bấm xác nhận — đơn sẽ chuyển sang trạng thái \"Chưa được chấp thuận\" và gửi cảnh báo cho quản lý."}
+          </p>
+          <div className="flex gap-2">
+            <input value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Lý do chưa được chấp thuận..." className="flex-1 px-3 py-1.5 rounded-lg border border-rose-200 text-xs focus:outline-none focus:ring-2 focus:ring-rose-400/40" />
+            <GhostButton className="!py-1.5 !text-xs !border-rose-300 !text-rose-700" disabled={!reason.trim() || busy} onClick={submitRejection}>
+              <XCircle size={13} /> Chưa được chấp thuận
+            </GhostButton>
+          </div>
+        </div>
+      )}
+
+      {order.status === "duoc_chap_thuan" && (
+        <p className="text-xs text-slate-500 flex items-center gap-1">
+          <Clock size={12} /> Tiếp theo: bấm bước 5 trên thanh tiến độ để gửi giấy phép bản PDF lên nhóm làm việc.
+        </p>
+      )}
+
+      {order.status === "gui_giay_phep" && (
+        <p className="text-xs text-teal-700 flex items-center gap-1">
+          <CheckCircle2 size={13} /> Đã gửi giấy phép lên nhóm{order.licensePdfName ? ` (${order.licensePdfName})` : ""} — đang chờ quản lý tải xuống và xác nhận đơn hàng.
+        </p>
+      )}
+
+      {confirmStep && (
+        <ConfirmDialog
+          title="Xác nhận chấp thuận đơn hàng"
+          message={`Đơn ${order.orderCode} sẽ chuyển sang "Được chấp thuận". Sau khi xác nhận, đơn hàng KHÔNG THỂ sửa lại trạng thái này nữa. Bạn có chắc chắn không?`}
+          confirmLabel="Đúng, xác nhận chấp thuận"
+          danger
+          onCancel={() => setConfirmStep(null)}
+          onConfirm={() => { runAsync(() => onAdvance(order.id, "duoc_chap_thuan")); setConfirmStep(null); }}
+        />
+      )}
+
+      {uploadingLicense && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <FileText size={18} className="text-teal-700" />
+              <p className="font-semibold text-slate-800">Gửi giấy phép lên nhóm</p>
+            </div>
+            <p className="text-sm text-slate-600 mb-3">Tải lên file PDF giấy phép của đơn {order.orderCode} để xác nhận đã gửi lên nhóm làm việc.</p>
+            <label className="flex items-center gap-3 p-3 rounded-xl border border-dashed border-slate-300 hover:border-teal-400 hover:bg-teal-50/40 transition cursor-pointer mb-4">
+              <span className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
+                <FileText size={17} className="text-slate-400" />
+              </span>
+              <span className="text-xs text-slate-500 truncate">{licenseFile ? licenseFile.name : "Bấm để chọn file PDF..."}</span>
+              <input type="file" accept="application/pdf" className="hidden" onChange={handlePickPdf} />
+            </label>
+            <div className="flex justify-end gap-2">
+              <GhostButton disabled={busy} onClick={() => { setUploadingLicense(false); setLicenseFile(null); }}>Huỷ</GhostButton>
+              <button
+                disabled={!licenseFile || busy}
+                onClick={async () => {
+                  setBusy(true);
+                  await onSendLicense(order.id, licenseFile);
+                  setBusy(false);
+                  setUploadingLicense(false);
+                  setLicenseFile(null);
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-white text-sm font-medium bg-teal-700 hover:bg-teal-800 transition disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                {busy ? <Loader2 size={14} className="animate-spin" /> : null} Xác nhận đã gửi
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OrderStatusModule({ currentUser, orders, customers, highlightOrderId, onAdvance, onMarkRejected, onRetry, onSendLicense, onSaveCompanyInfo }) {
+  const derived = useDerivedOrders(orders);
+  const mine = derived.filter((o) => o.employeeId === currentUser.id).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const overdueCount = mine.filter((o) => o.approvalOverdue).length;
+
+  return (
+    <div className="space-y-5">
+      <SectionTitle icon={ClipboardCheck} title="Trạng thái đơn hàng" subtitle="Cập nhật các đơn hàng bạn được giao" />
+      {overdueCount > 0 && (
+        <Card className="p-3.5 bg-rose-50 border-rose-200">
+          <p className="text-sm text-rose-700 flex items-center gap-2"><AlertTriangle size={15} /> Bạn có {overdueCount} đơn hàng quá hạn 3 ngày làm việc chưa được chấp thuận.</p>
+        </Card>
+      )}
+      {mine.length === 0 ? (
+        <Card className="p-4"><EmptyState icon={Inbox} text="Chưa có đơn hàng nào." /></Card>
       ) : (
-        <div className="space-y-2">
-          {filtered.map((e) => (
-            <Card key={e.id} className="p-3.5 flex items-center justify-between gap-3">
-              <div className="min-w-0 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-teal-700 to-teal-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
-                  {e.name?.trim()?.split(" ").slice(-1)[0]?.[0] || "?"}
-                </div>
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-slate-800 truncate">{e.name} <span className="text-slate-400 font-normal">({e.username})</span></p>
-                  <p className="text-xs text-slate-400 truncate">{ROLE_META[e.role]?.label}{e.mustChangePassword ? " · Đang chờ đổi mật khẩu" : ""}</p>
-                </div>
-              </div>
-              <GhostButton className="!text-xs shrink-0" onClick={() => setResetting(e)}><Lock size={13} /> Đặt lại mật khẩu</GhostButton>
-            </Card>
+        <div className="space-y-3">
+          {mine.map((o) => (
+            <OrderStatusRow
+              key={o.id}
+              order={o}
+              customer={customers.find((c) => c.id === o.customerId)}
+              currentUser={currentUser}
+              onAdvance={onAdvance}
+              onMarkRejected={onMarkRejected}
+              onRetry={onRetry}
+              onSendLicense={onSendLicense}
+              onSaveCompanyInfo={onSaveCompanyInfo}
+              isNew={o.id === highlightOrderId}
+            />
           ))}
         </div>
       )}
-      {resetting && <ResetPasswordModal currentUser={currentUser} employee={resetting} onClose={() => setResetting(null)} onSuccess={() => setResetting(null)} />}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Chặn lỗi phát sinh trong 1 tab lan ra làm sập toàn bộ giao diện.
+// NHÂN VIÊN — PHÂN HỆ 4: BÁO CÁO
 // ---------------------------------------------------------------------------
-class TabErrorBoundary extends React.Component {
-  constructor(props) { super(props); this.state = { hasError: false }; }
-  static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(error, info) { console.error("Lỗi hiển thị tab:", error, info); }
-  componentDidUpdate(prevProps) {
-    if (prevProps.resetKey !== this.props.resetKey && this.state.hasError) this.setState({ hasError: false });
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div className="bg-white rounded-2xl border border-rose-200 shadow-sm p-6 text-center">
-          <AlertTriangle size={28} className="text-rose-500 mx-auto mb-2" />
-          <p className="font-medium text-slate-800 mb-1">Không hiển thị được mục này</p>
-          <p className="text-sm text-slate-500 mb-4">Đã có lỗi xảy ra. Bạn có thể chuyển sang mục khác từ thanh menu, hoặc tải lại trang.</p>
-          <GhostButton onClick={() => window.location.reload()}>Tải lại trang</GhostButton>
+function EmployeeReportModule({ currentUser, orders }) {
+  const derived = useDerivedOrders(orders);
+  const mine = derived.filter((o) => o.employeeId === currentUser.id);
+  const statusData = [...STATUS_FLOW, "chua_duoc_chap_thuan"].map((s) => ({ name: ORDER_STATUS[s].label, value: mine.filter((o) => o.status === s).length })).filter((d) => d.value > 0);
+  const laborRows = mine.filter((o) => o.laborFee != null || o.latePenaltyAmount > 0);
+  const totalBase = laborRows.reduce((s, o) => s + (o.laborFee || 0), 0);
+  const totalPenalty = mine.reduce((s, o) => s + (o.latePenaltyAmount || 0), 0);
+  const totalLabor = totalBase - totalPenalty;
+
+  return (
+    <div className="space-y-5">
+      <SectionTitle icon={BarChart3} title="Báo cáo" subtitle="Tình trạng đơn hàng & tiền công" />
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3">
+        <MetricCard label="Tổng số đơn" value={mine.length} icon={ClipboardList} accent="indigo" />
+        <MetricCard label="Tiền công thực nhận" value={fmtMoney(totalLabor)} icon={Wallet} accent="amber" />
+        <MetricCard label="Bị trừ do chậm tiến độ" value={fmtMoney(totalPenalty)} icon={AlertTriangle} accent="rose" />
+      </div>
+      <Card className="p-4 sm:p-5">
+        <p className="font-semibold text-slate-800 text-sm mb-3">Báo cáo tình trạng đơn hàng</p>
+        {statusData.length === 0 ? <EmptyState icon={BarChart3} text="Chưa có dữ liệu." /> : (
+          <div style={{ width: "100%", height: 240 }}>
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie data={statusData} dataKey="value" nameKey="name" innerRadius={55} outerRadius={90} paddingAngle={2}>
+                  {statusData.map((_, i) => <Cell key={i} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}
+                </Pie>
+                <Tooltip {...CHART_TOOLTIP_STYLE} />
+                <Legend verticalAlign="middle" align="right" layout="vertical" wrapperStyle={{ fontSize: 12 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </Card>
+      <Card className="p-4 sm:p-5">
+        <p className="font-semibold text-slate-800 text-sm mb-1">Báo cáo tiền công theo đơn hàng</p>
+        <p className="text-xs text-slate-500 mb-3">Đơn quá hạn 3 ngày làm việc chưa điền lý do sẽ tự động bị trừ {fmtMoney(LATE_PENALTY_AMOUNT)}.</p>
+        {laborRows.length === 0 ? <EmptyState icon={Wallet} text="Chưa có đơn hàng nào được ghi nhận tiền công." /> : (
+          <div className="space-y-2">
+            {laborRows.map((o) => (
+              <div key={o.id} className="flex items-center justify-between text-sm py-1.5 border-b border-slate-50 last:border-0">
+                <span className="text-slate-700">{o.orderCode}{o.latePenaltyAmount > 0 && <Badge className="ml-2 bg-rose-50 text-rose-700 border-rose-200 !text-[10px] !py-0.5">Chậm tiến độ</Badge>}</span>
+                <span className="text-right">
+                  {o.laborFee != null && <span className="font-semibold text-slate-800">{fmtMoney(o.laborFee)}</span>}
+                  {o.latePenaltyAmount > 0 && <span className="block text-xs text-rose-600">− {fmtMoney(o.latePenaltyAmount)}</span>}
+                </span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ADMIN — PHÂN HỆ 1: KHÁCH HÀNG (toàn bộ)
+// ---------------------------------------------------------------------------
+function AdminCustomerModule({ customers, employees }) {
+  const [q, setQ] = useState("");
+  const filtered = customers.filter((c) => !q || c.phone.includes(q) || (c.cccd || "").includes(q) || (c.name || "").toLowerCase().includes(q.toLowerCase()));
+  return (
+    <div className="space-y-5">
+      <SectionTitle icon={Users} title="Khách hàng" subtitle="Toàn bộ khách hàng đã giao cho nhân viên" />
+      <Card className="p-0 overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex items-center gap-2">
+          <Search size={15} className="text-slate-400" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Tìm theo tên, số điện thoại hoặc CCCD..." className="flex-1 text-sm outline-none" />
         </div>
-      );
-    }
-    return this.props.children;
-  }
+        {filtered.length === 0 ? <EmptyState icon={Users} text="Chưa có khách hàng." /> : (
+          <div className="divide-y divide-slate-100">
+            {filtered.map((c) => (
+              <div key={c.id} className="p-4 flex items-center gap-3">
+                <span className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0 overflow-hidden">
+                  {c.vnidPhoto ? <img src={c.vnidPhoto} alt="" className="w-full h-full object-cover" /> : <Users size={16} className="text-slate-400" />}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-800 truncate">{c.name || "(Chưa đặt tên)"} · {c.phone}</p>
+                  <p className="text-xs text-slate-400 truncate">CCCD: {c.cccd || "—"} · {c.address}, {c.ward} · {c.industry || "—"}</p>
+                  {c.referrer && <p className="text-xs text-indigo-500 truncate">Người giới thiệu: {c.referrer}</p>}
+                </div>
+                <Badge className="bg-indigo-50 text-indigo-700 border-indigo-200 shrink-0">
+                  {employees.find((e) => e.id === c.employeeId)?.name || "?"}
+                </Badge>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ADMIN — PHÂN HỆ 2: ĐƠN HÀNG (duyệt giấy phép / doanh thu / chi phí / tiền công)
+// ---------------------------------------------------------------------------
+function ApprovalForm({ order, onSave }) {
+  const [revenue, setRevenue] = useState(order.revenue ?? "");
+  const [cost, setCost] = useState(order.cost ?? "");
+  const [laborFee, setLaborFee] = useState(order.laborFee ?? "");
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    if (saving) return;
+    setSaving(true);
+    await onSave(order.id, Number(revenue) || 0, Number(cost) || 0, Number(laborFee) || 0);
+    setSaving(false);
+  };
+  return (
+    <div className="mt-3 pt-3 border-t border-slate-100">
+      <p className="text-xs text-slate-500 mb-2">Điền đầy đủ 3 trường bên dưới — đơn hàng sẽ tự động chuyển sang trạng thái <span className="font-medium text-slate-700">"Đã thanh toán"</span> sau khi ghi nhận.</p>
+      <div className="flex flex-wrap items-end gap-3">
+        <TextField label="Doanh thu (đ)" type="number" value={revenue} onChange={(e) => setRevenue(e.target.value)} />
+        <TextField label="Chi phí (đ)" type="number" value={cost} onChange={(e) => setCost(e.target.value)} />
+        <TextField label="Tiền công (đ)" type="number" value={laborFee} onChange={(e) => setLaborFee(e.target.value)} />
+        <PrimaryButton className="!py-1.5 !text-xs" disabled={saving} onClick={submit}>
+          {saving ? <Loader2 size={13} className="animate-spin" /> : <DollarSign size={13} />} Ghi nhận &amp; đánh dấu đã thanh toán
+        </PrimaryButton>
+      </div>
+    </div>
+  );
+}
+
+function AdminOrderModule({ orders, customers, employees, currentUser, onConfirmOrder, onSaveFinance, onSaveCompanyInfo }) {
+  const derived = useDerivedOrders(orders);
+  const sorted = [...derived].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  const [confirmingId, setConfirmingId] = useState(null);
+
+  const handleConfirm = async (id) => {
+    setConfirmingId(id);
+    await onConfirmOrder(id);
+    setConfirmingId(null);
+  };
+
+  return (
+    <div className="space-y-5">
+      <SectionTitle icon={ClipboardList} title="Đơn hàng" subtitle="Toàn bộ đơn hàng của nhân viên" />
+      {sorted.length === 0 ? <Card className="p-4"><EmptyState icon={Inbox} text="Chưa có đơn hàng." /></Card> : (
+        <div className="space-y-3">
+          {sorted.map((o) => {
+            const cust = customers.find((c) => c.id === o.customerId);
+            const emp = employees.find((e) => e.id === o.employeeId);
+            return (
+              <Card key={o.id} className={`p-4 ${o.paymentOverdue ? "border-rose-300 bg-rose-50/30" : ""}`}>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">{o.orderCode} · {procedureLabel(o.procedureType)}</p>
+                    <p className="text-xs text-slate-500">{cust?.name || cust?.phone} · NV: {emp?.name} · Tạo {fmtDate(o.createdAt)}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <BusinessRegDocButton order={o} customer={cust} currentUser={currentUser} onSave={(fields) => onSaveCompanyInfo(o.id, fields)} />
+                    <StatusBadge status={o.status} />
+                  </div>
+                </div>
+
+                {o.paymentOverdue && (
+                  <p className="mt-2 text-xs font-medium text-rose-700 flex items-center gap-1">
+                    <AlertTriangle size={13} /> Quá 2 ngày làm việc kể từ khi được chấp thuận mà chưa hoàn tất thanh toán — cần thu hồi công nợ.
+                  </p>
+                )}
+
+                {o.status === "chua_duoc_chap_thuan" && (
+                  <p className="mt-2 text-xs font-medium text-rose-700 flex items-center gap-1">
+                    <AlertTriangle size={13} /> Chưa được chấp thuận — Lý do: {o.overdueReason || "(nhân viên chưa điền lý do)"}
+                  </p>
+                )}
+
+                {o.status === "gui_giay_phep" && (
+                  <div className="mt-3 pt-3 border-t border-slate-100">
+                    <p className="text-xs text-teal-700 flex items-center gap-1 mb-2">
+                      <FileText size={13} /> Nhân viên đã gửi giấy phép{o.licenseSentAt ? ` (${fmtDate(o.licenseSentAt)})` : ""}. Xem file trước khi xác nhận.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {o.licensePdfData ? (
+                        <button
+                          type="button"
+                          onClick={() => window.open(o.licensePdfData, "_blank")}
+                          className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl border border-teal-300 bg-white text-teal-700 text-xs font-medium hover:bg-teal-50 transition"
+                        >
+                          <Download size={13} /> Xem / tải {o.licensePdfName || "giấy phép"}
+                        </button>
+                      ) : (
+                        <span className="text-xs text-slate-400">(Không có file — nhân viên chưa tải lên thành công)</span>
+                      )}
+                      <PrimaryButton className="!py-1.5 !text-xs" disabled={confirmingId === o.id} onClick={() => handleConfirm(o.id)}>
+                        {confirmingId === o.id ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />} Xác nhận đơn hàng
+                      </PrimaryButton>
+                    </div>
+                  </div>
+                )}
+
+                {o.status === "hoan_thanh" && (
+                  <>
+                    <p className="mt-3 text-xs text-indigo-700 flex items-center gap-1">
+                      <CheckCircle2 size={13} /> Đã xác nhận đơn hàng{o.confirmedAt ? ` (${fmtDate(o.confirmedAt)})` : ""} — thông báo đã gửi cho nhân viên. Chưa cập nhật doanh thu / chi phí / tiền công.
+                    </p>
+                    <ApprovalForm order={o} onSave={onSaveFinance} />
+                  </>
+                )}
+
+                {o.status === "da_thanh_toan" && (
+                  <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-4">
+                    <span className="text-xs text-slate-500">Doanh thu: <span className="font-semibold text-slate-800">{fmtMoney(o.revenue)}</span></span>
+                    <span className="text-xs text-slate-500">Chi phí: <span className="font-semibold text-slate-800">{fmtMoney(o.cost)}</span></span>
+                    <span className="text-xs text-slate-500">Tiền công: <span className="font-semibold text-slate-800">{fmtMoney(o.laborFee)}</span></span>
+                    <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">Đã thanh toán {fmtDate(o.completedAt)}</Badge>
+                  </div>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ADMIN — PHÂN HỆ 3: CHI PHÍ PHÁT SINH HÀNG NGÀY
+// ---------------------------------------------------------------------------
+function AdminExpenseModule({ expenses, onAddExpense }) {
+  const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
+  const [desc, setDesc] = useState("");
+  const [amount, setAmount] = useState("");
+  const [saving, setSaving] = useState(false);
+  const submit = async () => {
+    if (!desc || !amount || saving) return;
+    setSaving(true);
+    await onAddExpense({ date, description: desc, amount: Number(amount) });
+    setSaving(false);
+    setDesc(""); setAmount("");
+  };
+  const total = expenses.reduce((s, e) => s + e.amount, 0);
+  return (
+    <div className="space-y-5">
+      <SectionTitle icon={Receipt} title="Chi phí phát sinh" subtitle="Cập nhật chi phí hoạt động hàng ngày" />
+      <MetricCard label="Tổng chi phí phát sinh đã ghi nhận" value={fmtMoney(total)} icon={Receipt} accent="rose" />
+      <Card className="p-4 sm:p-5">
+        <div className="flex flex-wrap items-end gap-3">
+          <TextField label="Ngày" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+          <TextField label="Nội dung" value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="VD: Văn phòng phẩm, xăng xe..." className="flex-1 min-w-[180px]" />
+          <TextField label="Số tiền (đ)" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <PrimaryButton onClick={submit} disabled={saving}>
+            {saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Ghi nhận
+          </PrimaryButton>
+        </div>
+      </Card>
+      <Card className="p-0 overflow-hidden">
+        {expenses.length === 0 ? <EmptyState icon={Receipt} text="Chưa có chi phí nào được ghi nhận." /> : (
+          <div className="divide-y divide-slate-100">
+            {expenses.map((e) => (
+              <div key={e.id} className="p-3.5 flex items-center justify-between text-sm">
+                <div>
+                  <p className="text-slate-700">{e.description}</p>
+                  <p className="text-xs text-slate-400">{fmtDate(e.date)}</p>
+                </div>
+                <span className="font-semibold text-slate-800">{fmtMoney(e.amount)}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ADMIN — PHÂN HỆ 4: BÁO CÁO TỔNG HỢP
+// ---------------------------------------------------------------------------
+function AdminReportModule({ orders, expenses }) {
+  const completed = orders.filter((o) => o.status === "da_thanh_toan");
+
+  const monthMap = {};
+  completed.forEach((o) => {
+    const k = monthKey(o.completedAt || o.approvedAt);
+    monthMap[k] = monthMap[k] || { month: k, revenue: 0, cost: 0 };
+    monthMap[k].revenue += o.revenue || 0;
+    monthMap[k].cost += (o.cost || 0) + (o.laborFee || 0);
+  });
+  expenses.forEach((e) => {
+    const k = monthKey(e.date);
+    monthMap[k] = monthMap[k] || { month: k, revenue: 0, cost: 0 };
+    monthMap[k].cost += e.amount;
+  });
+  const monthlyData = Object.values(monthMap).sort((a, b) => a.month.localeCompare(b.month)).map((m) => ({ ...m, profit: m.revenue - m.cost }));
+
+  const totalRevenue = completed.reduce((s, o) => s + (o.revenue || 0), 0);
+  const totalCost = completed.reduce((s, o) => s + (o.cost || 0) + (o.laborFee || 0), 0) + expenses.reduce((s, e) => s + e.amount, 0);
+  const totalProfit = totalRevenue - totalCost;
+  const debtOrders = orders.filter((o) => o.approvedAt && o.status !== "da_thanh_toan");
+  const totalDebt = debtOrders.length;
+
+  return (
+    <div className="space-y-5">
+      <SectionTitle icon={BarChart3} title="Báo cáo tổng hợp" subtitle="Doanh thu, chi phí, lợi nhuận & công nợ" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <MetricCard label="Tổng doanh thu" value={fmtMoney(totalRevenue)} icon={TrendingUp} accent="indigo" />
+        <MetricCard label="Tổng chi phí" value={fmtMoney(totalCost)} icon={Receipt} accent="amber" />
+        <MetricCard label="Lợi nhuận" value={fmtMoney(totalProfit)} icon={Wallet} accent="emerald" />
+        <MetricCard label="Đơn chưa hoàn tất thanh toán" value={totalDebt} icon={AlertTriangle} accent="rose" />
+      </div>
+
+      <Card className="p-4 sm:p-5">
+        <p className="font-semibold text-slate-800 text-sm mb-3">Tổng hợp doanh thu &amp; lợi nhuận theo tháng</p>
+        {monthlyData.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có dữ liệu." /> : (
+          <div style={{ width: "100%", height: 240 }}>
+            <ResponsiveContainer>
+              <AreaChart data={monthlyData} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="rev" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#4338ca" stopOpacity={0.3} />
+                    <stop offset="100%" stopColor="#4338ca" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
+                <XAxis dataKey="month" tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} />
+                <YAxis tickFormatter={shortMoney} tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} width={48} />
+                <Tooltip formatter={(v) => fmtMoney(v)} {...CHART_TOOLTIP_STYLE} />
+                <Legend wrapperStyle={{ fontSize: 12 }} />
+                <Area type="monotone" dataKey="revenue" name="Doanh thu" stroke="#4338ca" fill="url(#rev)" strokeWidth={2.5} />
+                <Area type="monotone" dataKey="profit" name="Lợi nhuận" stroke="#059669" fill="transparent" strokeWidth={2} strokeDasharray="4 3" />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        )}
+      </Card>
+
+      <div className="grid lg:grid-cols-2 gap-5">
+        <Card className="p-4 sm:p-5">
+          <p className="font-semibold text-slate-800 text-sm mb-3">Chi phí &amp; lợi nhuận theo đơn hàng</p>
+          {completed.length === 0 ? <EmptyState icon={Receipt} text="Chưa có đơn hàng được ghi nhận." /> : (
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {completed.map((o) => (
+                <div key={o.id} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-50 last:border-0">
+                  <span className="text-slate-600">{o.orderCode}</span>
+                  <span className="text-slate-500">CP {fmtMoney((o.cost || 0) + (o.laborFee || 0))}</span>
+                  <span className="font-semibold text-emerald-700">LN {fmtMoney((o.revenue || 0) - (o.cost || 0) - (o.laborFee || 0))}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+        <Card className="p-4 sm:p-5">
+          <p className="font-semibold text-slate-800 text-sm mb-3">Danh sách đơn hàng chưa hoàn tất thanh toán</p>
+          {debtOrders.length === 0 ? <EmptyState icon={ShieldCheck} text="Không có đơn nào tồn đọng." /> : (
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {debtOrders.map((o) => (
+                <div key={o.id} className="flex items-center justify-between text-xs py-1.5 border-b border-slate-50 last:border-0">
+                  <span className="text-slate-600">{o.orderCode}</span>
+                  <StatusBadge status={o.status} />
+                </div>
+              ))}
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// ADMIN — PHÂN HỆ 5: CHĂM SÓC SAU ĐƠN HÀNG (đơn đã thanh toán)
+// ---------------------------------------------------------------------------
+function CareModule({ orders, customers, onToggleCareStep }) {
+  const completed = orders.filter((o) => o.status === "da_thanh_toan");
+  return (
+    <div className="space-y-5">
+      <SectionTitle icon={HeartHandshake} title="Chăm sóc sau đơn hàng" subtitle="Theo dõi các bước hỗ trợ sau khi đơn hàng hoàn thành" />
+      {completed.length === 0 ? <Card className="p-4"><EmptyState icon={HeartHandshake} text="Chưa có đơn hàng hoàn thành." /></Card> : (
+        <div className="space-y-3">
+          {completed.map((o) => {
+            const steps = CARE_STEPS[o.procedureType] || [];
+            const cust = customers.find((c) => c.id === o.customerId);
+            const doneCount = steps.filter((_, i) => o.careSteps?.[i]).length;
+            return (
+              <Card key={o.id} className="p-4">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="text-sm font-semibold text-slate-800">{o.orderCode} · {procedureLabel(o.procedureType)}</p>
+                    <p className="text-xs text-slate-500">{cust?.name || cust?.phone}</p>
+                  </div>
+                  <Badge className={doneCount === steps.length ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-slate-100 text-slate-600 border-slate-200"}>
+                    {doneCount}/{steps.length} bước
+                  </Badge>
+                </div>
+                <div className="space-y-1.5">
+                  {steps.map((s, i) => (
+                    <button key={i} onClick={() => onToggleCareStep(o.id, i, o.careSteps)} className="w-full flex items-center gap-2.5 p-2 rounded-lg hover:bg-slate-50 transition text-left">
+                      {o.careSteps?.[i] ? <CheckCircle2 size={17} className="text-emerald-600 shrink-0" /> : <span className="w-[17px] h-[17px] rounded-full border-2 border-slate-300 shrink-0" />}
+                      <span className={`text-sm ${o.careSteps?.[i] ? "text-slate-400 line-through" : "text-slate-700"}`}>{s}</span>
+                    </button>
+                  ))}
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// CHUÔNG THÔNG BÁO
+// ---------------------------------------------------------------------------
+const NOTIF_META = {
+  cong_no: { label: "Công nợ quá hạn", icon: AlertTriangle, color: "text-rose-700" },
+  chua_chap_thuan: { label: "Chưa được chấp thuận", icon: AlertTriangle, color: "text-rose-700" },
+  qua_han_chap_thuan: { label: "Quá hạn chấp thuận", icon: AlertTriangle, color: "text-amber-700" },
+  xac_nhan: { label: "Đơn hàng được xác nhận", icon: CheckCircle2, color: "text-indigo-700" },
+  da_thanh_toan: { label: "Đã thanh toán", icon: CheckCircle2, color: "text-emerald-700" },
+};
+function NotifBell({ notifications }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="relative">
+      <button onClick={() => setOpen((o) => !o)} className="relative w-9 h-9 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition">
+        <Bell size={16} className="text-slate-600" />
+        {notifications.length > 0 && (
+          <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-rose-600 text-white text-[10px] font-semibold flex items-center justify-center">{notifications.length}</span>
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 mt-2 w-80 max-h-96 overflow-y-auto bg-white rounded-xl border border-slate-200 shadow-lg z-20">
+          <div className="p-3 border-b border-slate-100 flex items-center justify-between">
+            <p className="text-sm font-semibold text-slate-800">Cảnh báo</p>
+            <button onClick={() => setOpen(false)}><XCircle size={15} className="text-slate-400" /></button>
+          </div>
+          {notifications.length === 0 ? (
+            <div className="p-6 text-center text-xs text-slate-400">Không có cảnh báo nào.</div>
+          ) : (
+            <div className="divide-y divide-slate-100">
+              {notifications.map((n) => {
+                const meta = NOTIF_META[n.type] || { label: "Cảnh báo", icon: AlertTriangle, color: "text-amber-700" };
+                return (
+                  <div key={n.id} className="p-3">
+                    <p className={`text-xs ${meta.color} font-medium mb-0.5 flex items-center gap-1`}>
+                      <meta.icon size={12} /> {meta.label}
+                    </p>
+                    <p className="text-xs text-slate-600">{n.message}</p>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1562,229 +1818,252 @@ class TabErrorBoundary extends React.Component {
 // ---------------------------------------------------------------------------
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
+  const [customers, setCustomers] = useState([]);
+  const [orders, setOrders] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("nhap");
+  const [tab, setTab] = useState("khach_hang");
   const [toast, setToast] = useState(null);
-  const [showChangePassword, setShowChangePassword] = useState(false);
-
-  const [data, setData] = useState({
-    employees: [], suppliers: [], revenueCodes: [], exportCodes: [], products: [],
-    stockOpenings: [], importRecords: [], exportRecords: [],
-  });
-
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
+  const [highlightOrderId, setHighlightOrderId] = useState(null);
 
   const refreshAll = useCallback(async () => {
-    const fresh = await fetchAll();
-    setData(fresh);
-    return fresh;
+    const [custRes, ordRes, expRes, empRes] = await Promise.all([
+      supabase.from("customers").select("*").order("created_at", { ascending: false }),
+      supabase.from("orders").select("*").order("created_at", { ascending: false }),
+      supabase.from("expenses").select("*").order("date", { ascending: false }),
+      supabase.from("employees").select("id,name,username,role"),
+    ]);
+    if (custRes.data) setCustomers(custRes.data.map(customerFromRow));
+    if (ordRes.data) setOrders(ordRes.data.map(orderFromRow));
+    if (expRes.data) setExpenses(expRes.data.map(expenseFromRow));
+    if (empRes.data) setEmployees(empRes.data);
   }, []);
 
   useEffect(() => {
-    (async () => {
-      await refreshAll();
-      const savedId = localStorage.getItem(SESSION_KEY);
-      if (savedId) {
-        const fresh = await fetchAll();
-        const found = fresh.employees.find((e) => e.id === savedId);
-        if (found) setCurrentUser(found);
-        else localStorage.removeItem(SESSION_KEY);
-      }
-      setLoading(false);
-    })();
+    refreshAll().finally(() => setLoading(false));
   }, [refreshAll]);
 
-  useEffect(() => {
-    if (!currentUser) return;
-    const t = setInterval(() => { refreshAll(); }, 20000);
-    return () => clearInterval(t);
-  }, [currentUser, refreshAll]);
+  const derivedForNotif = useDerivedOrders(orders);
+  const notifications = useNotifications(derivedForNotif, customers);
+  const myDerivedOrders = derivedForNotif.filter((o) => currentUser && o.employeeId === currentUser.id);
+  const employeeNotifications = useEmployeeNotifications(myDerivedOrders);
 
-  const handleLogin = (employee) => {
-    setCurrentUser(employee);
-    localStorage.setItem(SESSION_KEY, employee.id);
-    setTab(employee.role === "quan_ly" ? "nhap" : "nhap");
+  // -------------------- CÁC HÀM GHI DỮ LIỆU (Supabase) --------------------
+  const addCustomer = async (form) => {
+    let vnidUrl = null;
+    try {
+      if (form.photoFile) {
+        const up = await uploadFile(VNID_BUCKET, form.photoFile);
+        vnidUrl = up.url;
+      }
+      const { error } = await supabase.from("customers").insert({
+        name: form.name || null, cccd: form.cccd || null, phone: form.phone, address: form.address,
+        ward: form.ward || null, industries: form.industries || [], referrer: form.referrer || null,
+        vnid_photo_url: vnidUrl, employee_id: currentUser.id,
+      });
+      if (error) throw error;
+      await refreshAll();
+      setToast("Đã lưu khách hàng thành công.");
+    } catch (err) {
+      setToast("Lỗi khi lưu khách hàng: " + err.message);
+    }
   };
+
+  const createOrder = async (customerId, procedureType, orderCode) => {
+    try {
+      const { data, error } = await supabase.from("orders").insert({
+        order_code: orderCode, customer_id: customerId, employee_id: currentUser.id,
+        procedure_type: procedureType, status: "cho_xu_ly",
+      }).select().single();
+      if (error) throw error;
+      await refreshAll();
+      const newOrder = orderFromRow(data);
+      setTab("trang_thai");
+      setHighlightOrderId(newOrder.id);
+      setToast(`Đã tạo đơn hàng ${newOrder.orderCode} thành công.`);
+    } catch (err) {
+      setToast("Lỗi khi tạo đơn hàng: " + err.message);
+    }
+  };
+
+  const advanceOrder = async (orderId, nextStatus) => {
+    const patch = { status: nextStatus };
+    if (nextStatus === "da_tiep_nhan") patch.received_at = new Date().toISOString();
+    if (nextStatus === "trinh_lanh_dao") patch.leader_at = new Date().toISOString();
+    if (nextStatus === "duoc_chap_thuan") patch.approved_at = new Date().toISOString();
+    const { error } = await supabase.from("orders").update(patch).eq("id", orderId);
+    if (error) { setToast("Lỗi: " + error.message); return; }
+    await refreshAll();
+  };
+
+  const markRejected = async (orderId, reason) => {
+    const { error } = await supabase.from("orders").update({
+      status: "chua_duoc_chap_thuan", overdue_reason: reason, rejected_at: new Date().toISOString(),
+    }).eq("id", orderId);
+    if (error) { setToast("Lỗi: " + error.message); return; }
+    await refreshAll();
+  };
+
+  const retryOrder = async (orderId) => {
+    const { error } = await supabase.from("orders").update({
+      status: "trinh_lanh_dao", received_at: new Date().toISOString(), overdue_reason: "", rejected_at: null,
+    }).eq("id", orderId);
+    if (error) { setToast("Lỗi: " + error.message); return; }
+    await refreshAll();
+  };
+
+  const sendLicense = async (orderId, file) => {
+    try {
+      let url = null;
+      if (file?.raw) {
+        const up = await uploadFile(LICENSE_BUCKET, file.raw);
+        url = up.url;
+      }
+      const { error } = await supabase.from("orders").update({
+        status: "gui_giay_phep", license_pdf_url: url, license_pdf_name: file?.name || null,
+        license_sent_at: new Date().toISOString(),
+      }).eq("id", orderId);
+      if (error) throw error;
+      await refreshAll();
+    } catch (err) {
+      setToast("Lỗi khi gửi giấy phép: " + err.message);
+    }
+  };
+
+  const confirmOrder = async (orderId) => {
+    const { error } = await supabase.from("orders").update({
+      status: "hoan_thanh", confirmed_at: new Date().toISOString(),
+    }).eq("id", orderId);
+    if (error) { setToast("Lỗi: " + error.message); return; }
+    await refreshAll();
+    setToast("Đã xác nhận đơn hàng — thông báo đã gửi cho nhân viên.");
+  };
+
+  const saveFinance = async (orderId, revenue, cost, laborFee) => {
+    const { error } = await supabase.from("orders").update({
+      revenue, cost, labor_fee: laborFee, status: "da_thanh_toan", completed_at: new Date().toISOString(),
+    }).eq("id", orderId);
+    if (error) { setToast("Lỗi: " + error.message); return; }
+    await refreshAll();
+    setToast("Đã ghi nhận thanh toán.");
+  };
+
+  const saveCompanyInfo = async (orderId, fields) => {
+    const { error } = await supabase.from("orders").update({
+      company_name: fields.companyName, capital: fields.capital, owner_dob: fields.ownerDob,
+      owner_gender: fields.ownerGender, owner_email: fields.ownerEmail, owner_province: fields.ownerProvince,
+      hq_address: fields.hqAddress, hq_ward: fields.hqWard, hq_province: fields.hqProvince,
+      industries: fields.industries || [],
+    }).eq("id", orderId);
+    if (error) { setToast("Lưu file thành công nhưng lỗi khi lưu thông tin: " + error.message); return; }
+    await refreshAll();
+  };
+
+  const addExpense = async (exp) => {
+    const { error } = await supabase.from("expenses").insert({
+      date: exp.date, description: exp.description, amount: exp.amount,
+    });
+    if (error) { setToast("Lỗi: " + error.message); return; }
+    await refreshAll();
+  };
+
+  const toggleCareStep = async (orderId, stepIndex, currentSteps) => {
+    const newSteps = { ...currentSteps, [stepIndex]: !currentSteps?.[stepIndex] };
+    const { error } = await supabase.from("orders").update({ care_steps: newSteps }).eq("id", orderId);
+    if (error) { setToast("Lỗi: " + error.message); return; }
+    await refreshAll();
+  };
+
   const handleLogout = () => {
     setCurrentUser(null);
-    localStorage.removeItem(SESSION_KEY);
-  };
-
-  // ---------------- Danh mục ----------------
-  const addSupplier = async ({ code, name, paymentType }) => {
-    const { error } = await supabase.from("suppliers").insert({ code, name, payment_type: paymentType });
-    if (error) throw error;
-    await refreshAll();
-    showToast("Đã thêm nhà cung cấp");
-  };
-  const addProduct = async ({ code, name, unit, groupCode, groupName, classification }) => {
-    const { error } = await supabase.from("products").insert({ code, name, unit, group_code: groupCode, group_name: groupName, classification });
-    if (error) throw error;
-    await refreshAll();
-    showToast("Đã thêm sản phẩm");
-  };
-  const addRevenueCode = async ({ code, name }) => {
-    const { error } = await supabase.from("revenue_codes").insert({ code, name });
-    if (error) throw error;
-    await refreshAll();
-    showToast("Đã thêm mã doanh thu");
-  };
-  const addExportCode = async ({ code, name }) => {
-    const { error } = await supabase.from("export_codes").insert({ code, name });
-    if (error) throw error;
-    await refreshAll();
-    showToast("Đã thêm mã xuất");
-  };
-
-  // ---------------- Nhập hàng ----------------
-  const submitImport = async ({ orderNumber, supplierId, productId, quantity, unitPrice, totalAmount, paymentType }) => {
-    const receiptCode = genReceiptCode("NK", data.importRecords.length);
-    const { error } = await supabase.from("import_records").insert({
-      order_number: orderNumber || null, receipt_code: receiptCode, supplier_id: supplierId, product_id: productId,
-      quantity, unit_price: unitPrice, total_amount: totalAmount, payment_type: paymentType,
-      import_date: todayISO(), created_by: currentUser.id,
-    });
-    if (error) throw error;
-    await refreshAll();
-    showToast(`Đã lưu phiếu nhập ${receiptCode}`);
-  };
-
-  // ---------------- Xuất hàng ----------------
-  const submitExport = async ({ orderNumber, revenueCodeId, exportCodeId, lines }) => {
-    const receiptCode = genReceiptCode("XK", data.exportRecords.length);
-    const rows = lines.map((l) => ({
-      order_number: orderNumber || null, receipt_code: receiptCode,
-      revenue_code_id: revenueCodeId, export_code_id: exportCodeId,
-      product_id: l.productId, line_type: l.lineType, quantity: l.quantity, unit_price: l.unitPrice,
-      total_amount: l.totalAmount, export_date: todayISO(), created_by: currentUser.id,
-    }));
-    const { error } = await supabase.from("export_records").insert(rows);
-    if (error) throw error;
-    await refreshAll();
-    showToast(`Đã lưu phiếu xuất ${receiptCode}`);
-  };
-
-  // ---------------- Tồn kho ----------------
-  const saveStockOpening = async ({ productId, asOfDate, quantity, unitPrice, note }) => {
-    const { error } = await supabase.from("stock_opening").insert({
-      product_id: productId, as_of_date: asOfDate, quantity, unit_price: unitPrice, note: note || null, created_by: currentUser.id,
-    });
-    if (error) throw error;
-    await refreshAll();
-    showToast("Đã lưu mốc tồn đầu");
-  };
-
-  // ---------------- Tài khoản ----------------
-  const addEmployee = async ({ username, name, role, adminPassword }) => {
-    const { data: newId, error } = await supabase.rpc("admin_create_employee", {
-      p_admin_id: currentUser.id, p_admin_password: adminPassword,
-      p_username: username, p_name: name, p_role: role, p_initial_password: "123456",
-    });
-    if (error) {
-      if (error.message?.includes("ADMIN_PASSWORD_INCORRECT")) throw new Error("Mật khẩu của bạn không đúng.");
-      if (error.message?.includes("duplicate")) throw new Error("Tên đăng nhập này đã tồn tại.");
-      throw error;
-    }
-    await refreshAll();
-    showToast("Đã tạo tài khoản mới — mật khẩu ban đầu: 123456");
-  };
-
-  const handlePasswordChanged = () => {
-    setCurrentUser((prev) => prev && { ...prev, mustChangePassword: false, passwordChangeDeadline: null });
-    showToast("Đã đổi mật khẩu thành công");
+    setTab("khach_hang");
   };
 
   if (loading) return <FullScreenLoader />;
-  if (!currentUser) return <LoginScreen onLogin={handleLogin} />;
-  if (currentUser.mustChangePassword) {
-    return <ForcePasswordChangeGate currentUser={currentUser} onLogout={handleLogout} onChanged={handlePasswordChanged} />;
-  }
+  if (!currentUser) return <LoginScreen onLogin={(u) => { setCurrentUser(u); setTab(u.role === "admin" ? "kh_admin" : "khach_hang"); }} />;
 
-  const isQuanLy = currentUser.role === "quan_ly";
-  const NAV_NHAN_VIEN = [
-    { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
-    { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
-    { key: "danh_muc", label: "Danh mục", icon: Boxes },
-    { key: "ton_kho", label: "Tồn kho", icon: Warehouse },
+  const isAdmin = currentUser.role === "admin";
+  const NAV_NV = [
+    { key: "khach_hang", label: "Khách hàng", icon: Users },
+    { key: "tao_don", label: "Tạo đơn hàng", icon: Plus },
+    { key: "trang_thai", label: "Trạng thái", icon: ClipboardCheck },
+    { key: "bao_cao_nv", label: "Báo cáo", icon: BarChart3 },
   ];
-  const NAV_QUAN_LY = [
-    { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
-    { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
-    { key: "danh_muc", label: "Danh mục", icon: Boxes },
-    { key: "bao_cao_nhap", label: "Báo cáo nhập", icon: BarChart3 },
-    { key: "bao_cao_xuat", label: "Báo cáo xuất", icon: BarChart3 },
-    { key: "ton_kho", label: "Tồn kho", icon: Warehouse },
-    { key: "tai_khoan", label: "Tài khoản", icon: ShieldCheck },
+  const NAV_ADMIN = [
+    { key: "kh_admin", label: "Khách hàng", icon: Users },
+    { key: "don_admin", label: "Đơn hàng", icon: ClipboardList },
+    { key: "chi_phi", label: "Chi phí", icon: Receipt },
+    { key: "bao_cao_admin", label: "Báo cáo", icon: BarChart3 },
+    { key: "cham_soc", label: "Chăm sóc KH", icon: HeartHandshake },
   ];
-  const navItems = isQuanLy ? NAV_QUAN_LY : NAV_NHAN_VIEN;
+  const navItems = isAdmin ? NAV_ADMIN : NAV_NV;
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <div className="bg-white/90 backdrop-blur border-b border-slate-200 sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+        <div className="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-700 to-teal-900 text-white flex items-center justify-center shrink-0 shadow-sm">
-              <Warehouse size={18} />
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-indigo-700 to-indigo-900 text-white flex items-center justify-center shrink-0 shadow-sm">
+              <FileText size={18} />
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800 leading-tight tracking-tight">Quản lý Kho NVL &amp; Thành phẩm</p>
-              <p className="text-[11px] text-slate-400 leading-tight truncate">Nhập - Xuất - Tồn kho</p>
+              <p className="text-sm font-semibold text-slate-800 leading-tight tracking-tight">Quản lý đơn hàng NMT</p>
+              <p className="text-[11px] text-slate-400 leading-tight truncate">Theo dõi khách hàng &amp; đơn hàng</p>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
+            {isAdmin ? <NotifBell notifications={notifications} /> : <NotifBell notifications={employeeNotifications} />}
             <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-700 to-teal-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
-                {currentUser.name?.trim()?.split(" ").slice(-1)[0]?.[0] || "?"}
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-indigo-700 to-indigo-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
+                {currentUser.name[0]}
               </div>
               <div className="hidden md:block text-right leading-tight">
                 <p className="text-xs font-medium text-slate-800">{currentUser.name}</p>
-                <p className="text-[11px] text-slate-400">{ROLE_META[currentUser.role]?.label}</p>
+                <p className="text-[11px] text-slate-400">{isAdmin ? "Quản lý" : "Nhân viên"}</p>
               </div>
-              <button onClick={() => setShowChangePassword(true)} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition" title="Đổi mật khẩu">
-                <Lock size={14} className="text-slate-500" />
-              </button>
-              <button onClick={handleLogout} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition" title="Đăng xuất">
+              <button onClick={handleLogout} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition">
                 <LogOut size={14} className="text-slate-500" />
               </button>
             </div>
           </div>
         </div>
-        <div className="max-w-6xl mx-auto px-4 pb-2 flex items-center gap-1 overflow-x-auto sm:flex-wrap sm:overflow-visible">
+        <div className="max-w-5xl mx-auto px-4 pb-2 flex items-center gap-1 overflow-x-auto sm:flex-wrap sm:overflow-visible">
           {navItems.map((n) => (
-            <button key={n.key} onClick={() => setTab(n.key)} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition ${tab === n.key ? "bg-teal-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"}`}>
+            <button
+              key={n.key}
+              onClick={() => setTab(n.key)}
+              className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition ${
+                tab === n.key ? "bg-indigo-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+              }`}
+            >
               <n.icon size={15} /> {n.label}
             </button>
           ))}
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 py-6">
-        <TabErrorBoundary resetKey={tab}>
-          {tab === "nhap" && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} />}
-          {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} />}
-          {tab === "danh_muc" && (
-            <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
-          )}
-          {tab === "bao_cao_nhap" && isQuanLy && <BaoCaoNhapModule data={data} />}
-          {tab === "bao_cao_xuat" && isQuanLy && <BaoCaoXuatModule data={data} />}
-          {tab === "ton_kho" && <TonKhoModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
-          {tab === "tai_khoan" && isQuanLy && <TaiKhoanModule currentUser={currentUser} employees={data.employees} onAddEmployee={addEmployee} />}
-        </TabErrorBoundary>
-      </div>
+      <div className="max-w-5xl mx-auto px-4 py-6">
+        {!isAdmin && tab === "khach_hang" && <CustomerModule currentUser={currentUser} customers={customers} onAddCustomer={addCustomer} />}
+        {!isAdmin && tab === "tao_don" && <OrderCreateModule currentUser={currentUser} customers={customers} orders={orders} onCreateOrder={createOrder} />}
+        {!isAdmin && tab === "trang_thai" && (
+          <OrderStatusModule
+            currentUser={currentUser} orders={orders} customers={customers} highlightOrderId={highlightOrderId}
+            onAdvance={advanceOrder} onMarkRejected={markRejected} onRetry={retryOrder} onSendLicense={sendLicense}
+            onSaveCompanyInfo={saveCompanyInfo}
+          />
+        )}
+        {!isAdmin && tab === "bao_cao_nv" && <EmployeeReportModule currentUser={currentUser} orders={orders} />}
 
-      {showChangePassword && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5">
-            <div className="flex items-center justify-between mb-3">
-              <p className="font-semibold text-slate-800 flex items-center gap-2"><Lock size={17} className="text-teal-700" /> Đổi mật khẩu</p>
-              <button onClick={() => setShowChangePassword(false)}><X size={18} className="text-slate-400" /></button>
-            </div>
-            <ChangePasswordForm currentUser={currentUser} onCancel={() => setShowChangePassword(false)} onSuccess={() => { setShowChangePassword(false); showToast("Đã đổi mật khẩu thành công"); }} />
-          </div>
-        </div>
-      )}
-      <Toast toast={toast} />
+        {isAdmin && tab === "kh_admin" && <AdminCustomerModule customers={customers} employees={employees} />}
+        {isAdmin && tab === "don_admin" && (
+          <AdminOrderModule orders={orders} customers={customers} employees={employees} currentUser={currentUser} onConfirmOrder={confirmOrder} onSaveFinance={saveFinance} onSaveCompanyInfo={saveCompanyInfo} />
+        )}
+        {isAdmin && tab === "chi_phi" && <AdminExpenseModule expenses={expenses} onAddExpense={addExpense} />}
+        {isAdmin && tab === "bao_cao_admin" && <AdminReportModule orders={orders} expenses={expenses} />}
+        {isAdmin && tab === "cham_soc" && <CareModule orders={orders} customers={customers} onToggleCareStep={toggleCareStep} />}
+      </div>
+      {toast && <Toast message={toast} onClose={() => setToast(null)} />}
     </div>
   );
 }
