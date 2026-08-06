@@ -137,8 +137,18 @@ function mapExportRecord(r) {
   };
 }
 
+function mapExpenseRecord(r) {
+  return {
+    id: r.id, category: r.category, itemName: r.item_name,
+    quantity: r.quantity === null ? null : Number(r.quantity),
+    unitPrice: r.unit_price === null ? null : Number(r.unit_price),
+    amount: Number(r.amount) || 0,
+    expenseDate: r.expense_date, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
+
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -147,8 +157,9 @@ async function fetchAll() {
     supabase.from("stock_opening").select("*").order("as_of_date", { ascending: false }),
     supabase.from("import_records").select("*").order("import_date", { ascending: false }).order("created_at", { ascending: false }),
     supabase.from("export_records").select("*").order("export_date", { ascending: false }).order("created_at", { ascending: false }),
+    supabase.from("expense_records").select("*").order("expense_date", { ascending: false }).order("created_at", { ascending: false }),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -158,6 +169,7 @@ async function fetchAll() {
     stockOpenings: (open.data || []).map(mapStockOpening),
     importRecords: (imp.data || []).map(mapImportRecord),
     exportRecords: (exp.data || []).map(mapExportRecord),
+    expenseRecords: (cost.data || []).map(mapExpenseRecord),
   };
 }
 
@@ -1745,6 +1757,272 @@ function AddEmployeeForm({ onAdd }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// CHI PHÍ (Vận hành / Marketing & bán hàng / Bảo trì & vật tư / Khác)
+// ---------------------------------------------------------------------------
+const EXPENSE_CATEGORIES = [
+  { key: "nvl", label: "Chi phí nguyên vật liệu" },
+  { key: "van_hanh", label: "Chi phí vận hành", presetItems: ["Nhân công", "Mặt bằng", "Điện", "Nước", "Gas", "Internet", "Điện thoại"] },
+  { key: "marketing", label: "Chi phí Marketing & bán hàng", presetItems: ["Quảng cáo"] },
+  { key: "bao_tri_vat_tu", label: "Chi phí bảo trì và vật tư" },
+  { key: "khac", label: "Chi phí khác" },
+];
+const EXPENSE_CATEGORY_META = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
+
+// Chi phí "Bảo trì & vật tư" (mua sắm CCDC, vật tư, sửa chữa, vật dụng tiêu hao) —
+// bảng nhiều dòng tự do (không gắn danh mục sản phẩm), giống kiểu Nhập hàng.
+function BaoTriVatTuForm({ currentUser, onSubmit }) {
+  const [lines, setLines] = useState([{ key: Math.random().toString(36).slice(2), itemName: "", quantity: "", unitPrice: "" }]);
+  const [expenseDate, setExpenseDate] = useState(todayISO());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const updateLine = (key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const addRow = () => setLines((prev) => [...prev, { key: Math.random().toString(36).slice(2), itemName: "", quantity: "", unitPrice: "" }]);
+  const removeRow = (key) => setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
+
+  const validLines = lines.filter((l) => l.itemName.trim() && Number(l.quantity) > 0 && Number(l.unitPrice) >= 0);
+  const grandTotal = validLines.reduce((s, l) => s + Number(l.quantity) * Number(l.unitPrice), 0);
+
+  const submit = async () => {
+    if (validLines.length === 0) { setError("Cần ít nhất 1 dòng đủ Tên khoản chi, Số lượng, Đơn giá."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSubmit({
+        category: "bao_tri_vat_tu", expenseDate,
+        lines: validLines.map((l) => ({ itemName: l.itemName.trim(), quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), amount: Number(l.quantity) * Number(l.unitPrice) })),
+      });
+      setLines([{ key: Math.random().toString(36).slice(2), itemName: "", quantity: "", unitPrice: "" }]);
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-3">Chi phí bảo trì & vật tư (CCDC, vật tư, sửa chữa, vật dụng tiêu hao...)</p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
+        <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+      </div>
+      <div className="overflow-x-auto rounded-xl border border-slate-200 mb-3">
+        <table className="w-full text-sm min-w-[640px]">
+          <thead>
+            <tr className="text-left text-xs text-slate-500 bg-slate-50 border-b border-slate-200">
+              <th className="px-2 py-2">Tên khoản chi (CCDC / vật tư / sửa chữa...)</th>
+              <th className="px-2 py-2 w-28">Số lượng</th>
+              <th className="px-2 py-2 w-32">Đơn giá</th>
+              <th className="px-2 py-2 w-32 text-right">Thành tiền</th>
+              <th className="px-2 py-2 w-10"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((l) => {
+              const rowTotal = (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0);
+              return (
+                <tr key={l.key} className="border-b border-slate-100 last:border-0">
+                  <td className="px-2 py-1.5">
+                    <input value={l.itemName} onChange={(e) => updateLine(l.key, { itemName: e.target.value })} placeholder="VD: Sửa máy hút mùi, mua khay inox..." className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input type="number" value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-medium text-slate-700">{rowTotal > 0 ? fmtMoney(rowTotal) : "—"}</td>
+                  <td className="px-2 py-1.5 text-center">
+                    <button type="button" onClick={() => removeRow(l.key)} className="text-slate-400 hover:text-rose-600"><X size={15} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="bg-teal-50/60">
+              <td colSpan={3} className="px-2 py-2 text-right text-teal-700 font-medium">Tổng chi phí</td>
+              <td className="px-2 py-2 text-right font-semibold text-teal-800">{fmtMoney(grandTotal)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <GhostButton type="button" onClick={addRow} className="mb-3"><Plus size={14} /> Thêm dòng</GhostButton>
+      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Receipt size={15} />} Lưu chi phí</PrimaryButton>
+    </Card>
+  );
+}
+
+// Chi phí "Vận hành" / "Marketing & bán hàng" — danh sách khoản chi cố định, mỗi
+// khoản chỉ cần điền số tiền (không cần số lượng/đơn giá).
+function PresetExpenseForm({ category, onSubmit }) {
+  const meta = EXPENSE_CATEGORY_META[category];
+  const [amounts, setAmounts] = useState(() => Object.fromEntries(meta.presetItems.map((n) => [n, ""])));
+  const [expenseDate, setExpenseDate] = useState(todayISO());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const filled = meta.presetItems.filter((n) => Number(amounts[n]) > 0);
+  const grandTotal = filled.reduce((s, n) => s + Number(amounts[n]), 0);
+
+  const submit = async () => {
+    if (filled.length === 0) { setError("Vui lòng nhập ít nhất 1 khoản chi phí."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSubmit({
+        category, expenseDate,
+        lines: filled.map((n) => ({ itemName: n, amount: Number(amounts[n]) })),
+      });
+      setAmounts(Object.fromEntries(meta.presetItems.map((n) => [n, ""])));
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-3">{meta.label}</p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
+        <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+      </div>
+      <div className="space-y-2 mb-4">
+        {meta.presetItems.map((n) => (
+          <div key={n} className="flex items-center gap-3">
+            <span className="text-sm text-slate-600 w-32 shrink-0">{n}</span>
+            <input
+              type="number"
+              value={amounts[n]}
+              onChange={(e) => setAmounts((prev) => ({ ...prev, [n]: e.target.value }))}
+              placeholder="0"
+              className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+            />
+            <span className="text-xs text-slate-400 w-8">đ</span>
+          </div>
+        ))}
+      </div>
+      <div className="bg-teal-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm mb-4">
+        <span className="text-teal-700">Tổng chi phí</span>
+        <span className="font-semibold text-teal-800">{fmtMoney(grandTotal)}</span>
+      </div>
+      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Receipt size={15} />} Lưu chi phí</PrimaryButton>
+    </Card>
+  );
+}
+
+// Chi phí "Khác" — các khoản không thuộc 4 nhóm còn lại, tự đặt tên khoản chi.
+function OtherExpenseForm({ onSubmit }) {
+  const [lines, setLines] = useState([{ key: Math.random().toString(36).slice(2), itemName: "", amount: "" }]);
+  const [expenseDate, setExpenseDate] = useState(todayISO());
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const updateLine = (key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const addRow = () => setLines((prev) => [...prev, { key: Math.random().toString(36).slice(2), itemName: "", amount: "" }]);
+  const removeRow = (key) => setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
+
+  const validLines = lines.filter((l) => l.itemName.trim() && Number(l.amount) > 0);
+  const grandTotal = validLines.reduce((s, l) => s + Number(l.amount), 0);
+
+  const submit = async () => {
+    if (validLines.length === 0) { setError("Cần ít nhất 1 dòng đủ Tên khoản chi và Số tiền."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSubmit({
+        category: "khac", expenseDate,
+        lines: validLines.map((l) => ({ itemName: l.itemName.trim(), amount: Number(l.amount) })),
+      });
+      setLines([{ key: Math.random().toString(36).slice(2), itemName: "", amount: "" }]);
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-3">Chi phí khác</p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
+        <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+      </div>
+      <div className="space-y-2 mb-4">
+        {lines.map((l) => (
+          <div key={l.key} className="flex items-center gap-2">
+            <input value={l.itemName} onChange={(e) => updateLine(l.key, { itemName: e.target.value })} placeholder="Tên khoản chi..." className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+            <input type="number" value={l.amount} onChange={(e) => updateLine(l.key, { amount: e.target.value })} placeholder="Số tiền" className="w-40 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+            <button type="button" onClick={() => removeRow(l.key)} className="text-slate-400 hover:text-rose-600 shrink-0"><X size={16} /></button>
+          </div>
+        ))}
+      </div>
+      <GhostButton type="button" onClick={addRow} className="mb-3"><Plus size={14} /> Thêm dòng</GhostButton>
+      <div className="bg-teal-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm mb-4">
+        <span className="text-teal-700">Tổng chi phí</span>
+        <span className="font-semibold text-teal-800">{fmtMoney(grandTotal)}</span>
+      </div>
+      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Receipt size={15} />} Lưu chi phí</PrimaryButton>
+    </Card>
+  );
+}
+
+function ExpenseList({ data }) {
+  const rows = data.expenseRecords.slice(0, 30);
+  return (
+    <Card className="p-0 overflow-hidden">
+      <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Chi phí ghi nhận gần đây</p></div>
+      {rows.length === 0 ? <EmptyState icon={Receipt} text="Chưa có khoản chi phí nào." /> : (
+        <div className="divide-y divide-slate-100">
+          {rows.map((r) => (
+            <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-800 truncate">{r.itemName}</p>
+                <p className="text-xs text-slate-400">{EXPENSE_CATEGORY_META[r.category]?.label || r.category} · {fmtDate(r.expenseDate)}</p>
+              </div>
+              <p className="text-sm font-semibold text-slate-700 shrink-0">{fmtMoney(r.amount)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport }) {
+  const [category, setCategory] = useState("van_hanh");
+  const meta = EXPENSE_CATEGORY_META[category];
+
+  return (
+    <div>
+      <SectionTitle icon={Receipt} title="Chi phí" subtitle="Ghi nhận toàn bộ chi phí phát sinh hàng tháng" />
+      <Card className="p-4 sm:p-5 mb-5">
+        <SelectField label="Loại chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
+          {EXPENSE_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </SelectField>
+      </Card>
+
+      {category === "nvl" && (
+        <>
+          <div className="mb-4 flex items-center gap-2 text-sm text-teal-700 bg-teal-50 border border-teal-200 rounded-xl px-3 py-2">
+            <ArrowDownCircle size={15} /> Chi phí nguyên vật liệu được ghi nhận qua đúng màn "Nhập hàng" bên dưới (dùng chung dữ liệu, không tách riêng để tránh trùng lặp).
+          </div>
+          <NhapHangForm data={data} currentUser={currentUser} onSubmit={onSubmitImport} />
+          <NhapHangList data={data} />
+        </>
+      )}
+      {category === "bao_tri_vat_tu" && <BaoTriVatTuForm currentUser={currentUser} onSubmit={onSubmitExpense} />}
+      {(category === "van_hanh" || category === "marketing") && <PresetExpenseForm category={category} onSubmit={onSubmitExpense} />}
+      {category === "khac" && <OtherExpenseForm onSubmit={onSubmitExpense} />}
+
+      {category !== "nvl" && <ExpenseList data={data} />}
+    </div>
+  );
+}
+
 function TaiKhoanModule({ currentUser, employees, onAddEmployee }) {
   const [query, setQuery] = useState("");
   const [resetting, setResetting] = useState(null);
@@ -1821,7 +2099,7 @@ export default function App() {
 
   const [data, setData] = useState({
     employees: [], suppliers: [], revenueCodes: [], exportCodes: [], products: [],
-    stockOpenings: [], importRecords: [], exportRecords: [],
+    stockOpenings: [], importRecords: [], exportRecords: [], expenseRecords: [],
   });
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
@@ -1917,6 +2195,19 @@ export default function App() {
     showToast(`Đã lưu phiếu xuất ${receiptCode}`);
   };
 
+  // ---------------- Chi phí (Vận hành / Marketing / Bảo trì & vật tư / Khác) ----------------
+  const submitExpense = async ({ category, lines, expenseDate }) => {
+    const rows = lines.map((l) => ({
+      category, item_name: l.itemName,
+      quantity: l.quantity ?? null, unit_price: l.unitPrice ?? null, amount: l.amount,
+      expense_date: expenseDate || todayISO(), note: l.note || null, created_by: currentUser.id,
+    }));
+    const { error } = await supabase.from("expense_records").insert(rows);
+    if (error) throw error;
+    await refreshAll();
+    showToast(`Đã ghi nhận ${rows.length} khoản chi phí`);
+  };
+
   // ---------------- Tồn kho ----------------
   const saveStockOpening = async ({ productId, asOfDate, quantity, unitPrice, note }) => {
     const { error } = await supabase.from("stock_opening").insert({
@@ -1957,12 +2248,14 @@ export default function App() {
   const NAV_NHAN_VIEN = [
     { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
     { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
+    { key: "chi_phi", label: "Chi phí", icon: Receipt },
     { key: "danh_muc", label: "Danh mục", icon: Boxes },
     { key: "ton_kho", label: "Tồn kho", icon: Warehouse },
   ];
   const NAV_QUAN_LY = [
     { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
     { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
+    { key: "chi_phi", label: "Chi phí", icon: Receipt },
     { key: "danh_muc", label: "Danh mục", icon: Boxes },
     { key: "bao_cao_nhap", label: "Báo cáo nhập", icon: BarChart3 },
     { key: "bao_cao_xuat", label: "Báo cáo xuất", icon: BarChart3 },
@@ -2016,6 +2309,7 @@ export default function App() {
         <TabErrorBoundary resetKey={tab}>
           {tab === "nhap" && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} />}
           {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} />}
+          {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
           {tab === "danh_muc" && (
             <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
           )}
