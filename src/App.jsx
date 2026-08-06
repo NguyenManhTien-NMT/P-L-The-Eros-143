@@ -829,7 +829,7 @@ function ProductCodeNameFields({ products, productId, onSelectProduct, codeLabel
 
 // Cặp ô "Mã" ↔ "Tên" gọn, dùng bên trong 1 dòng của bảng kiểu Excel (không có
 // nhãn/khung riêng như ProductCodeNameFields, chỉ 2 ô input cạnh nhau).
-function ProductCodeNameCells({ products, productId, onSelectProduct, codePlaceholder = "Mã...", namePlaceholder = "Tên...", codeInputId }) {
+function ProductCodeNameCells({ products, productId, onSelectProduct, codePlaceholder = "Mã...", namePlaceholder = "Tên...", codeInputId, nameInputId, onCellKeyDown }) {
   const selected = products.find((p) => p.id === productId);
   const [codeText, setCodeText] = useState(selected?.code || "");
   const [nameText, setNameText] = useState(selected?.name || "");
@@ -877,6 +877,7 @@ function ProductCodeNameCells({ products, productId, onSelectProduct, codePlaceh
           onChange={(e) => { handleCodeChange(e.target.value); setShowCodeList(true); }}
           onFocus={() => setShowCodeList(true)}
           onBlur={() => setTimeout(() => setShowCodeList(false), 150)}
+          onKeyDown={(e) => onCellKeyDown?.(e, 0)}
           placeholder={codePlaceholder}
           className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
         />
@@ -892,10 +893,12 @@ function ProductCodeNameCells({ products, productId, onSelectProduct, codePlaceh
       </td>
       <td className="px-2 py-1.5 relative">
         <input
+          id={nameInputId}
           value={nameText}
           onChange={(e) => { handleNameChange(e.target.value); setShowNameList(true); }}
           onFocus={() => setShowNameList(true)}
           onBlur={() => setTimeout(() => setShowNameList(false), 150)}
+          onKeyDown={(e) => onCellKeyDown?.(e, 1)}
           placeholder={namePlaceholder}
           className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
         />
@@ -919,28 +922,38 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
   const [lines, setLines] = useState([{ key: Math.random().toString(36).slice(2), productId: "", quantity: "", unitPrice: "" }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const [pendingFocusKey, setPendingFocusKey] = useState(null);
+  const [pendingFocusIndex, setPendingFocusIndex] = useState(null);
 
   const supplier = data.suppliers.find((s) => s.id === supplierId);
 
   const updateLine = (key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   const addRow = () => {
-    const newKey = Math.random().toString(36).slice(2);
-    setLines((prev) => [...prev, { key: newKey, productId: "", quantity: "", unitPrice: "" }]);
-    setPendingFocusKey(newKey);
-    return newKey;
+    const newIndex = lines.length;
+    setLines((prev) => [...prev, { key: Math.random().toString(36).slice(2), productId: "", quantity: "", unitPrice: "" }]);
+    setPendingFocusIndex(newIndex);
   };
   const removeRow = (key) => setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
+
+  // Điều hướng ô bằng phím mũi tên kiểu Excel — không bị "khoá" trong 1 ô,
+  // quay lại sửa dữ liệu dòng trước đó mà không cần bấm chuột.
+  // col: 0=Mã SP, 1=Tên SP, 2=Số lượng, 3=Đơn giá
+  const focusCell = (rowIndex, col) => {
+    const el = document.getElementById(`nhap-cell-${rowIndex}-${col}`);
+    if (el) {
+      el.focus();
+      try { el.select(); } catch (_) { /* 1 số trình duyệt không hỗ trợ select() trên input number, bỏ qua */ }
+    }
+  };
 
   // Sau khi thêm dòng mới (bấm nút hoặc Tab ở ô Đơn giá của dòng cuối), tự đưa
   // con trỏ vào ô "Mã SP" của dòng vừa thêm để gõ tiếp luôn không cần bấm chuột.
   useEffect(() => {
-    if (pendingFocusKey) {
-      const el = document.getElementById(`nhap-code-${pendingFocusKey}`);
-      if (el) el.focus();
-      setPendingFocusKey(null);
+    if (pendingFocusIndex !== null) {
+      focusCell(pendingFocusIndex, 0);
+      setPendingFocusIndex(null);
     }
-  }, [lines, pendingFocusKey]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lines, pendingFocusIndex]);
 
   // Bấm Tab ở ô Đơn giá của dòng CUỐI CÙNG → tự thêm dòng mới thay vì nhảy ra
   // khỏi bảng (Shift+Tab hoặc không phải dòng cuối thì vẫn Tab bình thường).
@@ -948,6 +961,24 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
     if (e.key === "Tab" && !e.shiftKey && isLastRow) {
       e.preventDefault();
       addRow();
+    }
+  };
+
+  const handleCellKeyDown = (e, rowIndex, col) => {
+    if (e.key === "ArrowUp") {
+      e.preventDefault();
+      if (rowIndex > 0) focusCell(rowIndex - 1, col);
+    } else if (e.key === "ArrowDown") {
+      e.preventDefault();
+      if (rowIndex < lines.length - 1) focusCell(rowIndex + 1, col);
+    } else if (e.key === "ArrowLeft") {
+      // Chỉ nhảy sang ô bên trái khi con trỏ đang ở đầu chữ (không phá việc di chuyển con trỏ trong ô)
+      const atStart = e.target.selectionStart === 0 && e.target.selectionEnd === 0;
+      if (atStart && col > 0) { e.preventDefault(); focusCell(rowIndex, col - 1); }
+    } else if (e.key === "ArrowRight") {
+      const len = e.target.value?.length ?? 0;
+      const atEnd = e.target.selectionStart === len && e.target.selectionEnd === len;
+      if (atEnd && col < 3) { e.preventDefault(); focusCell(rowIndex, col + 1); }
     }
   };
 
@@ -1012,18 +1043,29 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
                     onSelectProduct={(id) => updateLine(l.key, { productId: id })}
                     codePlaceholder="Mã SP"
                     namePlaceholder="Tên SP"
-                    codeInputId={`nhap-code-${l.key}`}
+                    codeInputId={`nhap-cell-${idx}-0`}
+                    nameInputId={`nhap-cell-${idx}-1`}
+                    onCellKeyDown={(e, col) => handleCellKeyDown(e, idx, col)}
                   />
                   <td className="px-2 py-1.5 text-slate-500">{p?.unit || "—"}</td>
                   <td className="px-2 py-1.5">
-                    <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                    <input
+                      id={`nhap-cell-${idx}-2`}
+                      type="number"
+                      value={l.quantity}
+                      onChange={(e) => updateLine(l.key, { quantity: e.target.value })}
+                      onKeyDown={(e) => handleCellKeyDown(e, idx, 2)}
+                      placeholder="0"
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+                    />
                   </td>
                   <td className="px-2 py-1.5">
                     <input
+                      id={`nhap-cell-${idx}-3`}
                       type="number"
                       value={l.unitPrice}
                       onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })}
-                      onKeyDown={(e) => handlePriceKeyDown(e, isLastRow)}
+                      onKeyDown={(e) => { handleCellKeyDown(e, idx, 3); handlePriceKeyDown(e, isLastRow); }}
                       placeholder="0"
                       className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
                     />
