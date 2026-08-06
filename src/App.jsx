@@ -829,7 +829,7 @@ function ProductCodeNameFields({ products, productId, onSelectProduct, codeLabel
 
 // Cặp ô "Mã" ↔ "Tên" gọn, dùng bên trong 1 dòng của bảng kiểu Excel (không có
 // nhãn/khung riêng như ProductCodeNameFields, chỉ 2 ô input cạnh nhau).
-function ProductCodeNameCells({ products, productId, onSelectProduct, codePlaceholder = "Mã...", namePlaceholder = "Tên..." }) {
+function ProductCodeNameCells({ products, productId, onSelectProduct, codePlaceholder = "Mã...", namePlaceholder = "Tên...", codeInputId }) {
   const selected = products.find((p) => p.id === productId);
   const [codeText, setCodeText] = useState(selected?.code || "");
   const [nameText, setNameText] = useState(selected?.name || "");
@@ -872,6 +872,7 @@ function ProductCodeNameCells({ products, productId, onSelectProduct, codePlaceh
     <>
       <td className="px-2 py-1.5 relative">
         <input
+          id={codeInputId}
           value={codeText}
           onChange={(e) => { handleCodeChange(e.target.value); setShowCodeList(true); }}
           onFocus={() => setShowCodeList(true)}
@@ -918,12 +919,37 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
   const [lines, setLines] = useState([{ key: Math.random().toString(36).slice(2), productId: "", quantity: "", unitPrice: "" }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [pendingFocusKey, setPendingFocusKey] = useState(null);
 
   const supplier = data.suppliers.find((s) => s.id === supplierId);
 
   const updateLine = (key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
-  const addRow = () => setLines((prev) => [...prev, { key: Math.random().toString(36).slice(2), productId: "", quantity: "", unitPrice: "" }]);
+  const addRow = () => {
+    const newKey = Math.random().toString(36).slice(2);
+    setLines((prev) => [...prev, { key: newKey, productId: "", quantity: "", unitPrice: "" }]);
+    setPendingFocusKey(newKey);
+    return newKey;
+  };
   const removeRow = (key) => setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
+
+  // Sau khi thêm dòng mới (bấm nút hoặc Tab ở ô Đơn giá của dòng cuối), tự đưa
+  // con trỏ vào ô "Mã SP" của dòng vừa thêm để gõ tiếp luôn không cần bấm chuột.
+  useEffect(() => {
+    if (pendingFocusKey) {
+      const el = document.getElementById(`nhap-code-${pendingFocusKey}`);
+      if (el) el.focus();
+      setPendingFocusKey(null);
+    }
+  }, [lines, pendingFocusKey]);
+
+  // Bấm Tab ở ô Đơn giá của dòng CUỐI CÙNG → tự thêm dòng mới thay vì nhảy ra
+  // khỏi bảng (Shift+Tab hoặc không phải dòng cuối thì vẫn Tab bình thường).
+  const handlePriceKeyDown = (e, isLastRow) => {
+    if (e.key === "Tab" && !e.shiftKey && isLastRow) {
+      e.preventDefault();
+      addRow();
+    }
+  };
 
   const validLines = lines.filter((l) => l.productId && Number(l.quantity) > 0 && Number(l.unitPrice) >= 0);
   const grandTotal = validLines.reduce((s, l) => s + Number(l.quantity) * Number(l.unitPrice), 0);
@@ -974,9 +1000,10 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
             </tr>
           </thead>
           <tbody>
-            {lines.map((l) => {
+            {lines.map((l, idx) => {
               const p = data.products.find((x) => x.id === l.productId);
               const rowTotal = (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0);
+              const isLastRow = idx === lines.length - 1;
               return (
                 <tr key={l.key} className="border-b border-slate-100 last:border-0">
                   <ProductCodeNameCells
@@ -985,13 +1012,21 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
                     onSelectProduct={(id) => updateLine(l.key, { productId: id })}
                     codePlaceholder="Mã SP"
                     namePlaceholder="Tên SP"
+                    codeInputId={`nhap-code-${l.key}`}
                   />
                   <td className="px-2 py-1.5 text-slate-500">{p?.unit || "—"}</td>
                   <td className="px-2 py-1.5">
                     <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
                   </td>
                   <td className="px-2 py-1.5">
-                    <input type="number" value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                    <input
+                      type="number"
+                      value={l.unitPrice}
+                      onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })}
+                      onKeyDown={(e) => handlePriceKeyDown(e, isLastRow)}
+                      placeholder="0"
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+                    />
                   </td>
                   <td className="px-2 py-1.5 text-right font-medium text-slate-700">{rowTotal > 0 ? fmtMoney(rowTotal) : "—"}</td>
                   <td className="px-2 py-1.5 text-center">
