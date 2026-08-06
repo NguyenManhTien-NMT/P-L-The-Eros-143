@@ -146,9 +146,23 @@ function mapExpenseRecord(r) {
     expenseDate: r.expense_date, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
   };
 }
+function mapDish(d) {
+  return {
+    id: d.id, name: d.name, sellingPrice: d.selling_price === null ? null : Number(d.selling_price),
+    note: d.note || "", createdBy: d.created_by, createdAt: d.created_at,
+  };
+}
+function mapDishIngredient(i) {
+  return {
+    id: i.id, dishId: i.dish_id, productId: i.product_id,
+    quantity: Number(i.quantity) || 0, costMode: i.cost_mode,
+    allocatedCost: i.allocated_cost === null ? null : Number(i.allocated_cost),
+    sortOrder: i.sort_order || 0, createdAt: i.created_at,
+  };
+}
 
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -158,8 +172,10 @@ async function fetchAll() {
     supabase.from("import_records").select("*").order("import_date", { ascending: false }).order("created_at", { ascending: false }),
     supabase.from("export_records").select("*").order("export_date", { ascending: false }).order("created_at", { ascending: false }),
     supabase.from("expense_records").select("*").order("expense_date", { ascending: false }).order("created_at", { ascending: false }),
+    supabase.from("dishes").select("*").order("name"),
+    supabase.from("dish_ingredients").select("*").order("sort_order"),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -170,6 +186,8 @@ async function fetchAll() {
     importRecords: (imp.data || []).map(mapImportRecord),
     exportRecords: (exp.data || []).map(mapExportRecord),
     expenseRecords: (cost.data || []).map(mapExpenseRecord),
+    dishes: (dish.data || []).map(mapDish),
+    dishIngredients: (dishIng.data || []).map(mapDishIngredient),
   };
 }
 
@@ -195,6 +213,18 @@ function computeAvgPrice(productId, { stockOpenings, importRecords }) {
   const totalValue = baseValue + importValue;
   if (totalQty <= 0) return 0;
   return totalValue / totalQty;
+}
+
+// Chi phí của 1 dòng nguyên liệu trong công thức món ăn:
+// - "phan_bo" (dòng bôi xanh trong file Excel gốc): lấy thẳng giá trị phân bổ đã gán cho dòng đó.
+// - "xuat_kho" (còn lại): giá xuất kho hiện tại (bình quân gia quyền) × khối lượng xuất dùng trong món.
+function dishIngredientCost(ing, data) {
+  if (ing.costMode === "phan_bo") return ing.allocatedCost || 0;
+  const avgPrice = computeAvgPrice(ing.productId, data);
+  return avgPrice * ing.quantity;
+}
+function dishTotalCost(dishId, data) {
+  return data.dishIngredients.filter((i) => i.dishId === dishId).reduce((s, i) => s + dishIngredientCost(i, data), 0);
 }
 
 // Tồn kho (số lượng) của 1 sản phẩm tính đến hết 1 ngày cụ thể.
@@ -2023,6 +2053,226 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// COST MÓN ĂN (công thức + chi phí nguyên liệu + lợi nhuận theo giá bán)
+// ---------------------------------------------------------------------------
+function DishCreateForm({ onSubmit }) {
+  const [name, setName] = useState("");
+  const [sellingPrice, setSellingPrice] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    if (!name.trim()) { setError("Vui lòng nhập tên món."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSubmit({ name, sellingPrice });
+      setName(""); setSellingPrice("");
+    } catch (e) {
+      setError(e.message || "Không tạo được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-3">Thêm món ăn mới</p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
+        <TextField label="Tên món" value={name} onChange={(e) => setName(e.target.value)} placeholder="VD: Gỏi cá trê xù" />
+        <TextField label="Giá bán / suất (đ, tuỳ chọn)" type="number" value={sellingPrice} onChange={(e) => setSellingPrice(e.target.value)} />
+      </div>
+      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Thêm món</PrimaryButton>
+    </Card>
+  );
+}
+
+function DishRecipeEditor({ dish, data, onSave, onClose }) {
+  const existing = data.dishIngredients.filter((i) => i.dishId === dish.id).sort((a, b) => a.sortOrder - b.sortOrder);
+  const [lines, setLines] = useState(
+    existing.length > 0
+      ? existing.map((i) => ({ key: i.id, productId: i.productId, quantity: String(i.quantity), costMode: i.costMode, allocatedCost: i.allocatedCost === null ? "" : String(i.allocatedCost) }))
+      : [{ key: Math.random().toString(36).slice(2), productId: "", quantity: "", costMode: "xuat_kho", allocatedCost: "" }]
+  );
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const updateLine = (key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const addRow = () => setLines((prev) => [...prev, { key: Math.random().toString(36).slice(2), productId: "", quantity: "", costMode: "xuat_kho", allocatedCost: "" }]);
+  const removeRow = (key) => setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
+
+  const lineCost = (l) => {
+    if (l.costMode === "phan_bo") return Number(l.allocatedCost) || 0;
+    const p = data.products.find((x) => x.id === l.productId);
+    if (!p) return 0;
+    return computeAvgPrice(p.id, data) * (Number(l.quantity) || 0);
+  };
+  const totalCost = lines.reduce((s, l) => s + lineCost(l), 0);
+  const sellingPrice = dish.sellingPrice || 0;
+  const profit = sellingPrice - totalCost;
+  const profitPct = sellingPrice > 0 ? (profit / sellingPrice) * 100 : null;
+
+  const submit = async () => {
+    const validLines = lines.filter((l) => l.productId && Number(l.quantity) > 0);
+    if (validLines.length === 0) { setError("Cần ít nhất 1 dòng nguyên liệu đủ Sản phẩm + Định lượng."); return; }
+    if (validLines.some((l) => l.costMode === "phan_bo" && !(Number(l.allocatedCost) > 0))) {
+      setError("Dòng tính theo giá phân bổ cần nhập Giá phân bổ > 0."); return;
+    }
+    setError(""); setSaving(true);
+    try {
+      await onSave(dish.id, validLines.map((l) => ({
+        productId: l.productId, quantity: Number(l.quantity), costMode: l.costMode,
+        allocatedCost: l.costMode === "phan_bo" ? Number(l.allocatedCost) : null,
+      })));
+      onClose();
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto p-5">
+        <div className="flex items-center justify-between mb-4">
+          <p className="font-semibold text-slate-800 text-base">Công thức: {dish.name}</p>
+          <button onClick={onClose}><X size={18} className="text-slate-400" /></button>
+        </div>
+
+        <div className="overflow-x-auto rounded-xl border border-slate-200 mb-3">
+          <table className="w-full text-sm min-w-[820px]">
+            <thead>
+              <tr className="text-left text-xs text-slate-500 bg-slate-50 border-b border-slate-200">
+                <th className="px-2 py-2 w-40">Mã NVL</th>
+                <th className="px-2 py-2">Tên NVL</th>
+                <th className="px-2 py-2 w-24">Định lượng</th>
+                <th className="px-2 py-2 w-40">Cách tính chi phí</th>
+                <th className="px-2 py-2 w-32">Giá phân bổ / Giá xuất kho</th>
+                <th className="px-2 py-2 w-32 text-right">Chi phí dòng</th>
+                <th className="px-2 py-2 w-10"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {lines.map((l) => {
+                const p = data.products.find((x) => x.id === l.productId);
+                const avgPrice = p ? computeAvgPrice(p.id, data) : 0;
+                return (
+                  <tr key={l.key} className="border-b border-slate-100 last:border-0">
+                    <ProductCodeNameCells
+                      products={data.products}
+                      productId={l.productId}
+                      onSelectProduct={(id) => updateLine(l.key, { productId: id })}
+                      codePlaceholder="Mã NVL"
+                      namePlaceholder="Tên NVL"
+                    />
+                    <td className="px-2 py-1.5">
+                      <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder={p ? p.unit : "0"} className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                    </td>
+                    <td className="px-2 py-1.5">
+                      <select value={l.costMode} onChange={(e) => updateLine(l.key, { costMode: e.target.value })} className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/40">
+                        <option value="xuat_kho">Giá xuất kho</option>
+                        <option value="phan_bo">Phân bổ (giá cố định)</option>
+                      </select>
+                    </td>
+                    <td className="px-2 py-1.5">
+                      {l.costMode === "phan_bo" ? (
+                        <input type="number" value={l.allocatedCost} onChange={(e) => updateLine(l.key, { allocatedCost: e.target.value })} placeholder="Giá phân bổ (đ)" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                      ) : (
+                        <p className="px-2 py-1.5 text-slate-400 text-xs">{p ? `${fmtMoney(avgPrice)}/${p.unit}` : "—"}</p>
+                      )}
+                    </td>
+                    <td className="px-2 py-1.5 text-right font-medium text-slate-700">{fmtMoney(lineCost(l))}</td>
+                    <td className="px-2 py-1.5 text-center">
+                      <button type="button" onClick={() => removeRow(l.key)} className="text-slate-400 hover:text-rose-600"><X size={15} /></button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+        <GhostButton type="button" onClick={addRow} className="mb-4"><Plus size={14} /> Thêm dòng</GhostButton>
+
+        <div className="grid sm:grid-cols-3 gap-2 mb-4">
+          <div className="bg-slate-50 rounded-xl px-3 py-2">
+            <p className="text-xs text-slate-500">Tổng chi phí nguyên liệu / suất</p>
+            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalCost)}</p>
+          </div>
+          <div className="bg-slate-50 rounded-xl px-3 py-2">
+            <p className="text-xs text-slate-500">Giá bán / suất</p>
+            <p className="text-sm font-semibold text-slate-700">{sellingPrice > 0 ? fmtMoney(sellingPrice) : "Chưa đặt giá bán"}</p>
+          </div>
+          <div className={`rounded-xl px-3 py-2 ${sellingPrice > 0 ? (profit >= 0 ? "bg-emerald-50" : "bg-rose-50") : "bg-slate-50"}`}>
+            <p className={`text-xs ${sellingPrice > 0 ? (profit >= 0 ? "text-emerald-700" : "text-rose-700") : "text-slate-500"}`}>Lợi nhuận / suất</p>
+            <p className={`text-sm font-semibold ${sellingPrice > 0 ? (profit >= 0 ? "text-emerald-800" : "text-rose-800") : "text-slate-700"}`}>
+              {sellingPrice > 0 ? `${fmtMoney(profit)} (${profitPct.toFixed(1)}%)` : "—"}
+            </p>
+          </div>
+        </div>
+
+        {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+        <div className="flex gap-2">
+          <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <CheckCircle2 size={15} />} Lưu công thức</PrimaryButton>
+          <GhostButton onClick={onClose}>Đóng</GhostButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MonAnModule({ data, onAddDish, onSaveRecipe, onDeleteDish }) {
+  const [editingDish, setEditingDish] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+
+  const handleDelete = async (dishId) => {
+    setDeleting(dishId);
+    try { await onDeleteDish(dishId); } finally { setDeleting(null); }
+  };
+
+  return (
+    <div>
+      <SectionTitle icon={Package} title="Cost món ăn" subtitle="Công thức, chi phí nguyên liệu và lợi nhuận theo từng món" />
+      <DishCreateForm onSubmit={onAddDish} />
+
+      <Card className="p-0 overflow-hidden">
+        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Danh sách món ăn ({data.dishes.length})</p></div>
+        {data.dishes.length === 0 ? <EmptyState icon={Package} text="Chưa có món ăn nào." /> : (
+          <div className="divide-y divide-slate-100">
+            {data.dishes.map((d) => {
+              const cost = dishTotalCost(d.id, data);
+              const ingCount = data.dishIngredients.filter((i) => i.dishId === d.id).length;
+              const profit = d.sellingPrice ? d.sellingPrice - cost : null;
+              return (
+                <div key={d.id} className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-slate-800 truncate">{d.name}</p>
+                    <p className="text-xs text-slate-400">{ingCount} nguyên liệu · Chi phí {fmtMoney(cost)}{d.sellingPrice ? ` · Giá bán ${fmtMoney(d.sellingPrice)}` : ""}</p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    {profit !== null && (
+                      <span className={`text-xs font-medium px-2 py-1 rounded-full ${profit >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-rose-50 text-rose-700"}`}>
+                        {profit >= 0 ? "Lãi" : "Lỗ"} {fmtMoney(Math.abs(profit))}
+                      </span>
+                    )}
+                    <GhostButton onClick={() => setEditingDish(d)}><Pencil size={13} /> Công thức</GhostButton>
+                    <button onClick={() => handleDelete(d.id)} disabled={deleting === d.id} className="text-slate-400 hover:text-rose-600 p-1.5"><Trash2 size={15} /></button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Card>
+
+      {editingDish && (
+        <DishRecipeEditor dish={editingDish} data={data} onSave={onSaveRecipe} onClose={() => setEditingDish(null)} />
+      )}
+    </div>
+  );
+}
+
 function TaiKhoanModule({ currentUser, employees, onAddEmployee }) {
   const [query, setQuery] = useState("");
   const [resetting, setResetting] = useState(null);
@@ -2100,6 +2350,7 @@ export default function App() {
   const [data, setData] = useState({
     employees: [], suppliers: [], revenueCodes: [], exportCodes: [], products: [],
     stockOpenings: [], importRecords: [], exportRecords: [], expenseRecords: [],
+    dishes: [], dishIngredients: [],
   });
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
@@ -2208,6 +2459,42 @@ export default function App() {
     showToast(`Đã ghi nhận ${rows.length} khoản chi phí`);
   };
 
+  // ---------------- Cost món ăn ----------------
+  const addDish = async ({ name, sellingPrice, note }) => {
+    const { error } = await supabase.from("dishes").insert({
+      name: name.trim(), selling_price: sellingPrice === "" || sellingPrice === undefined ? null : Number(sellingPrice),
+      note: note?.trim() || null, created_by: currentUser.id,
+    });
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã tạo món ăn");
+  };
+
+  const deleteDish = async (dishId) => {
+    const { error } = await supabase.from("dishes").delete().eq("id", dishId);
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã xoá món ăn");
+  };
+
+  // Lưu lại toàn bộ công thức của 1 món: xoá hết dòng cũ rồi ghi lại danh sách mới
+  // (đơn giản, tránh phải so khớp thêm/sửa/xoá từng dòng riêng lẻ).
+  const saveDishRecipe = async (dishId, lines) => {
+    const { error: delErr } = await supabase.from("dish_ingredients").delete().eq("dish_id", dishId);
+    if (delErr) throw delErr;
+    if (lines.length > 0) {
+      const rows = lines.map((l, idx) => ({
+        dish_id: dishId, product_id: l.productId, quantity: l.quantity,
+        cost_mode: l.costMode, allocated_cost: l.costMode === "phan_bo" ? l.allocatedCost : null,
+        sort_order: idx,
+      }));
+      const { error: insErr } = await supabase.from("dish_ingredients").insert(rows);
+      if (insErr) throw insErr;
+    }
+    await refreshAll();
+    showToast("Đã lưu công thức món ăn");
+  };
+
   // ---------------- Tồn kho ----------------
   const saveStockOpening = async ({ productId, asOfDate, quantity, unitPrice, note }) => {
     const { error } = await supabase.from("stock_opening").insert({
@@ -2249,6 +2536,7 @@ export default function App() {
     { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
     { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
+    { key: "mon_an", label: "Cost món ăn", icon: Package },
     { key: "danh_muc", label: "Danh mục", icon: Boxes },
     { key: "ton_kho", label: "Tồn kho", icon: Warehouse },
   ];
@@ -2256,6 +2544,7 @@ export default function App() {
     { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
     { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
+    { key: "mon_an", label: "Cost món ăn", icon: Package },
     { key: "danh_muc", label: "Danh mục", icon: Boxes },
     { key: "bao_cao_nhap", label: "Báo cáo nhập", icon: BarChart3 },
     { key: "bao_cao_xuat", label: "Báo cáo xuất", icon: BarChart3 },
@@ -2310,6 +2599,7 @@ export default function App() {
           {tab === "nhap" && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} />}
           {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} />}
           {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
+          {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
           {tab === "danh_muc" && (
             <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
           )}
