@@ -403,7 +403,7 @@ function LoginScreen({ onLogin }) {
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-700 to-teal-900 mx-auto mb-3 flex items-center justify-center shadow-lg shadow-teal-900/25">
             <Warehouse size={26} className="text-white" />
           </div>
-          <h1 className="text-2xl font-semibold text-slate-800 tracking-tight">Quản lý Kho NVL &amp; Thành phẩm</h1>
+          <h1 className="text-2xl font-semibold text-slate-800 tracking-tight">Kho NVL &amp; Hàng hoá — P&amp;L The Eros 143</h1>
           <p className="text-sm text-slate-500 mt-1">Đăng nhập bằng tài khoản nhân sự</p>
         </div>
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200/80 shadow-xl shadow-slate-900/5 p-5 space-y-4">
@@ -1981,7 +1981,7 @@ export default function App() {
               <Warehouse size={18} />
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800 leading-tight tracking-tight">Quản lý Kho NVL &amp; Thành phẩm</p>
+              <p className="text-sm font-semibold text-slate-800 leading-tight tracking-tight">P&amp;L The Eros 143</p>
               <p className="text-[11px] text-slate-400 leading-tight truncate">Nhập - Xuất - Tồn kho</p>
             </div>
           </div>
