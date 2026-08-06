@@ -740,34 +740,206 @@ function DanhMucModule({ data, onAddSupplier, onAddProduct, onAddRevenueCode, on
 // ---------------------------------------------------------------------------
 // NHẬP HÀNG — Tác vụ 2 (nhập liệu) + Tác vụ 3 (báo cáo nhập)
 // ---------------------------------------------------------------------------
+// Cặp ô "Mã" ↔ "Tên" liên kết 2 chiều: gõ đúng mã thì tên tự nhảy ra, gõ đúng tên
+// thì mã tự nhảy ra; gõ 1 phần thì hiện gợi ý để bấm chọn (khớp cả mã lẫn tên).
+function ProductCodeNameFields({ products, productId, onSelectProduct, codeLabel = "Mã sản phẩm", nameLabel = "Tên sản phẩm" }) {
+  const selected = products.find((p) => p.id === productId);
+  const [codeText, setCodeText] = useState(selected?.code || "");
+  const [nameText, setNameText] = useState(selected?.name || "");
+  const [showCodeList, setShowCodeList] = useState(false);
+  const [showNameList, setShowNameList] = useState(false);
+
+  useEffect(() => {
+    const p = products.find((x) => x.id === productId);
+    setCodeText(p?.code || "");
+    setNameText(p?.name || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productId]);
+
+  const codeMatches = codeText
+    ? products.filter((p) => p.code.toLowerCase().includes(codeText.trim().toLowerCase())).slice(0, 8)
+    : [];
+  const nameMatches = nameText
+    ? products.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(nameText.trim()))).slice(0, 8)
+    : [];
+
+  const handleCodeChange = (v) => {
+    setCodeText(v);
+    const exact = products.find((p) => p.code.toLowerCase() === v.trim().toLowerCase());
+    if (exact) { onSelectProduct(exact.id); setNameText(exact.name); }
+    else if (productId) onSelectProduct("");
+  };
+  const handleNameChange = (v) => {
+    setNameText(v);
+    const exact = products.find((p) => p.name.toLowerCase() === v.trim().toLowerCase());
+    if (exact) { onSelectProduct(exact.id); setCodeText(exact.code); }
+    else if (productId) onSelectProduct("");
+  };
+  const pick = (p) => {
+    onSelectProduct(p.id);
+    setCodeText(p.code); setNameText(p.name);
+    setShowCodeList(false); setShowNameList(false);
+  };
+
+  return (
+    <div className="grid sm:grid-cols-2 gap-2">
+      <label className="block relative">
+        <span className="block text-[11px] text-slate-500 mb-1">{codeLabel}</span>
+        <input
+          value={codeText}
+          onChange={(e) => { handleCodeChange(e.target.value); setShowCodeList(true); }}
+          onFocus={() => setShowCodeList(true)}
+          onBlur={() => setTimeout(() => setShowCodeList(false), 150)}
+          placeholder="Gõ mã..."
+          className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
+        />
+        {showCodeList && codeMatches.length > 0 && (
+          <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
+            {codeMatches.map((p) => (
+              <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
+                <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </label>
+      <label className="block relative">
+        <span className="block text-[11px] text-slate-500 mb-1">{nameLabel}</span>
+        <input
+          value={nameText}
+          onChange={(e) => { handleNameChange(e.target.value); setShowNameList(true); }}
+          onFocus={() => setShowNameList(true)}
+          onBlur={() => setTimeout(() => setShowNameList(false), 150)}
+          placeholder="Gõ tên..."
+          className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
+        />
+        {showNameList && nameMatches.length > 0 && (
+          <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
+            {nameMatches.map((p) => (
+              <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
+                <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </label>
+    </div>
+  );
+}
+
+// Cặp ô "Mã" ↔ "Tên" gọn, dùng bên trong 1 dòng của bảng kiểu Excel (không có
+// nhãn/khung riêng như ProductCodeNameFields, chỉ 2 ô input cạnh nhau).
+function ProductCodeNameCells({ products, productId, onSelectProduct, codePlaceholder = "Mã...", namePlaceholder = "Tên..." }) {
+  const selected = products.find((p) => p.id === productId);
+  const [codeText, setCodeText] = useState(selected?.code || "");
+  const [nameText, setNameText] = useState(selected?.name || "");
+  const [showCodeList, setShowCodeList] = useState(false);
+  const [showNameList, setShowNameList] = useState(false);
+
+  useEffect(() => {
+    const p = products.find((x) => x.id === productId);
+    setCodeText(p?.code || "");
+    setNameText(p?.name || "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [productId]);
+
+  const codeMatches = codeText
+    ? products.filter((p) => p.code.toLowerCase().includes(codeText.trim().toLowerCase())).slice(0, 8)
+    : [];
+  const nameMatches = nameText
+    ? products.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(nameText.trim()))).slice(0, 8)
+    : [];
+
+  const handleCodeChange = (v) => {
+    setCodeText(v);
+    const exact = products.find((p) => p.code.toLowerCase() === v.trim().toLowerCase());
+    if (exact) { onSelectProduct(exact.id); setNameText(exact.name); }
+    else if (productId) onSelectProduct("");
+  };
+  const handleNameChange = (v) => {
+    setNameText(v);
+    const exact = products.find((p) => p.name.toLowerCase() === v.trim().toLowerCase());
+    if (exact) { onSelectProduct(exact.id); setCodeText(exact.code); }
+    else if (productId) onSelectProduct("");
+  };
+  const pick = (p) => {
+    onSelectProduct(p.id);
+    setCodeText(p.code); setNameText(p.name);
+    setShowCodeList(false); setShowNameList(false);
+  };
+
+  return (
+    <>
+      <td className="px-2 py-1.5 relative">
+        <input
+          value={codeText}
+          onChange={(e) => { handleCodeChange(e.target.value); setShowCodeList(true); }}
+          onFocus={() => setShowCodeList(true)}
+          onBlur={() => setTimeout(() => setShowCodeList(false), 150)}
+          placeholder={codePlaceholder}
+          className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
+        />
+        {showCodeList && codeMatches.length > 0 && (
+          <div className="absolute z-20 left-2 right-2 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
+            {codeMatches.map((p) => (
+              <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
+                <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </td>
+      <td className="px-2 py-1.5 relative">
+        <input
+          value={nameText}
+          onChange={(e) => { handleNameChange(e.target.value); setShowNameList(true); }}
+          onFocus={() => setShowNameList(true)}
+          onBlur={() => setTimeout(() => setShowNameList(false), 150)}
+          placeholder={namePlaceholder}
+          className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
+        />
+        {showNameList && nameMatches.length > 0 && (
+          <div className="absolute z-20 left-2 right-2 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
+            {nameMatches.map((p) => (
+              <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
+                <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </td>
+    </>
+  );
+}
+
 function NhapHangForm({ data, currentUser, onSubmit }) {
   const [orderNumber, setOrderNumber] = useState("");
   const [supplierId, setSupplierId] = useState(data.suppliers[0]?.id || "");
-  const [productId, setProductId] = useState(data.products.find((p) => p.classification === "NL")?.id || "");
-  const [quantity, setQuantity] = useState("");
-  const [unitPrice, setUnitPrice] = useState("");
-  const [productQuery, setProductQuery] = useState("");
+  const [lines, setLines] = useState([{ key: Math.random().toString(36).slice(2), productId: "", quantity: "", unitPrice: "" }]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const supplier = data.suppliers.find((s) => s.id === supplierId);
-  const product = data.products.find((p) => p.id === productId);
-  const totalAmount = (Number(quantity) || 0) * (Number(unitPrice) || 0);
 
-  const productMatches = productQuery
-    ? data.products.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(productQuery)) || p.code.includes(productQuery)).slice(0, 8)
-    : [];
+  const updateLine = (key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const addRow = () => setLines((prev) => [...prev, { key: Math.random().toString(36).slice(2), productId: "", quantity: "", unitPrice: "" }]);
+  const removeRow = (key) => setLines((prev) => (prev.length > 1 ? prev.filter((l) => l.key !== key) : prev));
+
+  const validLines = lines.filter((l) => l.productId && Number(l.quantity) > 0 && Number(l.unitPrice) >= 0);
+  const grandTotal = validLines.reduce((s, l) => s + Number(l.quantity) * Number(l.unitPrice), 0);
 
   const submit = async () => {
-    if (!supplierId || !productId || !quantity || !unitPrice) { setError("Vui lòng điền đủ NCC, Sản phẩm, Số lượng, Đơn giá."); return; }
+    if (!supplierId) { setError("Vui lòng chọn Nhà cung cấp."); return; }
+    if (validLines.length === 0) { setError("Cần ít nhất 1 dòng đủ Mã SP, Số lượng, Đơn giá."); return; }
     setError(""); setSaving(true);
     try {
       await onSubmit({
-        orderNumber: orderNumber.trim(), supplierId, productId,
-        quantity: Number(quantity), unitPrice: Number(unitPrice), totalAmount,
+        orderNumber: orderNumber.trim(), supplierId,
+        lines: validLines.map((l) => ({ productId: l.productId, quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), totalAmount: Number(l.quantity) * Number(l.unitPrice) })),
         paymentType: supplier?.paymentType || "cong_no",
       });
-      setOrderNumber(""); setQuantity(""); setUnitPrice(""); setProductQuery("");
+      setOrderNumber("");
+      setLines([{ key: Math.random().toString(36).slice(2), productId: "", quantity: "", unitPrice: "" }]);
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
     } finally {
@@ -778,39 +950,68 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-3">Nhập hàng mới</p>
-      <div className="grid sm:grid-cols-2 gap-3 mb-3">
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
         <TextField label="Đơn số (tự đặt, không bắt buộc)" value={orderNumber} onChange={(e) => setOrderNumber(e.target.value)} />
         <SelectField label="Nhà cung cấp" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
           {data.suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
         </SelectField>
-        <label className="block sm:col-span-2 relative">
-          <span className="block text-xs font-medium text-slate-600 mb-1">Sản phẩm</span>
-          <input
-            value={productQuery || (product ? `${product.code} — ${product.name}` : "")}
-            onChange={(e) => { setProductQuery(e.target.value); setProductId(""); }}
-            placeholder="Gõ mã hoặc tên sản phẩm..."
-            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
-          />
-          {productMatches.length > 0 && !productId && (
-            <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
-              {productMatches.map((p) => (
-                <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { setProductId(p.id); setProductQuery(""); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
-                  <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </label>
-        <TextField label={`Số lượng${product ? ` (${product.unit})` : ""}`} type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-        <TextField label="Đơn giá (đ)" type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
-        <div className="sm:col-span-2 bg-teal-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm">
-          <span className="text-teal-700">Thành tiền</span>
-          <span className="font-semibold text-teal-800">{fmtMoney(totalAmount)}</span>
-        </div>
         {supplier && (
-          <p className="text-xs text-slate-400 sm:col-span-2 -mt-1">Tình trạng thanh toán sẽ tự ghi: <Badge className={PAYMENT_TYPE_META[supplier.paymentType]?.color}>{PAYMENT_TYPE_META[supplier.paymentType]?.label}</Badge></p>
+          <p className="text-xs text-slate-400 sm:col-span-2 -mt-1">Tình trạng thanh toán sẽ tự ghi cho cả phiếu: <Badge className={PAYMENT_TYPE_META[supplier.paymentType]?.color}>{PAYMENT_TYPE_META[supplier.paymentType]?.label}</Badge></p>
         )}
       </div>
+
+      <div className="overflow-x-auto rounded-xl border border-slate-200 mb-3">
+        <table className="w-full text-sm min-w-[720px]">
+          <thead>
+            <tr className="text-left text-xs text-slate-500 bg-slate-50 border-b border-slate-200">
+              <th className="px-2 py-2 w-40">Mã SP</th>
+              <th className="px-2 py-2">Tên SP</th>
+              <th className="px-2 py-2 w-16">ĐVT</th>
+              <th className="px-2 py-2 w-28">Số lượng</th>
+              <th className="px-2 py-2 w-32">Đơn giá</th>
+              <th className="px-2 py-2 w-32 text-right">Thành tiền</th>
+              <th className="px-2 py-2 w-10"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((l) => {
+              const p = data.products.find((x) => x.id === l.productId);
+              const rowTotal = (Number(l.quantity) || 0) * (Number(l.unitPrice) || 0);
+              return (
+                <tr key={l.key} className="border-b border-slate-100 last:border-0">
+                  <ProductCodeNameCells
+                    products={data.products}
+                    productId={l.productId}
+                    onSelectProduct={(id) => updateLine(l.key, { productId: id })}
+                    codePlaceholder="Mã SP"
+                    namePlaceholder="Tên SP"
+                  />
+                  <td className="px-2 py-1.5 text-slate-500">{p?.unit || "—"}</td>
+                  <td className="px-2 py-1.5">
+                    <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input type="number" value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                  </td>
+                  <td className="px-2 py-1.5 text-right font-medium text-slate-700">{rowTotal > 0 ? fmtMoney(rowTotal) : "—"}</td>
+                  <td className="px-2 py-1.5 text-center">
+                    <button type="button" onClick={() => removeRow(l.key)} className="text-slate-400 hover:text-rose-600"><X size={15} /></button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+          <tfoot>
+            <tr className="bg-teal-50/60">
+              <td colSpan={5} className="px-2 py-2 text-right text-teal-700 font-medium">Tổng thành tiền cả phiếu</td>
+              <td className="px-2 py-2 text-right font-semibold text-teal-800">{fmtMoney(grandTotal)}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <GhostButton type="button" onClick={addRow} className="mb-3"><Plus size={14} /> Thêm dòng</GhostButton>
+
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
       <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <ArrowDownCircle size={15} />} Lưu phiếu nhập</PrimaryButton>
     </Card>
@@ -990,8 +1191,7 @@ function XuatHangForm({ data, currentUser, onSubmit }) {
   const [revenueCodeId, setRevenueCodeId] = useState(data.revenueCodes[0]?.id || "");
   const [exportCodeId, setExportCodeId] = useState(data.exportCodes[0]?.id || "");
   const [lines, setLines] = useState([]);
-  const [lineType, setLineType] = useState("NVL");
-  const [productQuery, setProductQuery] = useState("");
+  const [lineType, setLineType] = useState("NL");
   const [productId, setProductId] = useState("");
   const [quantity, setQuantity] = useState("");
   const [unitPrice, setUnitPrice] = useState("");
@@ -999,16 +1199,13 @@ function XuatHangForm({ data, currentUser, onSubmit }) {
   const [error, setError] = useState("");
 
   const productPool = data.products.filter((p) => p.classification === lineType);
-  const productMatches = productQuery
-    ? productPool.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(productQuery)) || p.code.includes(productQuery)).slice(0, 8)
-    : [];
   const selectedProduct = data.products.find((p) => p.id === productId);
-  const avgPrice = selectedProduct && lineType === "NVL" ? computeAvgPrice(selectedProduct.id, data) : 0;
+  const avgPrice = selectedProduct && lineType === "NL" ? computeAvgPrice(selectedProduct.id, data) : 0;
   const currentStock = selectedProduct ? stockAsOf(selectedProduct.id, todayISO(), data) : 0;
 
   const addLine = () => {
     if (!productId || !quantity) { setError("Chọn sản phẩm và nhập số lượng trước khi thêm dòng."); return; }
-    const price = lineType === "NVL" ? avgPrice : Number(unitPrice) || 0;
+    const price = lineType === "NL" ? avgPrice : Number(unitPrice) || 0;
     if (lineType === "TP" && !unitPrice) { setError("Dòng thành phẩm cần nhập đơn giá bán."); return; }
     setError("");
     setLines((prev) => [...prev, {
@@ -1016,12 +1213,12 @@ function XuatHangForm({ data, currentUser, onSubmit }) {
       lineType, productId, quantity: Number(quantity), unitPrice: price,
       totalAmount: Number(quantity) * price,
     }]);
-    setProductId(""); setProductQuery(""); setQuantity(""); setUnitPrice("");
+    setProductId(""); setQuantity(""); setUnitPrice("");
   };
 
   const removeLine = (key) => setLines((prev) => prev.filter((l) => l.key !== key));
 
-  const totalNVL = lines.filter((l) => l.lineType === "NVL").reduce((s, l) => s + l.totalAmount, 0);
+  const totalNVL = lines.filter((l) => l.lineType === "NL").reduce((s, l) => s + l.totalAmount, 0);
   const totalTP = lines.filter((l) => l.lineType === "TP").reduce((s, l) => s + l.totalAmount, 0);
 
   const submit = async () => {
@@ -1054,33 +1251,25 @@ function XuatHangForm({ data, currentUser, onSubmit }) {
 
       <div className="bg-slate-50 rounded-xl p-3 mb-4">
         <p className="text-xs font-medium text-slate-600 mb-2">Thêm dòng nguyên liệu / thành phẩm</p>
-        <div className="grid sm:grid-cols-4 gap-2 mb-2">
-          <SelectField value={lineType} onChange={(e) => { setLineType(e.target.value); setProductId(""); setProductQuery(""); }}>
-            <option value="NVL">Nguyên vật liệu (NVL)</option>
+        <div className="grid sm:grid-cols-3 gap-2 mb-2">
+          <SelectField value={lineType} onChange={(e) => { setLineType(e.target.value); setProductId(""); }}>
+            <option value="NL">Nguyên vật liệu (NVL)</option>
             <option value="TP">Thành phẩm (TP)</option>
           </SelectField>
-          <label className="block relative sm:col-span-3">
-            <input
-              value={productQuery || (selectedProduct ? `${selectedProduct.code} — ${selectedProduct.name}` : "")}
-              onChange={(e) => { setProductQuery(e.target.value); setProductId(""); }}
-              placeholder={lineType === "NVL" ? "Gõ mã/tên nguyên liệu..." : "Gõ mã/tên thành phẩm..."}
-              className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+          <div className="sm:col-span-2">
+            <ProductCodeNameFields
+              products={productPool}
+              productId={productId}
+              onSelectProduct={(id) => setProductId(id)}
+              codeLabel={lineType === "NL" ? "Mã NVL" : "Mã TP"}
+              nameLabel={lineType === "NL" ? "Tên NVL" : "Tên TP"}
             />
-            {productMatches.length > 0 && !productId && (
-              <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
-                {productMatches.map((p) => (
-                  <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { setProductId(p.id); setProductQuery(""); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
-                    <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </label>
+          </div>
         </div>
         {selectedProduct && (
           <p className="text-xs text-slate-500 mb-2">
             Tồn hiện tại: <span className="font-medium">{fmtNumber(currentStock)} {selectedProduct.unit}</span>
-            {lineType === "NVL" && <> · Giá bình quân gia quyền: <span className="font-medium">{fmtMoney(avgPrice)}</span>/{selectedProduct.unit}</>}
+            {lineType === "NL" && <> · Giá bình quân gia quyền: <span className="font-medium">{fmtMoney(avgPrice)}</span>/{selectedProduct.unit}</>}
           </p>
         )}
         <div className="grid sm:grid-cols-3 gap-2">
@@ -1181,7 +1370,7 @@ function profitReportBy(records, codeList, codeField, from, to) {
   const totalRevenueAll = filtered.filter((r) => r.lineType === "TP").reduce((s, r) => s + r.totalAmount, 0);
   const rows = codeList.map((c) => {
     const lines = filtered.filter((r) => r[codeField] === c.id);
-    const giaVon = lines.filter((r) => r.lineType === "NVL").reduce((s, r) => s + r.totalAmount, 0);
+    const giaVon = lines.filter((r) => r.lineType === "NL").reduce((s, r) => s + r.totalAmount, 0);
     const doanhThu = lines.filter((r) => r.lineType === "TP").reduce((s, r) => s + r.totalAmount, 0);
     const loiNhuan = doanhThu - giaVon;
     return {
@@ -1266,7 +1455,6 @@ function BaoCaoXuatModule({ data }) {
 // ---------------------------------------------------------------------------
 function StockOpeningForm({ data, currentUser, onSubmit }) {
   const [productId, setProductId] = useState("");
-  const [productQuery, setProductQuery] = useState("");
   const [asOfDate, setAsOfDate] = useState(todayISO());
   const [quantity, setQuantity] = useState("");
   const [unitPrice, setUnitPrice] = useState("");
@@ -1274,9 +1462,6 @@ function StockOpeningForm({ data, currentUser, onSubmit }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const productMatches = productQuery
-    ? data.products.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(productQuery)) || p.code.includes(productQuery)).slice(0, 8)
-    : [];
   const selectedProduct = data.products.find((p) => p.id === productId);
 
   const submit = async () => {
@@ -1284,7 +1469,7 @@ function StockOpeningForm({ data, currentUser, onSubmit }) {
     setError(""); setSaving(true);
     try {
       await onSubmit({ productId, asOfDate, quantity: Number(quantity), unitPrice: Number(unitPrice) || 0, note: note.trim() });
-      setProductId(""); setProductQuery(""); setQuantity(""); setUnitPrice(""); setNote("");
+      setProductId(""); setQuantity(""); setUnitPrice(""); setNote("");
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
     } finally {
@@ -1296,25 +1481,10 @@ function StockOpeningForm({ data, currentUser, onSubmit }) {
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Chốt / điều chỉnh tồn đầu kỳ</p>
       <p className="text-xs text-slate-500 mb-3">Dùng khi kiểm kho thực tế — mốc này sẽ là gốc để tính tồn kho & giá bình quân gia quyền cho các lần nhập/xuất sau đó.</p>
+      <div className="mb-3">
+        <ProductCodeNameFields products={data.products} productId={productId} onSelectProduct={(id) => setProductId(id)} codeLabel="Mã sản phẩm" nameLabel="Tên sản phẩm" />
+      </div>
       <div className="grid sm:grid-cols-2 gap-3 mb-3">
-        <label className="block relative">
-          <span className="block text-xs font-medium text-slate-600 mb-1">Sản phẩm</span>
-          <input
-            value={productQuery || (selectedProduct ? `${selectedProduct.code} — ${selectedProduct.name}` : "")}
-            onChange={(e) => { setProductQuery(e.target.value); setProductId(""); }}
-            placeholder="Gõ mã/tên sản phẩm..."
-            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
-          />
-          {productMatches.length > 0 && !productId && (
-            <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
-              {productMatches.map((p) => (
-                <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { setProductId(p.id); setProductQuery(""); }} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50">
-                  <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </label>
         <TextField label="Ngày chốt" type="date" value={asOfDate} onChange={(e) => setAsOfDate(e.target.value)} />
         <TextField label={`Số lượng thực tế${selectedProduct ? ` (${selectedProduct.unit})` : ""}`} type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
         <TextField label="Đơn giá (đ)" type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
@@ -1637,16 +1807,17 @@ export default function App() {
   };
 
   // ---------------- Nhập hàng ----------------
-  const submitImport = async ({ orderNumber, supplierId, productId, quantity, unitPrice, totalAmount, paymentType }) => {
+  const submitImport = async ({ orderNumber, supplierId, lines, paymentType }) => {
     const receiptCode = genReceiptCode("NK", data.importRecords.length);
-    const { error } = await supabase.from("import_records").insert({
-      order_number: orderNumber || null, receipt_code: receiptCode, supplier_id: supplierId, product_id: productId,
-      quantity, unit_price: unitPrice, total_amount: totalAmount, payment_type: paymentType,
+    const rows = lines.map((l) => ({
+      order_number: orderNumber || null, receipt_code: receiptCode, supplier_id: supplierId, product_id: l.productId,
+      quantity: l.quantity, unit_price: l.unitPrice, total_amount: l.totalAmount, payment_type: paymentType,
       import_date: todayISO(), created_by: currentUser.id,
-    });
+    }));
+    const { error } = await supabase.from("import_records").insert(rows);
     if (error) throw error;
     await refreshAll();
-    showToast(`Đã lưu phiếu nhập ${receiptCode}`);
+    showToast(`Đã lưu phiếu nhập ${receiptCode} (${rows.length} dòng)`);
   };
 
   // ---------------- Xuất hàng ----------------
