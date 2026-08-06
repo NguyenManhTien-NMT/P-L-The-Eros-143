@@ -403,7 +403,7 @@ function LoginScreen({ onLogin }) {
           <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-700 to-teal-900 mx-auto mb-3 flex items-center justify-center shadow-lg shadow-teal-900/25">
             <Warehouse size={26} className="text-white" />
           </div>
-          <h1 className="text-2xl font-semibold text-slate-800 tracking-tight">Kho NVL &amp; Hàng hoá — P&amp;L The Eros 143</h1>
+          <h1 className="text-2xl font-semibold text-slate-800 tracking-tight">P&amp;L The Eros 143</h1>
           <p className="text-sm text-slate-500 mt-1">Đăng nhập bằng tài khoản nhân sự</p>
         </div>
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200/80 shadow-xl shadow-slate-900/5 p-5 space-y-4">
