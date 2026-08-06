@@ -1030,7 +1030,12 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
                   </td>
                   <td className="px-2 py-1.5 text-right font-medium text-slate-700">{rowTotal > 0 ? fmtMoney(rowTotal) : "—"}</td>
                   <td className="px-2 py-1.5 text-center">
-                    <button type="button" onClick={() => removeRow(l.key)} className="text-slate-400 hover:text-rose-600"><X size={15} /></button>
+                    <button
+                      type="button"
+                      onClick={() => removeRow(l.key)}
+                      onKeyDown={(e) => handlePriceKeyDown(e, isLastRow)}
+                      className="text-slate-400 hover:text-rose-600"
+                    ><X size={15} /></button>
                   </td>
                 </tr>
               );
