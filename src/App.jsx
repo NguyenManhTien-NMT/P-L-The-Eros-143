@@ -1296,7 +1296,7 @@ function ExcelHeaderFilter({ label, align = "left", options, selected, onChangeS
 // ---------------------------------------------------------------------------
 // LỊCH SỬ NHẬP HÀNG — màn riêng, có bộ lọc chi tiết theo ngày/giá/mã phiếu/SL/thành tiền
 // ---------------------------------------------------------------------------
-function LichSuNhapModule({ data }) {
+function LichSuNhapModule({ data, onDelete, onDeleteMany }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
   const [receiptCode, setReceiptCode] = useState("");
@@ -1377,6 +1377,20 @@ function LichSuNhapModule({ data }) {
   });
 
   const totalAmount = filtered.reduce((s, r) => s + r.totalAmount, 0);
+  const [deleting, setDeleting] = useState(null);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+
+  const handleDeleteRow = async (id) => {
+    if (!window.confirm("Xoá dòng nhập hàng này? Không thể hoàn tác.")) return;
+    setDeleting(id);
+    try { await onDelete(id); } finally { setDeleting(null); }
+  };
+  const handleDeleteAllFiltered = async () => {
+    if (filtered.length === 0) return;
+    if (!window.confirm(`Xoá toàn bộ ${filtered.length} dòng đang hiển thị (theo bộ lọc hiện tại)? Không thể hoàn tác.`)) return;
+    setBulkDeleting(true);
+    try { await onDeleteMany(filtered.map((r) => r.id)); } finally { setBulkDeleting(false); }
+  };
 
   const resetFilters = () => {
     setFrom(daysAgoISO(30)); setTo(todayISO()); setReceiptCode(""); setProductQuery("");
@@ -1406,7 +1420,14 @@ function LichSuNhapModule({ data }) {
           <TextField label="Thành tiền đến" type="number" value={amountTo} onChange={(e) => setAmountTo(e.target.value)} />
         </div>
         <div className="flex items-center justify-between mt-3">
-          <GhostButton onClick={resetFilters}><X size={14} /> Xoá bộ lọc</GhostButton>
+          <div className="flex items-center gap-2">
+            <GhostButton onClick={resetFilters}><X size={14} /> Xoá bộ lọc</GhostButton>
+            {filtered.length > 0 && (
+              <button type="button" onClick={handleDeleteAllFiltered} disabled={bulkDeleting} className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-sm font-medium text-rose-600 border border-rose-200 bg-rose-50 hover:bg-rose-100 disabled:opacity-50">
+                {bulkDeleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Xoá {filtered.length} dòng đang hiển thị
+              </button>
+            )}
+          </div>
           <p className="text-sm text-slate-500">
             <span className="font-medium text-slate-700">{filtered.length}</span> dòng · Tổng thành tiền{" "}
             <span className="font-semibold text-teal-700">{fmtMoney(totalAmount)}</span>
@@ -1428,6 +1449,7 @@ function LichSuNhapModule({ data }) {
                   <ExcelHeaderFilter label="Đơn giá" align="right" sortDir={sortKey === "unitPrice" ? sortDir : null} onSort={() => toggleSort("unitPrice")} />
                   <ExcelHeaderFilter label="Thành tiền" align="right" sortDir={sortKey === "totalAmount" ? sortDir : null} onSort={() => toggleSort("totalAmount")} />
                   <ExcelHeaderFilter label="TT thanh toán" options={paymentOptions} selected={colFilters.paymentType} onChangeSelected={(v) => setColFilters((f) => ({ ...f, paymentType: v }))} />
+                  <th className="px-3 py-2 w-10"></th>
                 </tr>
               </thead>
               <tbody>
@@ -1444,6 +1466,11 @@ function LichSuNhapModule({ data }) {
                       <td className="px-3 py-2 text-right">{fmtMoney(r.unitPrice)}</td>
                       <td className="px-3 py-2 text-right font-medium">{fmtMoney(r.totalAmount)}</td>
                       <td className="px-3 py-2"><Badge className={PAYMENT_TYPE_META[r.paymentType]?.color}>{PAYMENT_TYPE_META[r.paymentType]?.label}</Badge></td>
+                      <td className="px-3 py-2 text-center">
+                        <button type="button" onClick={() => handleDeleteRow(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1">
+                          {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -1689,12 +1716,48 @@ function XuatExcelImportForm({ data, onImport }) {
   );
 }
 
+// Thẻ tổng quan hiện ngay sau khi lưu 1 phiếu (nhập hoặc xuất) — tách biệt với
+// phần "Lịch sử" chi tiết từng dòng.
+function ReceiptSummaryCard({ summary, icon: Icon, actionLabel }) {
+  if (!summary) return null;
+  return (
+    <Card className="p-4 sm:p-5 mb-5 border-teal-200 bg-teal-50/40">
+      <div className="flex items-center gap-3">
+        <div className="w-11 h-11 rounded-2xl bg-teal-100 text-teal-700 flex items-center justify-center shrink-0"><Icon size={20} /></div>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold text-teal-800">{actionLabel} thành công — Phiếu {summary.receiptCode}</p>
+          <p className="text-xs text-teal-700/80 mt-0.5">
+            {summary.lineCount} dòng
+            {summary.supplierName ? ` · NCC: ${summary.supplierName}` : ""}
+          </p>
+        </div>
+        <div className="text-right shrink-0">
+          <p className="text-xs text-teal-700/80">Tổng giá trị phiếu</p>
+          <p className="text-lg font-bold text-teal-800">{fmtMoney(summary.totalAmount)}</p>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
 function NhapHangModule({ data, currentUser, onSubmit, onBulkImport }) {
+  const [lastReceipt, setLastReceipt] = useState(null);
+
+  const handleSubmit = async (payload) => {
+    const summary = await onSubmit(payload);
+    if (summary) setLastReceipt(summary);
+  };
+  const handleBulkImport = async (rows) => {
+    const summary = await onBulkImport(rows);
+    if (summary) setLastReceipt(summary);
+  };
+
   return (
     <div>
       <SectionTitle icon={ArrowDownCircle} title="Nhập hàng" subtitle="Ghi nhận nhập hàng từ nhà cung cấp" />
-      <NhapExcelImportForm data={data} onImport={onBulkImport} />
-      <NhapHangForm data={data} currentUser={currentUser} onSubmit={onSubmit} />
+      <ReceiptSummaryCard summary={lastReceipt} icon={ArrowDownCircle} actionLabel="Nhập hàng" />
+      <NhapExcelImportForm data={data} onImport={handleBulkImport} />
+      <NhapHangForm data={data} currentUser={currentUser} onSubmit={handleSubmit} />
     </div>
   );
 }
@@ -1946,8 +2009,14 @@ function XuatHangForm({ data, currentUser, onSubmit }) {
   );
 }
 
-function XuatHangList({ data }) {
+function XuatHangList({ data, onDelete }) {
   const rows = data.exportRecords.slice(0, 40);
+  const [deleting, setDeleting] = useState(null);
+  const handleDeleteRow = async (id) => {
+    if (!window.confirm("Xoá dòng xuất hàng này? Không thể hoàn tác.")) return;
+    setDeleting(id);
+    try { await onDelete(id); } finally { setDeleting(null); }
+  };
   return (
     <Card className="p-0 overflow-hidden">
       <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử xuất hàng gần đây</p></div>
@@ -1957,7 +2026,7 @@ function XuatHangList({ data }) {
             <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
               <th className="px-3 py-2">Mã phiếu</th><th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Loại</th>
               <th className="px-3 py-2">Sản phẩm</th><th className="px-3 py-2 text-right">SL</th><th className="px-3 py-2 text-right">Thành tiền</th>
-              <th className="px-3 py-2">Mã doanh thu</th>
+              <th className="px-3 py-2">Mã doanh thu</th><th className="px-3 py-2 w-10"></th>
             </tr></thead>
             <tbody>
               {rows.map((r) => {
@@ -1972,6 +2041,11 @@ function XuatHangList({ data }) {
                     <td className="px-3 py-2 text-right">{fmtNumber(r.quantity)} {p?.unit}</td>
                     <td className="px-3 py-2 text-right font-medium">{fmtMoney(r.totalAmount)}</td>
                     <td className="px-3 py-2 text-slate-500">{rc?.name || "—"}</td>
+                    <td className="px-3 py-2 text-center">
+                      <button type="button" onClick={() => handleDeleteRow(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1">
+                        {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -1983,13 +2057,26 @@ function XuatHangList({ data }) {
   );
 }
 
-function XuatHangModule({ data, currentUser, onSubmit, onBulkImportFromBills }) {
+function XuatHangModule({ data, currentUser, onSubmit, onBulkImportFromBills, onDelete, onDeleteMany }) {
+  const [lastReceipt, setLastReceipt] = useState(null);
+
+  const handleSubmit = async (payload) => {
+    const summary = await onSubmit(payload);
+    if (summary) setLastReceipt(summary);
+  };
+  const handleBulkImport = async (payload) => {
+    const result = await onBulkImportFromBills(payload);
+    if (result) setLastReceipt(result);
+    return result;
+  };
+
   return (
     <div>
       <SectionTitle icon={ArrowUpCircle} title="Xuất hàng" subtitle="Ghi nhận tiêu hao nguyên liệu và bán thành phẩm" />
-      <XuatExcelImportForm data={data} onImport={onBulkImportFromBills} />
-      <XuatHangForm data={data} currentUser={currentUser} onSubmit={onSubmit} />
-      <XuatHangList data={data} />
+      <ReceiptSummaryCard summary={lastReceipt} icon={ArrowUpCircle} actionLabel="Xuất hàng" />
+      <XuatExcelImportForm data={data} onImport={handleBulkImport} />
+      <XuatHangForm data={data} currentUser={currentUser} onSubmit={handleSubmit} />
+      <XuatHangList data={data} onDelete={onDelete} />
     </div>
   );
 }
@@ -2938,7 +3025,39 @@ export default function App() {
     const { error } = await supabase.from("import_records").insert(rows);
     if (error) throw error;
     await refreshAll();
+    const totalAmount = rows.reduce((s, r) => s + r.total_amount, 0);
     showToast(`Đã lưu phiếu nhập ${receiptCode} (${rows.length} dòng)`);
+    return { receiptCode, lineCount: rows.length, totalAmount, supplierName: data.suppliers.find((s) => s.id === supplierId)?.name };
+  };
+
+  // Xoá 1 dòng phiếu nhập, hoặc cả phiếu (theo receiptCode) nếu truyền receiptCode thay vì id.
+  const deleteImportRecord = async (id) => {
+    const { error } = await supabase.from("import_records").delete().eq("id", id);
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã xoá dòng nhập hàng");
+  };
+  const deleteImportRecordsByIds = async (ids) => {
+    if (ids.length === 0) return;
+    const { error } = await supabase.from("import_records").delete().in("id", ids);
+    if (error) throw error;
+    await refreshAll();
+    showToast(`Đã xoá ${ids.length} dòng nhập hàng`);
+  };
+
+  // Xoá 1 dòng phiếu xuất, hoặc nhiều dòng cùng lúc theo danh sách id.
+  const deleteExportRecord = async (id) => {
+    const { error } = await supabase.from("export_records").delete().eq("id", id);
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã xoá dòng xuất hàng");
+  };
+  const deleteExportRecordsByIds = async (ids) => {
+    if (ids.length === 0) return;
+    const { error } = await supabase.from("export_records").delete().in("id", ids);
+    if (error) throw error;
+    await refreshAll();
+    showToast(`Đã xoá ${ids.length} dòng xuất hàng`);
   };
 
   // Nhập hàng hàng loạt từ file Excel — mỗi dòng Excel tự mang đúng NCC/SP/SL/Đơn giá riêng.
@@ -2952,7 +3071,9 @@ export default function App() {
     const { error } = await supabase.from("import_records").insert(dbRows);
     if (error) throw error;
     await refreshAll();
+    const totalAmount = dbRows.reduce((s, r) => s + r.total_amount, 0);
     showToast(`Đã nhập ${dbRows.length} dòng từ file Excel (phiếu ${receiptCode})`);
+    return { receiptCode, lineCount: dbRows.length, totalAmount };
   };
 
   // ---------------- Xuất hàng ----------------
@@ -2967,7 +3088,9 @@ export default function App() {
     const { error } = await supabase.from("export_records").insert(rows);
     if (error) throw error;
     await refreshAll();
+    const totalAmount = rows.reduce((s, r) => s + r.total_amount, 0);
     showToast(`Đã lưu phiếu xuất ${receiptCode}`);
+    return { receiptCode, lineCount: rows.length, totalAmount };
   };
 
   // Xuất kho NVL tự động từ báo cáo doanh thu chi tiết theo hoá đơn & món ăn:
@@ -3004,8 +3127,9 @@ export default function App() {
     if (error) throw error;
     await refreshAll();
     const matchedBills = rows.length - notFoundDishes.size;
+    const totalAmount = exportRows.reduce((s, r) => s + r.total_amount, 0);
     showToast(`Đã xuất kho ${exportRows.length} dòng NVL từ ${matchedBills} dòng báo cáo doanh thu (phiếu ${receiptCode})` + (notFoundDishes.size ? ` — bỏ qua ${notFoundDishes.size} tên món không khớp` : ""));
-    return { notFoundDishes: Array.from(notFoundDishes) };
+    return { notFoundDishes: Array.from(notFoundDishes), receiptCode, lineCount: exportRows.length, totalAmount };
   };
 
   // ---------------- Chi phí (Vận hành / Marketing / Bảo trì & vật tư / Khác) ----------------
@@ -3161,8 +3285,8 @@ export default function App() {
       <div className="max-w-6xl mx-auto px-4 py-6">
         <TabErrorBoundary resetKey={tab}>
           {tab === "nhap" && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
-          {tab === "lich_su_nhap" && <LichSuNhapModule data={data} />}
-          {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} />}
+          {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
+          {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
           {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
           {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
           {tab === "danh_muc" && (
