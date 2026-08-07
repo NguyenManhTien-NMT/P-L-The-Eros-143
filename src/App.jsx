@@ -5,7 +5,7 @@ import {
   Package, Truck, ClipboardList, BarChart3, Bell, LogOut, CheckCircle2, XCircle,
   Plus, Search, ChevronRight, Inbox, Warehouse, TrendingUp, TrendingDown, Wallet,
   AlertTriangle, Clock, Loader2, Lock, User, X, Pencil, Trash2, Download, Upload, Users,
-  ShieldCheck, ArrowDownCircle, ArrowUpCircle, Boxes, Receipt, FileText,
+  ShieldCheck, ArrowDownCircle, ArrowUpCircle, Boxes, Receipt, FileText, ChevronDown, ArrowUpDown, Filter,
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell,
@@ -1245,6 +1245,54 @@ function NhapHangList({ data, rows, showFilterHint }) {
   );
 }
 
+// Ô tiêu đề cột kiểu Excel: bấm để sắp xếp, bấm icon phễu để mở danh sách check-box lọc theo giá trị.
+function ExcelHeaderFilter({ label, align = "left", options, selected, onChangeSelected, sortDir, onSort, className = "" }) {
+  const [open, setOpen] = useState(false);
+  const allChecked = selected === null;
+  const isChecked = (v) => allChecked || selected.has(v);
+
+  const toggleValue = (v) => {
+    const next = allChecked ? new Set(options.map((o) => o.value)) : new Set(selected);
+    if (next.has(v)) next.delete(v); else next.add(v);
+    onChangeSelected(next.size === options.length ? null : next);
+  };
+  const selectAll = () => onChangeSelected(null);
+  const clearAll = () => onChangeSelected(new Set());
+
+  return (
+    <th className={`px-3 py-2 relative select-none ${align === "right" ? "text-right" : "text-left"} ${className}`}>
+      <div className={`flex items-center gap-1 ${align === "right" ? "justify-end" : ""}`}>
+        <button type="button" onClick={onSort} className="flex items-center gap-1 hover:text-teal-700">
+          {label}
+          <ArrowUpDown size={11} className={sortDir ? "text-teal-600" : "text-slate-300"} />
+        </button>
+        {options && (
+          <button type="button" onClick={() => setOpen((o) => !o)} className={`p-0.5 rounded hover:bg-slate-100 ${!allChecked ? "text-teal-600" : "text-slate-300"}`}>
+            <Filter size={11} />
+          </button>
+        )}
+      </div>
+      {open && options && (
+        <div className="absolute z-30 top-full mt-1 left-0 w-56 bg-white rounded-xl border border-slate-200 shadow-lg text-xs font-normal normal-case text-slate-700 max-h-64 overflow-y-auto">
+          <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 sticky top-0 bg-white">
+            <button type="button" onClick={selectAll} className="text-teal-700 hover:underline">Chọn tất cả</button>
+            <button type="button" onClick={clearAll} className="text-slate-400 hover:underline">Bỏ chọn</button>
+          </div>
+          {options.map((o) => (
+            <label key={o.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
+              <input type="checkbox" checked={isChecked(o.value)} onChange={() => toggleValue(o.value)} className="rounded border-slate-300 text-teal-600 focus:ring-teal-500" />
+              <span className="truncate">{o.label}</span>
+            </label>
+          ))}
+          <div className="p-2 border-t border-slate-100 sticky bottom-0 bg-white">
+            <button type="button" onClick={() => setOpen(false)} className="w-full text-center text-teal-700 text-xs py-1 hover:bg-teal-50 rounded-lg">Đóng</button>
+          </div>
+        </div>
+      )}
+    </th>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // LỊCH SỬ NHẬP HÀNG — màn riêng, có bộ lọc chi tiết theo ngày/giá/mã phiếu/SL/thành tiền
 // ---------------------------------------------------------------------------
@@ -1261,7 +1309,17 @@ function LichSuNhapModule({ data }) {
   const [amountFrom, setAmountFrom] = useState("");
   const [amountTo, setAmountTo] = useState("");
 
-  const filtered = data.importRecords.filter((r) => {
+  // Bộ lọc kiểu Excel theo từng cột (null = chọn tất cả)
+  const [colFilters, setColFilters] = useState({ receiptCode: null, supplierId: null, productId: null, paymentType: null });
+  const [sortKey, setSortKey] = useState("importDate");
+  const [sortDir, setSortDir] = useState("desc");
+
+  const toggleSort = (key) => {
+    if (sortKey === key) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(key); setSortDir("asc"); }
+  };
+
+  const preFiltered = data.importRecords.filter((r) => {
     if (from && r.importDate < from) return false;
     if (to && r.importDate > to) return false;
     if (receiptCode && !r.receiptCode?.toLowerCase().includes(receiptCode.trim().toLowerCase())) return false;
@@ -1280,11 +1338,50 @@ function LichSuNhapModule({ data }) {
     return true;
   });
 
+  // Danh sách lựa chọn cho từng cột kiểu Excel — lấy từ tập đã lọc phía trên
+  const receiptOptions = useMemo(() => {
+    const codes = Array.from(new Set(preFiltered.map((r) => r.receiptCode).filter(Boolean)));
+    return codes.sort().map((c) => ({ value: c, label: c }));
+  }, [preFiltered]);
+  const supplierOptions = useMemo(() => {
+    const ids = Array.from(new Set(preFiltered.map((r) => r.supplierId).filter(Boolean)));
+    return ids.map((id) => ({ value: id, label: data.suppliers.find((s) => s.id === id)?.name || "—" })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [preFiltered, data.suppliers]);
+  const productOptions = useMemo(() => {
+    const ids = Array.from(new Set(preFiltered.map((r) => r.productId).filter(Boolean)));
+    return ids.map((id) => ({ value: id, label: data.products.find((p) => p.id === id)?.name || "—" })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [preFiltered, data.products]);
+  const paymentOptions = useMemo(() => {
+    const types = Array.from(new Set(preFiltered.map((r) => r.paymentType).filter(Boolean)));
+    return types.map((t) => ({ value: t, label: PAYMENT_TYPE_META[t]?.label || t }));
+  }, [preFiltered]);
+
+  let filtered = preFiltered.filter((r) => {
+    if (colFilters.receiptCode && !colFilters.receiptCode.has(r.receiptCode)) return false;
+    if (colFilters.supplierId && !colFilters.supplierId.has(r.supplierId)) return false;
+    if (colFilters.productId && !colFilters.productId.has(r.productId)) return false;
+    if (colFilters.paymentType && !colFilters.paymentType.has(r.paymentType)) return false;
+    return true;
+  });
+
+  filtered = [...filtered].sort((a, b) => {
+    let av, bv;
+    if (sortKey === "receiptCode") { av = a.receiptCode || ""; bv = b.receiptCode || ""; }
+    else if (sortKey === "importDate") { av = a.importDate || ""; bv = b.importDate || ""; }
+    else if (sortKey === "supplier") { av = data.suppliers.find((s) => s.id === a.supplierId)?.name || ""; bv = data.suppliers.find((s) => s.id === b.supplierId)?.name || ""; }
+    else if (sortKey === "product") { av = data.products.find((p) => p.id === a.productId)?.name || ""; bv = data.products.find((p) => p.id === b.productId)?.name || ""; }
+    else { av = a[sortKey]; bv = b[sortKey]; }
+    if (av < bv) return sortDir === "asc" ? -1 : 1;
+    if (av > bv) return sortDir === "asc" ? 1 : -1;
+    return 0;
+  });
+
   const totalAmount = filtered.reduce((s, r) => s + r.totalAmount, 0);
 
   const resetFilters = () => {
     setFrom(daysAgoISO(30)); setTo(todayISO()); setReceiptCode(""); setProductQuery("");
     setSupplierId(""); setPriceFrom(""); setPriceTo(""); setQtyFrom(""); setQtyTo(""); setAmountFrom(""); setAmountTo("");
+    setColFilters({ receiptCode: null, supplierId: null, productId: null, paymentType: null });
   };
 
   return (
@@ -1317,7 +1414,44 @@ function LichSuNhapModule({ data }) {
         </div>
       </Card>
 
-      <NhapHangList data={data} rows={filtered} showFilterHint={false} />
+      <Card className="p-0 overflow-visible">
+        {filtered.length === 0 ? <EmptyState icon={Inbox} text="Không có phiếu nhập nào khớp." /> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-slate-400 border-b border-slate-100 bg-slate-50/60">
+                  <ExcelHeaderFilter label="Mã phiếu" options={receiptOptions} selected={colFilters.receiptCode} onChangeSelected={(v) => setColFilters((f) => ({ ...f, receiptCode: v }))} sortDir={sortKey === "receiptCode" ? sortDir : null} onSort={() => toggleSort("receiptCode")} />
+                  <ExcelHeaderFilter label="Ngày" sortDir={sortKey === "importDate" ? sortDir : null} onSort={() => toggleSort("importDate")} />
+                  <ExcelHeaderFilter label="NCC" options={supplierOptions} selected={colFilters.supplierId} onChangeSelected={(v) => setColFilters((f) => ({ ...f, supplierId: v }))} sortDir={sortKey === "supplier" ? sortDir : null} onSort={() => toggleSort("supplier")} />
+                  <ExcelHeaderFilter label="Sản phẩm" options={productOptions} selected={colFilters.productId} onChangeSelected={(v) => setColFilters((f) => ({ ...f, productId: v }))} sortDir={sortKey === "product" ? sortDir : null} onSort={() => toggleSort("product")} />
+                  <ExcelHeaderFilter label="SL" align="right" sortDir={sortKey === "quantity" ? sortDir : null} onSort={() => toggleSort("quantity")} />
+                  <ExcelHeaderFilter label="Đơn giá" align="right" sortDir={sortKey === "unitPrice" ? sortDir : null} onSort={() => toggleSort("unitPrice")} />
+                  <ExcelHeaderFilter label="Thành tiền" align="right" sortDir={sortKey === "totalAmount" ? sortDir : null} onSort={() => toggleSort("totalAmount")} />
+                  <ExcelHeaderFilter label="TT thanh toán" options={paymentOptions} selected={colFilters.paymentType} onChangeSelected={(v) => setColFilters((f) => ({ ...f, paymentType: v }))} />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((r) => {
+                  const s = data.suppliers.find((x) => x.id === r.supplierId);
+                  const p = data.products.find((x) => x.id === r.productId);
+                  return (
+                    <tr key={r.id} className="border-b border-slate-50 last:border-0">
+                      <td className="px-3 py-2 text-slate-500">{r.receiptCode}</td>
+                      <td className="px-3 py-2 text-slate-500">{fmtDate(r.importDate)}</td>
+                      <td className="px-3 py-2">{s?.name || "—"}</td>
+                      <td className="px-3 py-2">{p?.name || "—"}</td>
+                      <td className="px-3 py-2 text-right">{fmtNumber(r.quantity)} {p?.unit}</td>
+                      <td className="px-3 py-2 text-right">{fmtMoney(r.unitPrice)}</td>
+                      <td className="px-3 py-2 text-right font-medium">{fmtMoney(r.totalAmount)}</td>
+                      <td className="px-3 py-2"><Badge className={PAYMENT_TYPE_META[r.paymentType]?.color}>{PAYMENT_TYPE_META[r.paymentType]?.label}</Badge></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
