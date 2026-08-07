@@ -1,9 +1,10 @@
 import React, { useState, useMemo, useCallback, useEffect } from "react";
+import * as XLSX from "xlsx";
 import { supabase } from "./supabaseClient";
 import {
   Package, Truck, ClipboardList, BarChart3, Bell, LogOut, CheckCircle2, XCircle,
   Plus, Search, ChevronRight, Inbox, Warehouse, TrendingUp, TrendingDown, Wallet,
-  AlertTriangle, Clock, Loader2, Lock, User, X, Pencil, Trash2, Download, Users,
+  AlertTriangle, Clock, Loader2, Lock, User, X, Pencil, Trash2, Download, Upload, Users,
   ShieldCheck, ArrowDownCircle, ArrowUpCircle, Boxes, Receipt, FileText,
 } from "lucide-react";
 import {
@@ -59,6 +60,69 @@ function daysAgoISO(n) {
 }
 function stripDiacritics(str) {
   return (str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
+}
+
+// Đọc 1 file Excel (.xlsx/.xls/.csv) thành mảng-các-mảng thô (không giả định dòng 1
+// là tiêu đề, vì nhiều file xuất từ phần mềm POS có vài dòng mô tả phía trên bảng thật).
+function readExcelRaw(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const wb = XLSX.read(e.target.result, { type: "array", cellDates: true });
+        const sheet = wb.Sheets[wb.SheetNames[0]];
+        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+        resolve(rows);
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = () => reject(new Error("Không đọc được file."));
+    reader.readAsArrayBuffer(file);
+  });
+}
+// Tự dò đúng dòng tiêu đề thật trong file — bỏ qua các dòng mô tả/tên báo cáo phía
+// trên (thường gặp ở file xuất từ phần mềm POS), dựa vào các từ khoá bắt buộc phải có.
+function detectHeaderRow(rawRows, hints) {
+  const normHints = hints.map((h) => stripDiacritics(h).replace(/\s+/g, ""));
+  for (let i = 0; i < rawRows.length; i++) {
+    const rowText = (rawRows[i] || []).map((c) => stripDiacritics(String(c ?? "")).replace(/\s+/g, "")).join("|");
+    if (normHints.every((h) => rowText.includes(h))) return i;
+  }
+  return -1;
+}
+// Chuyển các dòng thô (từ đúng dòng tiêu đề trở xuống) thành mảng object theo tên cột.
+// Tự bỏ qua dòng trống hoàn toàn (kể cả dòng tổng phụ theo hoá đơn không có đủ cột).
+function rowsToObjects(rawRows, headerRowIdx) {
+  const headers = (rawRows[headerRowIdx] || []).map((h) => String(h ?? "").trim());
+  const out = [];
+  for (let i = headerRowIdx + 1; i < rawRows.length; i++) {
+    const row = rawRows[i] || [];
+    if (row.every((c) => c === "" || c === undefined || c === null)) continue;
+    const obj = {};
+    headers.forEach((h, idx) => { if (h) obj[h] = row[idx]; });
+    out.push(obj);
+  }
+  return out;
+}
+// Lấy giá trị 1 cột trong dòng Excel, thử vài tên cột khác nhau (không phân biệt hoa/thường, dấu).
+function pickCol(row, ...names) {
+  const keys = Object.keys(row);
+  for (const name of names) {
+    const target = stripDiacritics(name).replace(/\s+/g, "");
+    const found = keys.find((k) => stripDiacritics(k).replace(/\s+/g, "") === target);
+    if (found !== undefined) return row[found];
+  }
+  return undefined;
+}
+function excelDateToISO(v) {
+  if (!v) return "";
+  if (v instanceof Date) return v.toISOString().slice(0, 10);
+  const s = String(v).trim();
+  const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  return "";
 }
 
 // ---------------------------------------------------------------------------
@@ -1180,10 +1244,238 @@ function NhapHangList({ data }) {
   );
 }
 
-function NhapHangModule({ data, currentUser, onSubmit }) {
+// Import Nhập hàng hàng loạt từ file Excel — mỗi dòng: Mã NCC, Mã SP, Số lượng, Đơn giá
+// (tuỳ chọn: Đơn số, Ngày nhập). Không khớp được NCC/SP nào thì báo lỗi dòng đó, các dòng
+// hợp lệ khác vẫn nhập được bình thường.
+function NhapExcelImportForm({ data, onImport }) {
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState([]);
+  const [errors, setErrors] = useState([]);
+  const [importing, setImporting] = useState(false);
+  const [done, setDone] = useState(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setDone(null);
+    try {
+      const rawRows = await readExcelRaw(file);
+      const headerIdx = detectHeaderRow(rawRows, ["Mã NCC", "Mã SP"]);
+      if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Mã NCC" và "Mã SP") trong file.']); setPreview([]); return; }
+      const rawObjRows = rowsToObjects(rawRows, headerIdx);
+      const valid = [];
+      const errs = [];
+      rawObjRows.forEach((row, idx) => {
+        const supplierCode = String(pickCol(row, "Mã NCC", "Ma NCC") ?? "").trim();
+        const productCode = String(pickCol(row, "Mã SP", "Ma SP", "Mã NVL") ?? "").trim();
+        const quantity = Number(pickCol(row, "Số lượng", "So luong")) || 0;
+        const unitPrice = Number(pickCol(row, "Đơn giá", "Don gia")) || 0;
+        const orderNumber = String(pickCol(row, "Đơn số", "Don so") ?? "").trim();
+        const importDate = excelDateToISO(pickCol(row, "Ngày nhập", "Ngay nhap"));
+        if (!supplierCode && !productCode) return; // dòng trống, bỏ qua âm thầm
+        const supplier = data.suppliers.find((s) => s.code.trim().toLowerCase() === supplierCode.toLowerCase());
+        const product = data.products.find((p) => p.code.trim().toLowerCase() === productCode.toLowerCase());
+        const excelRowNo = headerIdx + idx + 3; // +1 header 0-based→1-based, +1 dòng dữ liệu đầu tiên, +1 idx 0-based
+        if (!supplier) { errs.push(`Dòng ${excelRowNo}: không tìm thấy Mã NCC "${supplierCode}"`); return; }
+        if (!product) { errs.push(`Dòng ${excelRowNo}: không tìm thấy Mã SP "${productCode}"`); return; }
+        if (quantity <= 0) { errs.push(`Dòng ${excelRowNo}: Số lượng không hợp lệ`); return; }
+        valid.push({
+          supplierId: supplier.id, supplierCode: supplier.code, productId: product.id, productCode: product.code, productName: product.name,
+          quantity, unitPrice, orderNumber, importDate, paymentType: supplier.paymentType,
+        });
+      });
+      setPreview(valid);
+      setErrors(errs);
+    } catch (err) {
+      setErrors([err.message || "Không đọc được file, kiểm tra lại định dạng .xlsx."]);
+      setPreview([]);
+    }
+  };
+
+  const submit = async () => {
+    if (preview.length === 0) return;
+    setImporting(true);
+    try {
+      await onImport(preview);
+      setDone(preview.length);
+      setPreview([]); setFileName(""); setErrors([]);
+    } catch (e) {
+      setErrors([e.message || "Không nhập được, vui lòng thử lại."]);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-1">Nhập hàng loạt từ Excel</p>
+      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Mã NCC</b>, <b>Mã SP</b>, <b>Số lượng</b>, <b>Đơn giá</b> (tuỳ chọn: Đơn số, Ngày nhập).</p>
+      <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-teal-700 border border-teal-300 bg-teal-50 hover:bg-teal-100 rounded-xl px-4 py-2 mb-3">
+        <Upload size={15} /> {fileName || "Chọn file Excel..."}
+        <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
+      </label>
+
+      {errors.length > 0 && (
+        <div className="mb-3 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-1 max-h-40 overflow-y-auto">
+          {errors.map((e, i) => <p key={i} className="flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> {e}</p>)}
+        </div>
+      )}
+
+      {preview.length > 0 && (
+        <>
+          <div className="overflow-x-auto rounded-xl border border-slate-200 mb-3 max-h-72 overflow-y-auto">
+            <table className="w-full text-sm min-w-[560px]">
+              <thead className="sticky top-0 bg-slate-50">
+                <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                  <th className="px-2 py-2">NCC</th><th className="px-2 py-2">SP</th>
+                  <th className="px-2 py-2 text-right">SL</th><th className="px-2 py-2 text-right">Đơn giá</th>
+                  <th className="px-2 py-2 text-right">Thành tiền</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.map((r, i) => (
+                  <tr key={i} className="border-b border-slate-100 last:border-0">
+                    <td className="px-2 py-1.5">{r.supplierCode}</td>
+                    <td className="px-2 py-1.5">{r.productCode} — {r.productName}</td>
+                    <td className="px-2 py-1.5 text-right">{fmtNumber ? fmtNumber(r.quantity) : r.quantity}</td>
+                    <td className="px-2 py-1.5 text-right">{fmtMoney(r.unitPrice)}</td>
+                    <td className="px-2 py-1.5 text-right font-medium">{fmtMoney(r.quantity * r.unitPrice)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <PrimaryButton onClick={submit} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Nhập {preview.length} dòng vào kho</PrimaryButton>
+        </>
+      )}
+      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã nhập thành công {done} dòng.</p>}
+    </Card>
+  );
+}
+
+// Import Xuất kho NVL tự động từ báo cáo doanh thu chi tiết theo hoá đơn & món ăn —
+// mỗi dòng: Tên món, Số lượng bán (tuỳ chọn: Số hoá đơn). Hệ thống tự nổ theo công thức
+// Cost món ăn để trừ đúng NVL tiêu hao.
+function XuatExcelImportForm({ data, onImport }) {
+  const [revenueCodeId, setRevenueCodeId] = useState(data.revenueCodes[0]?.id || "");
+  const [exportCodeId, setExportCodeId] = useState(data.exportCodes[0]?.id || "");
+  const [exportDate, setExportDate] = useState(todayISO());
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState([]);
+  const [unmatched, setUnmatched] = useState([]);
+  const [errors, setErrors] = useState([]);
+  const [importing, setImporting] = useState(false);
+  const [done, setDone] = useState(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setDone(null);
+    try {
+      const rawRows = await readExcelRaw(file);
+      const headerIdx = detectHeaderRow(rawRows, ["Tên món", "SL bán"]);
+      if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Tên món" và "SL bán") trong file.']); setPreview([]); setUnmatched([]); return; }
+      const rawObjRows = rowsToObjects(rawRows, headerIdx);
+      const valid = [];
+      const unmatchedNames = new Set();
+      rawObjRows.forEach((row) => {
+        const dishName = String(pickCol(row, "Tên món", "Ten mon", "Món ăn", "Mon an") ?? "").trim();
+        const quantitySold = Number(pickCol(row, "SL bán", "SL ban", "Số lượng bán", "Số lượng", "So luong")) || 0;
+        const invoiceNo = String(pickCol(row, "Số hóa đơn", "Số hoá đơn", "So hoa don", "Mã hoá đơn") ?? "").trim();
+        if (!dishName || quantitySold <= 0) return;
+        const dish = data.dishes.find((d) => stripDiacritics(d.name).trim() === stripDiacritics(dishName).trim());
+        if (!dish) { unmatchedNames.add(dishName); return; }
+        valid.push({ dishName, dishId: dish.id, quantitySold, invoiceNo });
+      });
+      setPreview(valid);
+      setUnmatched(Array.from(unmatchedNames));
+      setErrors([]);
+    } catch (err) {
+      setErrors([err.message || "Không đọc được file, kiểm tra lại định dạng .xlsx."]);
+      setPreview([]); setUnmatched([]);
+    }
+  };
+
+  const submit = async () => {
+    if (preview.length === 0) return;
+    setImporting(true);
+    try {
+      await onImport({ revenueCodeId, exportCodeId, exportDate, rows: preview });
+      setDone(preview.length);
+      setPreview([]); setUnmatched([]); setFileName("");
+    } catch (e) {
+      setErrors([e.message || "Không nhập được, vui lòng thử lại."]);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-1">Xuất kho NVL tự động từ báo cáo doanh thu</p>
+      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Tên món</b>, <b>SL bán</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn". App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), và tự bỏ qua các dòng tổng phụ theo hoá đơn.</p>
+      <div className="grid sm:grid-cols-3 gap-3 mb-3">
+        <SelectField label="Mã doanh thu áp dụng" value={revenueCodeId} onChange={(e) => setRevenueCodeId(e.target.value)}>
+          {data.revenueCodes.map((r) => <option key={r.id} value={r.id}>{r.code} — {r.name}</option>)}
+        </SelectField>
+        <SelectField label="Mã xuất áp dụng" value={exportCodeId} onChange={(e) => setExportCodeId(e.target.value)}>
+          {data.exportCodes.map((c) => <option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}
+        </SelectField>
+        <TextField label="Ngày xuất" type="date" value={exportDate} onChange={(e) => setExportDate(e.target.value)} />
+      </div>
+
+      <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-teal-700 border border-teal-300 bg-teal-50 hover:bg-teal-100 rounded-xl px-4 py-2 mb-3">
+        <Upload size={15} /> {fileName || "Chọn file Excel..."}
+        <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
+      </label>
+
+      {errors.length > 0 && (
+        <div className="mb-3 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-1">
+          {errors.map((e, i) => <p key={i} className="flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> {e}</p>)}
+        </div>
+      )}
+      {unmatched.length > 0 && (
+        <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
+          <p className="font-medium mb-1 flex items-center gap-1"><AlertTriangle size={12} /> {unmatched.length} tên món không khớp với "Cost món ăn" (sẽ bị bỏ qua):</p>
+          <p>{unmatched.join(", ")}</p>
+        </div>
+      )}
+
+      {preview.length > 0 && (
+        <>
+          <div className="overflow-x-auto rounded-xl border border-slate-200 mb-3 max-h-72 overflow-y-auto">
+            <table className="w-full text-sm min-w-[420px]">
+              <thead className="sticky top-0 bg-slate-50">
+                <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+                  <th className="px-2 py-2">Món</th><th className="px-2 py-2">Hoá đơn</th><th className="px-2 py-2 text-right">SL bán</th>
+                </tr>
+              </thead>
+              <tbody>
+                {preview.map((r, i) => (
+                  <tr key={i} className="border-b border-slate-100 last:border-0">
+                    <td className="px-2 py-1.5">{r.dishName}</td>
+                    <td className="px-2 py-1.5 text-slate-400">{r.invoiceNo || "—"}</td>
+                    <td className="px-2 py-1.5 text-right">{r.quantitySold}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <PrimaryButton onClick={submit} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Xuất kho theo {preview.length} dòng món bán</PrimaryButton>
+        </>
+      )}
+      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã xuất kho thành công theo {done} dòng món bán.</p>}
+    </Card>
+  );
+}
+
+function NhapHangModule({ data, currentUser, onSubmit, onBulkImport }) {
   return (
     <div>
       <SectionTitle icon={ArrowDownCircle} title="Nhập hàng" subtitle="Ghi nhận nhập hàng từ nhà cung cấp" />
+      <NhapExcelImportForm data={data} onImport={onBulkImport} />
       <NhapHangForm data={data} currentUser={currentUser} onSubmit={onSubmit} />
       <NhapHangList data={data} />
     </div>
@@ -1474,10 +1766,11 @@ function XuatHangList({ data }) {
   );
 }
 
-function XuatHangModule({ data, currentUser, onSubmit }) {
+function XuatHangModule({ data, currentUser, onSubmit, onBulkImportFromBills }) {
   return (
     <div>
       <SectionTitle icon={ArrowUpCircle} title="Xuất hàng" subtitle="Ghi nhận tiêu hao nguyên liệu và bán thành phẩm" />
+      <XuatExcelImportForm data={data} onImport={onBulkImportFromBills} />
       <XuatHangForm data={data} currentUser={currentUser} onSubmit={onSubmit} />
       <XuatHangList data={data} />
     </div>
@@ -2431,6 +2724,20 @@ export default function App() {
     showToast(`Đã lưu phiếu nhập ${receiptCode} (${rows.length} dòng)`);
   };
 
+  // Nhập hàng hàng loạt từ file Excel — mỗi dòng Excel tự mang đúng NCC/SP/SL/Đơn giá riêng.
+  const bulkImportNhap = async (rows) => {
+    const receiptCode = genReceiptCode("NK", data.importRecords.length);
+    const dbRows = rows.map((r) => ({
+      order_number: r.orderNumber || null, receipt_code: receiptCode, supplier_id: r.supplierId, product_id: r.productId,
+      quantity: r.quantity, unit_price: r.unitPrice, total_amount: r.quantity * r.unitPrice,
+      payment_type: r.paymentType, import_date: r.importDate || todayISO(), created_by: currentUser.id,
+    }));
+    const { error } = await supabase.from("import_records").insert(dbRows);
+    if (error) throw error;
+    await refreshAll();
+    showToast(`Đã nhập ${dbRows.length} dòng từ file Excel (phiếu ${receiptCode})`);
+  };
+
   // ---------------- Xuất hàng ----------------
   const submitExport = async ({ orderNumber, revenueCodeId, exportCodeId, lines }) => {
     const receiptCode = genReceiptCode("XK", data.exportRecords.length);
@@ -2444,6 +2751,44 @@ export default function App() {
     if (error) throw error;
     await refreshAll();
     showToast(`Đã lưu phiếu xuất ${receiptCode}`);
+  };
+
+  // Xuất kho NVL tự động từ báo cáo doanh thu chi tiết theo hoá đơn & món ăn:
+  // mỗi dòng "món X bán N suất" được nổ ra thành các dòng NVL theo đúng công thức
+  // (Cost món ăn) — số lượng NVL tiêu hao = định lượng trong công thức × N.
+  const bulkImportXuatFromBills = async ({ revenueCodeId, exportCodeId, exportDate, rows }) => {
+    const exportRows = [];
+    const notFoundDishes = new Set();
+    rows.forEach((r) => {
+      const dish = data.dishes.find((d) => stripDiacritics(d.name).trim() === stripDiacritics(r.dishName).trim());
+      if (!dish) { notFoundDishes.add(r.dishName); return; }
+      const ingredients = data.dishIngredients.filter((i) => i.dishId === dish.id);
+      ingredients.forEach((ing) => {
+        const product = data.products.find((p) => p.id === ing.productId);
+        if (!product) return;
+        const unitPrice = ing.costMode === "phan_bo"
+          ? (ing.quantity > 0 ? (ing.allocatedCost || 0) / ing.quantity : 0)
+          : computeAvgPrice(ing.productId, data);
+        const quantity = ing.quantity * r.quantitySold;
+        exportRows.push({
+          order_number: r.invoiceNo || null, receipt_code: null,
+          revenue_code_id: revenueCodeId, export_code_id: exportCodeId,
+          product_id: ing.productId, line_type: product.classification, quantity, unit_price: unitPrice,
+          total_amount: quantity * unitPrice, export_date: exportDate || todayISO(), created_by: currentUser.id,
+        });
+      });
+    });
+    if (exportRows.length === 0) {
+      throw new Error("Không có dòng nào khớp được với danh sách món ăn trong Cost món ăn.");
+    }
+    const receiptCode = genReceiptCode("XK", data.exportRecords.length);
+    exportRows.forEach((r) => { r.receipt_code = receiptCode; });
+    const { error } = await supabase.from("export_records").insert(exportRows);
+    if (error) throw error;
+    await refreshAll();
+    const matchedBills = rows.length - notFoundDishes.size;
+    showToast(`Đã xuất kho ${exportRows.length} dòng NVL từ ${matchedBills} dòng báo cáo doanh thu (phiếu ${receiptCode})` + (notFoundDishes.size ? ` — bỏ qua ${notFoundDishes.size} tên món không khớp` : ""));
+    return { notFoundDishes: Array.from(notFoundDishes) };
   };
 
   // ---------------- Chi phí (Vận hành / Marketing / Bảo trì & vật tư / Khác) ----------------
@@ -2596,8 +2941,8 @@ export default function App() {
 
       <div className="max-w-6xl mx-auto px-4 py-6">
         <TabErrorBoundary resetKey={tab}>
-          {tab === "nhap" && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} />}
-          {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} />}
+          {tab === "nhap" && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
+          {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} />}
           {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
           {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
           {tab === "danh_muc" && (
