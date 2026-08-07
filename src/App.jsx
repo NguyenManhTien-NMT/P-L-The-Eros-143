@@ -1296,6 +1296,66 @@ function ExcelHeaderFilter({ label, align = "left", options, selected, onChangeS
 // ---------------------------------------------------------------------------
 // LỊCH SỬ NHẬP HÀNG — màn riêng, có bộ lọc chi tiết theo ngày/giá/mã phiếu/SL/thành tiền
 // ---------------------------------------------------------------------------
+// Xoá gọn cả 1 phiếu (nhập hoặc xuất) theo Mã phiếu — không cần lọc/tìm từng dòng.
+function DeleteByReceiptCard({ records, onDeleteMany, label = "phiếu" }) {
+  const receipts = useMemo(() => {
+    const map = new Map();
+    records.forEach((r) => {
+      if (!r.receiptCode) return;
+      const cur = map.get(r.receiptCode) || { receiptCode: r.receiptCode, lineCount: 0, totalAmount: 0, date: r.importDate || r.exportDate };
+      cur.lineCount += 1;
+      cur.totalAmount += r.totalAmount;
+      map.set(r.receiptCode, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+  }, [records]);
+
+  const [selected, setSelected] = useState("");
+  const [deleting, setDeleting] = useState(false);
+  const chosen = receipts.find((r) => r.receiptCode === selected);
+
+  const handleDelete = async () => {
+    if (!chosen) return;
+    if (!window.confirm(`Xoá toàn bộ ${label} "${chosen.receiptCode}" (${chosen.lineCount} dòng, tổng ${fmtMoney(chosen.totalAmount)})? Không thể hoàn tác.`)) return;
+    setDeleting(true);
+    try {
+      const ids = records.filter((r) => r.receiptCode === chosen.receiptCode).map((r) => r.id);
+      await onDeleteMany(ids);
+      setSelected("");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  if (receipts.length === 0) return null;
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-3">Xoá nhanh theo Mã phiếu</p>
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="flex-1 min-w-[220px]">
+          <SelectField label="Chọn phiếu" value={selected} onChange={(e) => setSelected(e.target.value)}>
+            <option value="">— Chọn mã phiếu —</option>
+            {receipts.map((r) => (
+              <option key={r.receiptCode} value={r.receiptCode}>
+                {r.receiptCode} · {fmtDate(r.date)} · {r.lineCount} dòng · {fmtMoney(r.totalAmount)}
+              </option>
+            ))}
+          </SelectField>
+        </div>
+        <button
+          type="button"
+          onClick={handleDelete}
+          disabled={!chosen || deleting}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium text-rose-600 border border-rose-200 bg-rose-50 hover:bg-rose-100 disabled:opacity-50"
+        >
+          {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Xoá cả phiếu
+        </button>
+      </div>
+    </Card>
+  );
+}
+
 function LichSuNhapModule({ data, onDelete, onDeleteMany }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
@@ -1401,6 +1461,8 @@ function LichSuNhapModule({ data, onDelete, onDeleteMany }) {
   return (
     <div>
       <SectionTitle icon={Inbox} title="Lịch sử nhập hàng" subtitle="Tra cứu chi tiết các phiếu đã nhập theo ngày, giá, mã phiếu, số lượng, thành tiền" />
+
+      <DeleteByReceiptCard records={data.importRecords} onDeleteMany={onDeleteMany} label="phiếu nhập" />
 
       <Card className="p-4 sm:p-5 mb-5">
         <div className="grid sm:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -2074,6 +2136,7 @@ function XuatHangModule({ data, currentUser, onSubmit, onBulkImportFromBills, on
     <div>
       <SectionTitle icon={ArrowUpCircle} title="Xuất hàng" subtitle="Ghi nhận tiêu hao nguyên liệu và bán thành phẩm" />
       <ReceiptSummaryCard summary={lastReceipt} icon={ArrowUpCircle} actionLabel="Xuất hàng" />
+      <DeleteByReceiptCard records={data.exportRecords} onDeleteMany={onDeleteMany} label="phiếu xuất" />
       <XuatExcelImportForm data={data} onImport={handleBulkImport} />
       <XuatHangForm data={data} currentUser={currentUser} onSubmit={handleSubmit} />
       <XuatHangList data={data} onDelete={onDelete} />
