@@ -1358,8 +1358,6 @@ function NhapExcelImportForm({ data, onImport }) {
 // mỗi dòng: Tên món, Số lượng bán (tuỳ chọn: Số hoá đơn). Hệ thống tự nổ theo công thức
 // Cost món ăn để trừ đúng NVL tiêu hao.
 function XuatExcelImportForm({ data, onImport }) {
-  const [revenueCodeId, setRevenueCodeId] = useState(data.revenueCodes[0]?.id || "");
-  const [exportCodeId, setExportCodeId] = useState(data.exportCodes[0]?.id || "");
   const [exportDate, setExportDate] = useState(todayISO());
   const [fileName, setFileName] = useState("");
   const [preview, setPreview] = useState([]);
@@ -1402,7 +1400,7 @@ function XuatExcelImportForm({ data, onImport }) {
     if (preview.length === 0) return;
     setImporting(true);
     try {
-      await onImport({ revenueCodeId, exportCodeId, exportDate, rows: preview });
+      await onImport({ exportDate, rows: preview });
       setDone(preview.length);
       setPreview([]); setUnmatched([]); setFileName("");
     } catch (e) {
@@ -1416,13 +1414,7 @@ function XuatExcelImportForm({ data, onImport }) {
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Xuất kho NVL tự động từ báo cáo doanh thu</p>
       <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Tên món</b>, <b>SL bán</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn". App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), và tự bỏ qua các dòng tổng phụ theo hoá đơn.</p>
-      <div className="grid sm:grid-cols-3 gap-3 mb-3">
-        <SelectField label="Mã doanh thu áp dụng" value={revenueCodeId} onChange={(e) => setRevenueCodeId(e.target.value)}>
-          {data.revenueCodes.map((r) => <option key={r.id} value={r.id}>{r.code} — {r.name}</option>)}
-        </SelectField>
-        <SelectField label="Mã xuất áp dụng" value={exportCodeId} onChange={(e) => setExportCodeId(e.target.value)}>
-          {data.exportCodes.map((c) => <option key={c.id} value={c.id}>{c.code} — {c.name}</option>)}
-        </SelectField>
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
         <TextField label="Ngày xuất" type="date" value={exportDate} onChange={(e) => setExportDate(e.target.value)} />
       </div>
 
@@ -2756,7 +2748,7 @@ export default function App() {
   // Xuất kho NVL tự động từ báo cáo doanh thu chi tiết theo hoá đơn & món ăn:
   // mỗi dòng "món X bán N suất" được nổ ra thành các dòng NVL theo đúng công thức
   // (Cost món ăn) — số lượng NVL tiêu hao = định lượng trong công thức × N.
-  const bulkImportXuatFromBills = async ({ revenueCodeId, exportCodeId, exportDate, rows }) => {
+  const bulkImportXuatFromBills = async ({ exportDate, rows }) => {
     const exportRows = [];
     const notFoundDishes = new Set();
     rows.forEach((r) => {
@@ -2772,7 +2764,7 @@ export default function App() {
         const quantity = ing.quantity * r.quantitySold;
         exportRows.push({
           order_number: r.invoiceNo || null, receipt_code: null,
-          revenue_code_id: revenueCodeId, export_code_id: exportCodeId,
+          revenue_code_id: null, export_code_id: null,
           product_id: ing.productId, line_type: product.classification, quantity, unit_price: unitPrice,
           total_amount: quantity * unitPrice, export_date: exportDate || todayISO(), created_by: currentUser.id,
         });
