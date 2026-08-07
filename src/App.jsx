@@ -1206,12 +1206,13 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
   );
 }
 
-function NhapHangList({ data }) {
-  const rows = data.importRecords.slice(0, 30);
+function NhapHangList({ data, rows, showFilterHint }) {
   return (
     <Card className="p-0 overflow-hidden">
-      <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử nhập hàng gần đây</p></div>
-      {rows.length === 0 ? <EmptyState icon={Inbox} text="Chưa có phiếu nhập nào." /> : (
+      {showFilterHint !== false && (
+        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử nhập hàng gần đây</p></div>
+      )}
+      {rows.length === 0 ? <EmptyState icon={Inbox} text="Không có phiếu nhập nào khớp." /> : (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
@@ -1241,6 +1242,83 @@ function NhapHangList({ data }) {
         </div>
       )}
     </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// LỊCH SỬ NHẬP HÀNG — màn riêng, có bộ lọc chi tiết theo ngày/giá/mã phiếu/SL/thành tiền
+// ---------------------------------------------------------------------------
+function LichSuNhapModule({ data }) {
+  const [from, setFrom] = useState(daysAgoISO(30));
+  const [to, setTo] = useState(todayISO());
+  const [receiptCode, setReceiptCode] = useState("");
+  const [productQuery, setProductQuery] = useState("");
+  const [supplierId, setSupplierId] = useState("");
+  const [priceFrom, setPriceFrom] = useState("");
+  const [priceTo, setPriceTo] = useState("");
+  const [qtyFrom, setQtyFrom] = useState("");
+  const [qtyTo, setQtyTo] = useState("");
+  const [amountFrom, setAmountFrom] = useState("");
+  const [amountTo, setAmountTo] = useState("");
+
+  const filtered = data.importRecords.filter((r) => {
+    if (from && r.importDate < from) return false;
+    if (to && r.importDate > to) return false;
+    if (receiptCode && !r.receiptCode?.toLowerCase().includes(receiptCode.trim().toLowerCase())) return false;
+    if (supplierId && r.supplierId !== supplierId) return false;
+    if (productQuery) {
+      const p = data.products.find((x) => x.id === r.productId);
+      const q = stripDiacritics(productQuery.trim());
+      if (!p || (!stripDiacritics(p.name).includes(q) && !p.code.toLowerCase().includes(productQuery.trim().toLowerCase()))) return false;
+    }
+    if (priceFrom !== "" && r.unitPrice < Number(priceFrom)) return false;
+    if (priceTo !== "" && r.unitPrice > Number(priceTo)) return false;
+    if (qtyFrom !== "" && r.quantity < Number(qtyFrom)) return false;
+    if (qtyTo !== "" && r.quantity > Number(qtyTo)) return false;
+    if (amountFrom !== "" && r.totalAmount < Number(amountFrom)) return false;
+    if (amountTo !== "" && r.totalAmount > Number(amountTo)) return false;
+    return true;
+  });
+
+  const totalAmount = filtered.reduce((s, r) => s + r.totalAmount, 0);
+
+  const resetFilters = () => {
+    setFrom(daysAgoISO(30)); setTo(todayISO()); setReceiptCode(""); setProductQuery("");
+    setSupplierId(""); setPriceFrom(""); setPriceTo(""); setQtyFrom(""); setQtyTo(""); setAmountFrom(""); setAmountTo("");
+  };
+
+  return (
+    <div>
+      <SectionTitle icon={Inbox} title="Lịch sử nhập hàng" subtitle="Tra cứu chi tiết các phiếu đã nhập theo ngày, giá, mã phiếu, số lượng, thành tiền" />
+
+      <Card className="p-4 sm:p-5 mb-5">
+        <div className="grid sm:grid-cols-3 lg:grid-cols-4 gap-3">
+          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <TextField label="Mã phiếu" value={receiptCode} onChange={(e) => setReceiptCode(e.target.value)} placeholder="VD: NK-T8-N1" />
+          <TextField label="Sản phẩm (mã/tên)" value={productQuery} onChange={(e) => setProductQuery(e.target.value)} placeholder="Gõ mã hoặc tên..." />
+          <SelectField label="Nhà cung cấp" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+            <option value="">— Tất cả —</option>
+            {data.suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
+          </SelectField>
+          <TextField label="Số lượng từ" type="number" value={qtyFrom} onChange={(e) => setQtyFrom(e.target.value)} />
+          <TextField label="Số lượng đến" type="number" value={qtyTo} onChange={(e) => setQtyTo(e.target.value)} />
+          <TextField label="Đơn giá từ" type="number" value={priceFrom} onChange={(e) => setPriceFrom(e.target.value)} />
+          <TextField label="Đơn giá đến" type="number" value={priceTo} onChange={(e) => setPriceTo(e.target.value)} />
+          <TextField label="Thành tiền từ" type="number" value={amountFrom} onChange={(e) => setAmountFrom(e.target.value)} />
+          <TextField label="Thành tiền đến" type="number" value={amountTo} onChange={(e) => setAmountTo(e.target.value)} />
+        </div>
+        <div className="flex items-center justify-between mt-3">
+          <GhostButton onClick={resetFilters}><X size={14} /> Xoá bộ lọc</GhostButton>
+          <p className="text-sm text-slate-500">
+            <span className="font-medium text-slate-700">{filtered.length}</span> dòng · Tổng thành tiền{" "}
+            <span className="font-semibold text-teal-700">{fmtMoney(totalAmount)}</span>
+          </p>
+        </div>
+      </Card>
+
+      <NhapHangList data={data} rows={filtered} showFilterHint={false} />
+    </div>
   );
 }
 
@@ -1311,10 +1389,17 @@ function NhapExcelImportForm({ data, onImport }) {
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Nhập hàng loạt từ Excel</p>
       <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Mã NCC</b>, <b>Mã SP</b>, <b>Số lượng</b>, <b>Đơn giá</b> (tuỳ chọn: Đơn số, Ngày nhập).</p>
-      <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-teal-700 border border-teal-300 bg-teal-50 hover:bg-teal-100 rounded-xl px-4 py-2 mb-3">
-        <Upload size={15} /> {fileName || "Chọn file Excel..."}
-        <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
-      </label>
+      <div className="flex items-center gap-2 mb-3">
+        <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-teal-700 border border-teal-300 bg-teal-50 hover:bg-teal-100 rounded-xl px-4 py-2">
+          <Upload size={15} /> {fileName || "Chọn file Excel..."}
+          <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
+        </label>
+        {fileName && (
+          <button type="button" onClick={() => { setFileName(""); setPreview([]); setErrors([]); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
+            <X size={16} />
+          </button>
+        )}
+      </div>
 
       {errors.length > 0 && (
         <div className="mb-3 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-1 max-h-40 overflow-y-auto">
@@ -1418,10 +1503,17 @@ function XuatExcelImportForm({ data, onImport }) {
         <TextField label="Ngày xuất" type="date" value={exportDate} onChange={(e) => setExportDate(e.target.value)} />
       </div>
 
-      <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-teal-700 border border-teal-300 bg-teal-50 hover:bg-teal-100 rounded-xl px-4 py-2 mb-3">
-        <Upload size={15} /> {fileName || "Chọn file Excel..."}
-        <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
-      </label>
+      <div className="flex items-center gap-2 mb-3">
+        <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-teal-700 border border-teal-300 bg-teal-50 hover:bg-teal-100 rounded-xl px-4 py-2">
+          <Upload size={15} /> {fileName || "Chọn file Excel..."}
+          <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
+        </label>
+        {fileName && (
+          <button type="button" onClick={() => { setFileName(""); setPreview([]); setUnmatched([]); setErrors([]); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
+            <X size={16} />
+          </button>
+        )}
+      </div>
 
       {errors.length > 0 && (
         <div className="mb-3 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-1">
@@ -1469,7 +1561,6 @@ function NhapHangModule({ data, currentUser, onSubmit, onBulkImport }) {
       <SectionTitle icon={ArrowDownCircle} title="Nhập hàng" subtitle="Ghi nhận nhập hàng từ nhà cung cấp" />
       <NhapExcelImportForm data={data} onImport={onBulkImport} />
       <NhapHangForm data={data} currentUser={currentUser} onSubmit={onSubmit} />
-      <NhapHangList data={data} />
     </div>
   );
 }
@@ -2871,6 +2962,7 @@ export default function App() {
   const isQuanLy = currentUser.role === "quan_ly";
   const NAV_NHAN_VIEN = [
     { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
+    { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
     { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
     { key: "mon_an", label: "Cost món ăn", icon: Package },
@@ -2879,6 +2971,7 @@ export default function App() {
   ];
   const NAV_QUAN_LY = [
     { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
+    { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
     { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
     { key: "mon_an", label: "Cost món ăn", icon: Package },
@@ -2934,6 +3027,7 @@ export default function App() {
       <div className="max-w-6xl mx-auto px-4 py-6">
         <TabErrorBoundary resetKey={tab}>
           {tab === "nhap" && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
+          {tab === "lich_su_nhap" && <LichSuNhapModule data={data} />}
           {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} />}
           {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
           {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
