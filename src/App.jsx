@@ -68,7 +68,7 @@ function stripDiacritics(str) {
 function normalizeForMatch(str) {
   return stripDiacritics(str)
     .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "")
-    .replace(/\s+/g, " ")
+    .replace(/\s+/g, "")
     .trim();
 }
 
