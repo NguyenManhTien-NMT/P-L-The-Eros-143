@@ -1403,8 +1403,12 @@ function DeleteByReceiptCard({ records, onDeleteMany, label = "phiếu" }) {
 
   const [selected, setSelected] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [deletingAll, setDeletingAll] = useState(false);
   const [error, setError] = useState("");
   const chosen = receipts.find((r) => r.receiptCode === selected);
+
+  const totalAllLines = records.length;
+  const totalAllAmount = records.reduce((s, r) => s + r.totalAmount, 0);
 
   const handleDelete = async () => {
     if (!chosen) return;
@@ -1418,6 +1422,21 @@ function DeleteByReceiptCard({ records, onDeleteMany, label = "phiếu" }) {
       setError(e.message || "Không xoá được, vui lòng thử lại.");
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const handleDeleteAll = async () => {
+    if (records.length === 0) return;
+    if (!window.confirm(`Xoá SẠCH TOÀN BỘ lịch sử ${label} — tất cả ${receipts.length} mã phiếu, ${totalAllLines} dòng, tổng ${fmtMoney(totalAllAmount)}? Hành động này xoá hết mọi phiếu (không chỉ 1 phiếu), không thể hoàn tác.`)) return;
+    setDeletingAll(true); setError("");
+    try {
+      const ids = records.map((r) => r.id);
+      await onDeleteMany(ids);
+      setSelected("");
+    } catch (e) {
+      setError(e.message || "Không xoá được, vui lòng thử lại.");
+    } finally {
+      setDeletingAll(false);
     }
   };
 
@@ -1440,12 +1459,25 @@ function DeleteByReceiptCard({ records, onDeleteMany, label = "phiếu" }) {
         <button
           type="button"
           onClick={handleDelete}
-          disabled={!chosen || deleting}
+          disabled={!chosen || deleting || deletingAll}
           className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium text-rose-600 border border-rose-200 bg-rose-50 hover:bg-rose-100 disabled:opacity-50"
         >
-          {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Xoá cả phiếu
+          {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Xoá phiếu này
         </button>
       </div>
+      {receipts.length > 1 && (
+        <div className="mt-3 pt-3 border-t border-slate-100 flex items-center justify-between flex-wrap gap-2">
+          <p className="text-xs text-slate-400">Có {receipts.length} mã phiếu, tổng {totalAllLines} dòng — nếu chỉ muốn làm sạch hết để import lại từ đầu, xoá 1 lần luôn:</p>
+          <button
+            type="button"
+            onClick={handleDeleteAll}
+            disabled={deleting || deletingAll}
+            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-medium text-white bg-rose-600 hover:bg-rose-700 disabled:opacity-50 shrink-0"
+          >
+            {deletingAll ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Xoá SẠCH toàn bộ ({receipts.length} phiếu)
+          </button>
+        </div>
+      )}
       {error && <p className="text-xs text-rose-600 mt-2 flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> {error}</p>}
     </Card>
   );
@@ -1836,21 +1868,30 @@ function XuatExcelImportForm({ data, onImport }) {
       {preview.length > 0 && (
         <>
           <div className="overflow-x-auto rounded-xl border border-slate-200 mb-3 max-h-72 overflow-y-auto">
-            <table className="w-full text-sm min-w-[480px]">
+            <table className="w-full text-sm min-w-[640px]">
               <thead className="sticky top-0 bg-slate-50">
                 <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
-                  <th className="px-2 py-2">Ngày</th><th className="px-2 py-2">Món</th><th className="px-2 py-2">Hoá đơn</th><th className="px-2 py-2 text-right">SL bán</th>
+                  <th className="px-2 py-2">Ngày</th><th className="px-2 py-2">Món</th><th className="px-2 py-2">Hoá đơn</th>
+                  <th className="px-2 py-2 text-right">SL bán</th><th className="px-2 py-2 text-right">Giá bán</th>
+                  <th className="px-2 py-2 text-right">Giá vốn/suất</th><th className="px-2 py-2 text-right">Cost %</th>
                 </tr>
               </thead>
               <tbody>
-                {preview.map((r, i) => (
-                  <tr key={i} className="border-b border-slate-100 last:border-0">
-                    <td className="px-2 py-1.5 text-slate-400">{fmtDate(r.saleDate)}</td>
-                    <td className="px-2 py-1.5">{r.dishName}</td>
-                    <td className="px-2 py-1.5 text-slate-400">{r.invoiceNo || "—"}</td>
-                    <td className="px-2 py-1.5 text-right">{r.quantitySold}</td>
-                  </tr>
-                ))}
+                {preview.map((r, i) => {
+                  const costPerUnit = dishTotalCost(r.dishId, data);
+                  const costPct = r.unitPriceInFile > 0 ? (costPerUnit / r.unitPriceInFile) * 100 : 0;
+                  return (
+                    <tr key={i} className="border-b border-slate-100 last:border-0">
+                      <td className="px-2 py-1.5 text-slate-400">{fmtDate(r.saleDate)}</td>
+                      <td className="px-2 py-1.5">{r.dishName}</td>
+                      <td className="px-2 py-1.5 text-slate-400">{r.invoiceNo || "—"}</td>
+                      <td className="px-2 py-1.5 text-right">{r.quantitySold}</td>
+                      <td className="px-2 py-1.5 text-right">{fmtMoney(r.unitPriceInFile)}</td>
+                      <td className="px-2 py-1.5 text-right text-amber-700">{fmtMoney(costPerUnit)}</td>
+                      <td className="px-2 py-1.5 text-right text-slate-500">{costPct.toFixed(1)}%</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -2212,7 +2253,8 @@ function XuatHangList({ data, onDelete }) {
           <table className="w-full text-sm">
             <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
               <th className="px-3 py-2">Mã phiếu</th><th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Loại</th>
-              <th className="px-3 py-2">Sản phẩm</th><th className="px-3 py-2 text-right">SL</th><th className="px-3 py-2 text-right">Thành tiền</th>
+              <th className="px-3 py-2">Sản phẩm</th><th className="px-3 py-2 text-right">SL</th>
+              <th className="px-3 py-2 text-right">Đơn giá</th><th className="px-3 py-2 text-right">Thành tiền</th>
               <th className="px-3 py-2 w-10"></th>
             </tr></thead>
             <tbody>
@@ -2225,6 +2267,7 @@ function XuatHangList({ data, onDelete }) {
                     <td className="px-3 py-2"><Badge className={CLASSIFICATION_META[r.lineType]?.color}>{r.lineType}</Badge></td>
                     <td className="px-3 py-2">{p?.name || "—"}</td>
                     <td className="px-3 py-2 text-right">{fmtNumber(r.quantity)} {p?.unit}</td>
+                    <td className="px-3 py-2 text-right text-slate-500">{fmtMoney(r.unitPrice)}</td>
                     <td className="px-3 py-2 text-right font-medium">{fmtMoney(r.totalAmount)}</td>
                     <td className="px-3 py-2 text-center">
                       <button type="button" onClick={() => handleDeleteRow(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1">
