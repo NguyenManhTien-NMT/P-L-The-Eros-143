@@ -1760,9 +1760,11 @@ function XuatExcelImportForm({ data, onImport }) {
       rawObjRows.forEach((row) => {
         const dishName = String(pickCol(row, "Tên món", "Ten mon", "Món ăn", "Mon an") ?? "").trim();
         const quantitySold = Number(pickCol(row, "SL bán", "SL ban", "Số lượng bán", "Số lượng", "So luong")) || 0;
+        const unitPriceInFile = Number(pickCol(row, "Đơn giá", "Don gia")) || 0;
         const invoiceNo = String(pickCol(row, "Số hóa đơn", "Số hoá đơn", "So hoa don", "Mã hoá đơn") ?? "").trim();
         const saleDate = excelDateToISO(pickCol(row, "Ngày", "Ngay") ?? pickColContains(row, "ngay")) || todayISO();
         if (!dishName || quantitySold <= 0) return;
+        if (unitPriceInFile <= 0) return; // bỏ dòng rác của POS (VD "Mở két"...) — đơn giá 0đ không phải bán hàng thật
         const dish = data.dishes.find((d) => normalizeForMatch(d.name) === normalizeForMatch(dishName));
         if (!dish) { unmatchedNames.add(dishName); return; }
         valid.push({ dishName, dishId: dish.id, quantitySold, invoiceNo, saleDate });
@@ -1793,7 +1795,7 @@ function XuatExcelImportForm({ data, onImport }) {
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Xuất kho NVL tự động từ báo cáo doanh thu</p>
-      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Ngày</b>, <b>Tên món</b>, <b>SL bán</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn". App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), và tự bỏ qua các dòng tổng phụ theo hoá đơn. Ngày xuất của từng dòng lấy trực tiếp từ cột "Ngày" trong file (không cần chọn ngày thủ công) — file gộp nhiều ngày vẫn tách đúng theo từng ngày.</p>
+      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Ngày</b>, <b>Tên món</b>, <b>SL bán</b>, <b>Đơn giá</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn". App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), tự bỏ qua các dòng tổng phụ theo hoá đơn và các dòng có Đơn giá = 0đ (dữ liệu rác của máy POS như "Mở két"...). Ngày xuất của từng dòng lấy trực tiếp từ cột "Ngày" trong file (không cần chọn ngày thủ công) — file gộp nhiều ngày vẫn tách đúng theo từng ngày.</p>
 
       <div className="flex items-center gap-2 mb-3">
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
@@ -2199,12 +2201,11 @@ function XuatHangList({ data, onDelete }) {
             <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
               <th className="px-3 py-2">Mã phiếu</th><th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Loại</th>
               <th className="px-3 py-2">Sản phẩm</th><th className="px-3 py-2 text-right">SL</th><th className="px-3 py-2 text-right">Thành tiền</th>
-              <th className="px-3 py-2">Mã doanh thu</th><th className="px-3 py-2 w-10"></th>
+              <th className="px-3 py-2 w-10"></th>
             </tr></thead>
             <tbody>
               {rows.map((r) => {
                 const p = data.products.find((x) => x.id === r.productId);
-                const rc = data.revenueCodes.find((x) => x.id === r.revenueCodeId);
                 return (
                   <tr key={r.id} className="border-b border-slate-50 last:border-0">
                     <td className="px-3 py-2 text-slate-500">{r.receiptCode}</td>
@@ -2213,7 +2214,6 @@ function XuatHangList({ data, onDelete }) {
                     <td className="px-3 py-2">{p?.name || "—"}</td>
                     <td className="px-3 py-2 text-right">{fmtNumber(r.quantity)} {p?.unit}</td>
                     <td className="px-3 py-2 text-right font-medium">{fmtMoney(r.totalAmount)}</td>
-                    <td className="px-3 py-2 text-slate-500">{rc?.name || "—"}</td>
                     <td className="px-3 py-2 text-center">
                       <button type="button" onClick={() => handleDeleteRow(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1">
                         {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
