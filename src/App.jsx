@@ -2895,6 +2895,7 @@ function DishRecipeEditor({ dish, data, onSave, onClose }) {
 function MonAnModule({ data, onAddDish, onSaveRecipe, onDeleteDish }) {
   const [editingDish, setEditingDish] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [search, setSearch] = useState("");
 
   const handleDelete = async (dishId) => {
     setDeleting(dishId);
@@ -2914,6 +2915,13 @@ function MonAnModule({ data, onAddDish, onSaveRecipe, onDeleteDish }) {
     const ratio = totalRevenue > 0 ? (totalCost / totalRevenue) * 100 : null;
     return { ratio, totalCost, totalRevenue, countPriced };
   }, [data]);
+
+  // Lọc theo tên món — bỏ dấu + không phân biệt hoa/thường, để gõ nhanh không cần gõ đúng dấu.
+  const filteredDishes = useMemo(() => {
+    const q = normalizeForMatch(search);
+    if (!q) return data.dishes;
+    return data.dishes.filter((d) => normalizeForMatch(d.name).includes(q));
+  }, [data.dishes, search]);
 
   return (
     <div>
@@ -2946,10 +2954,33 @@ function MonAnModule({ data, onAddDish, onSaveRecipe, onDeleteDish }) {
       <DishCreateForm onSubmit={onAddDish} />
 
       <Card className="p-0 overflow-hidden">
-        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Danh sách món ăn ({data.dishes.length})</p></div>
-        {data.dishes.length === 0 ? <EmptyState icon={Package} text="Chưa có món ăn nào." /> : (
+        <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-3 flex-wrap">
+          <p className="font-semibold text-slate-800 text-sm">
+            Danh sách món ăn ({filteredDishes.length}{filteredDishes.length !== data.dishes.length ? `/${data.dishes.length}` : ""})
+          </p>
+          <div className="relative w-full sm:w-64">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Tìm món ăn..."
+              className="w-full pl-8 pr-8 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+            />
+            {search && (
+              <button type="button" onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-rose-600">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+        </div>
+        {data.dishes.length === 0 ? (
+          <EmptyState icon={Package} text="Chưa có món ăn nào." />
+        ) : filteredDishes.length === 0 ? (
+          <EmptyState icon={Search} text={`Không tìm thấy món nào khớp với "${search}".`} />
+        ) : (
           <div className="divide-y divide-slate-100">
-            {data.dishes.map((d) => {
+            {filteredDishes.map((d) => {
               const cost = dishTotalCost(d.id, data);
               const ingCount = data.dishIngredients.filter((i) => i.dishId === d.id).length;
               const profit = d.sellingPrice ? d.sellingPrice - cost : null;
