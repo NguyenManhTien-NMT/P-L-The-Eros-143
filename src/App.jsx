@@ -2329,6 +2329,90 @@ function BaoCaoDoanhThuNgayModule({ data }) {
   );
 }
 
+// Tổng chi phí vận hành theo khoảng ngày, gộp theo từng nhóm — KHÔNG gồm nhóm "nvl"
+// (Chi phí nguyên vật liệu) vì đã được tính trong Giá vốn (dish_sales.costAmount) rồi,
+// tính thêm vào đây sẽ bị trùng lặp.
+function operatingExpenseReport(expenseRecords, from, to) {
+  const filtered = expenseRecords.filter((r) => r.category !== "nvl" && r.expenseDate >= from && r.expenseDate <= to);
+  const byCategory = {};
+  filtered.forEach((r) => { byCategory[r.category] = (byCategory[r.category] || 0) + r.amount; });
+  const total = filtered.reduce((s, r) => s + r.amount, 0);
+  return { total, byCategory };
+}
+
+// P&L tổng hợp: Doanh thu & Giá vốn lấy từ dish_sales (đã snapshot đúng giá bán/giá vốn
+// tại thời điểm bán), trừ tiếp Chi phí vận hành (expense_records, trừ nhóm nvl) để ra
+// Lợi nhuận ròng — khác với "Lợi nhuận gộp" (chỉ mới trừ giá vốn nguyên liệu).
+function PLTongHopModule({ data }) {
+  const [from, setFrom] = useState(daysAgoISO(30));
+  const [to, setTo] = useState(todayISO());
+
+  const sales = data.dishSales.filter((s) => s.saleDate >= from && s.saleDate <= to);
+  const revenue = sales.reduce((s, r) => s + r.totalAmount, 0);
+  const cogs = sales.reduce((s, r) => s + r.costAmount, 0);
+  const grossProfit = revenue - cogs;
+  const opex = operatingExpenseReport(data.expenseRecords, from, to);
+  const netProfit = grossProfit - opex.total;
+  const netMargin = revenue > 0 ? (netProfit / revenue) * 100 : 0;
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-1">Lợi nhuận ròng (P&L tổng hợp)</p>
+      <p className="text-xs text-slate-500 mb-3">
+        Doanh thu & giá vốn lấy từ dữ liệu bán món (mục "Báo cáo doanh thu theo ngày" ở trên) — trừ tiếp toàn bộ
+        Chi phí vận hành (tab "Chi phí", không gồm nhóm Nguyên vật liệu vì đã nằm trong giá vốn) để ra Lợi nhuận ròng thực tế.
+      </p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
+        <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mb-4">
+        <div className="bg-teal-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-teal-700">Doanh thu</p>
+          <p className="text-sm font-semibold text-teal-800">{fmtMoney(revenue)}</p>
+        </div>
+        <div className="bg-amber-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-amber-700">Giá vốn</p>
+          <p className="text-sm font-semibold text-amber-800">{fmtMoney(cogs)}</p>
+        </div>
+        <div className="bg-slate-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-slate-500">Lợi nhuận gộp</p>
+          <p className="text-sm font-semibold text-slate-700">{fmtMoney(grossProfit)}</p>
+        </div>
+        <div className="bg-slate-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-slate-500">Chi phí vận hành</p>
+          <p className="text-sm font-semibold text-slate-700">{fmtMoney(opex.total)}</p>
+        </div>
+        <div className={`rounded-xl px-3 py-2 ${netProfit >= 0 ? "bg-emerald-50" : "bg-rose-50"}`}>
+          <p className={`text-xs ${netProfit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>Lợi nhuận ròng</p>
+          <p className={`text-sm font-semibold ${netProfit >= 0 ? "text-emerald-800" : "text-rose-800"}`}>{fmtMoney(netProfit)}</p>
+        </div>
+        <div className={`rounded-xl px-3 py-2 ${netProfit >= 0 ? "bg-emerald-50" : "bg-rose-50"}`}>
+          <p className={`text-xs ${netProfit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>Tỉ suất LN ròng</p>
+          <p className={`text-sm font-semibold ${netProfit >= 0 ? "text-emerald-800" : "text-rose-800"}`}>{netMargin.toFixed(1)}%</p>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+            <th className="px-3 py-2">Nhóm chi phí vận hành</th><th className="px-3 py-2 text-right">Số tiền</th>
+          </tr></thead>
+          <tbody>
+            {EXPENSE_CATEGORIES.filter((c) => c.key !== "nvl").map((c) => (
+              <tr key={c.key} className="border-b border-slate-50 last:border-0">
+                <td className="px-3 py-2 text-slate-700">{c.label}</td>
+                <td className="px-3 py-2 text-right text-slate-600">{fmtMoney(opex.byCategory[c.key] || 0)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 function BaoCaoXuatModule({ data }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
@@ -2340,6 +2424,7 @@ function BaoCaoXuatModule({ data }) {
     <div>
       <SectionTitle icon={BarChart3} title="Báo cáo xuất hàng" subtitle="Doanh thu, giá vốn, lợi nhuận theo loại hình & nguồn doanh thu" />
       <BaoCaoDoanhThuNgayModule data={data} />
+      <PLTongHopModule data={data} />
       <Card className="p-4 mb-5">
         <div className="grid sm:grid-cols-2 gap-3">
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
