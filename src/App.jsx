@@ -2923,6 +2923,7 @@ function InvoiceRevenueImportForm({ onImport }) {
   const [errors, setErrors] = useState([]);
   const [importing, setImporting] = useState(false);
   const [done, setDone] = useState(null);
+  const [cancelled, setCancelled] = useState(0);
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -2935,14 +2936,18 @@ function InvoiceRevenueImportForm({ onImport }) {
       if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Số hóa đơn" và "Doanh thu") trong file.']); setPreview([]); return; }
       const rawObjRows = rowsToObjects(rawRows, headerIdx);
       const valid = [];
+      let cancelledCount = 0;
       rawObjRows.forEach((row) => {
         const invoiceNo = String(pickCol(row, "Số hóa đơn", "So hoa don") ?? "").trim();
         const amount = Number(pickCol(row, "Doanh thu", "Doanh thu bán hàng")) || 0;
         const invoiceDate = excelDateToISO(pickCol(row, "Ngày", "Ngay") ?? pickColContains(row, "ngay")) || todayISO();
+        const note = String(pickCol(row, "Ghi chú", "Ghi chu") ?? "").trim();
         if (!invoiceNo) return;
+        if (stripDiacritics(note).includes("huy")) { cancelledCount += 1; return; } // bỏ hoá đơn đã huỷ
         valid.push({ invoiceNo, invoiceDate, amount });
       });
       setPreview(valid);
+      setCancelled(cancelledCount);
       setErrors([]);
     } catch (err) {
       setErrors([err.message || "Không đọc được file, kiểm tra lại định dạng .xlsx/.xls."]);
@@ -2969,14 +2974,14 @@ function InvoiceRevenueImportForm({ onImport }) {
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Import Doanh thu bán hàng theo hoá đơn</p>
-      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>. Import lại cùng số hoá đơn sẽ tự ghi đè, không bị trùng.</p>
+      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>. Import lại cùng số hoá đơn sẽ tự ghi đè, không bị trùng. Hoá đơn có ghi chú "đã huỷ" sẽ tự động bị loại bỏ, không tính vào doanh thu.</p>
       <div className="flex items-center gap-2 mb-3">
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
           <Upload size={15} /> {fileName || "Chọn file Excel..."}
           <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
         </label>
         {fileName && (
-          <button type="button" onClick={() => { setFileName(""); setPreview([]); setErrors([]); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
+          <button type="button" onClick={() => { setFileName(""); setPreview([]); setErrors([]); setCancelled(0); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
             <X size={16} />
           </button>
         )}
@@ -2984,6 +2989,11 @@ function InvoiceRevenueImportForm({ onImport }) {
       {errors.length > 0 && (
         <div className="mb-3 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-1">
           {errors.map((e, i) => <p key={i} className="flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> {e}</p>)}
+        </div>
+      )}
+      {cancelled > 0 && (
+        <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-1">
+          <AlertTriangle size={12} className="shrink-0" /> Đã loại bỏ {cancelled} hoá đơn có ghi chú "đã huỷ" — không tính vào doanh thu.
         </div>
       )}
       {preview.length > 0 && (
