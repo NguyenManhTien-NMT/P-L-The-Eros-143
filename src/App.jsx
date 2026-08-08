@@ -23,6 +23,7 @@ import {
 const ROLE_META = {
   nhan_vien_kho: { label: "Nhân viên kho", color: "bg-teal-50 text-teal-700 border-teal-200" },
   quan_ly: { label: "Quản lý", color: "bg-slate-800 text-white border-slate-800" },
+  bao_cao: { label: "Quản lý (Báo cáo)", color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
 };
 const PAYMENT_TYPE_META = {
   tien_mat: { label: "Tiền mặt", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -2645,6 +2646,7 @@ function AddEmployeeForm({ onAdd }) {
         <SelectField label="Vai trò" value={role} onChange={(e) => setRole(e.target.value)}>
           <option value="nhan_vien_kho">Nhân viên kho</option>
           <option value="quan_ly">Quản lý</option>
+          <option value="bao_cao">Quản lý (Báo cáo)</option>
         </SelectField>
         <TextField label="Xác nhận: mật khẩu của chính bạn" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} className="sm:col-span-3" />
       </div>
@@ -3326,7 +3328,7 @@ export default function App() {
   const handleLogin = (employee) => {
     setCurrentUser(employee);
     localStorage.setItem(SESSION_KEY, employee.id);
-    setTab(employee.role === "quan_ly" ? "nhap" : "nhap");
+    setTab(employee.role === "bao_cao" ? "lich_su_nhap" : "nhap");
   };
   const handleLogout = () => {
     setCurrentUser(null);
@@ -3589,6 +3591,8 @@ export default function App() {
   }
 
   const isQuanLy = currentUser.role === "quan_ly";
+  const isBaoCao = currentUser.role === "bao_cao";
+  const canViewReports = isQuanLy || isBaoCao;
   const NAV_NHAN_VIEN = [
     { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
     { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
@@ -3610,7 +3614,16 @@ export default function App() {
     { key: "ton_kho", label: "Tồn kho", icon: Warehouse },
     { key: "tai_khoan", label: "Tài khoản", icon: ShieldCheck },
   ];
-  const navItems = isQuanLy ? NAV_QUAN_LY : NAV_NHAN_VIEN;
+  // Nhóm 3: Quản lý (Báo cáo) — chỉ xem báo cáo/lịch sử, không có Nhập hàng, Danh mục, Tồn kho, Tài khoản.
+  const NAV_BAO_CAO = [
+    { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
+    { key: "xuat", label: "Lịch sử xuất hàng", icon: ArrowUpCircle },
+    { key: "chi_phi", label: "Chi phí", icon: Receipt },
+    { key: "mon_an", label: "Cost món ăn", icon: Package },
+    { key: "bao_cao_nhap", label: "Báo cáo nhập", icon: BarChart3 },
+    { key: "bao_cao_xuat", label: "Báo cáo xuất", icon: BarChart3 },
+  ];
+  const navItems = isQuanLy ? NAV_QUAN_LY : isBaoCao ? NAV_BAO_CAO : NAV_NHAN_VIEN;
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -3655,17 +3668,17 @@ export default function App() {
 
       <div className="max-w-6xl mx-auto px-4 py-6">
         <TabErrorBoundary resetKey={tab}>
-          {tab === "nhap" && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
+          {tab === "nhap" && !isBaoCao && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
           {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
           {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
           {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
           {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
-          {tab === "danh_muc" && (
+          {tab === "danh_muc" && !isBaoCao && (
             <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
           )}
-          {tab === "bao_cao_nhap" && isQuanLy && <BaoCaoNhapModule data={data} />}
-          {tab === "bao_cao_xuat" && isQuanLy && <BaoCaoXuatModule data={data} />}
-          {tab === "ton_kho" && <TonKhoModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
+          {tab === "bao_cao_nhap" && canViewReports && <BaoCaoNhapModule data={data} />}
+          {tab === "bao_cao_xuat" && canViewReports && <BaoCaoXuatModule data={data} />}
+          {tab === "ton_kho" && !isBaoCao && <TonKhoModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
           {tab === "tai_khoan" && isQuanLy && <TaiKhoanModule currentUser={currentUser} employees={data.employees} onAddEmployee={addEmployee} />}
         </TabErrorBoundary>
       </div>
