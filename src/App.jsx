@@ -226,6 +226,14 @@ function mapDish(d) {
     note: d.note || "", createdBy: d.created_by, createdAt: d.created_at,
   };
 }
+function mapDishSale(r) {
+  return {
+    id: r.id, dishId: r.dish_id, quantity: Number(r.quantity) || 0,
+    unitPrice: Number(r.unit_price) || 0, totalAmount: Number(r.total_amount) || 0,
+    costAmount: Number(r.cost_amount) || 0, invoiceNo: r.invoice_no || "",
+    receiptCode: r.receipt_code, saleDate: r.sale_date, createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
 function mapDishIngredient(i) {
   return {
     id: i.id, dishId: i.dish_id, productId: i.product_id,
@@ -236,7 +244,7 @@ function mapDishIngredient(i) {
 }
 
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -248,8 +256,9 @@ async function fetchAll() {
     supabase.from("expense_records").select("*").order("expense_date", { ascending: false }).order("created_at", { ascending: false }),
     supabase.from("dishes").select("*").order("name"),
     supabase.from("dish_ingredients").select("*").order("sort_order"),
+    supabase.from("dish_sales").select("*").order("sale_date", { ascending: false }),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -262,6 +271,7 @@ async function fetchAll() {
     expenseRecords: (cost.data || []).map(mapExpenseRecord),
     dishes: (dish.data || []).map(mapDish),
     dishIngredients: (dishIng.data || []).map(mapDishIngredient),
+    dishSales: (dishSale.data || []).map(mapDishSale),
   };
 }
 
@@ -2217,6 +2227,96 @@ function ProfitTable({ title, rows, totals }) {
   );
 }
 
+// Gộp dish_sales theo ngày để ra 5 chỉ số: số hoá đơn, doanh số, giá vốn, số món bán, tỉ lệ cost.
+function dailySalesReport(dishSales, from, to) {
+  const filtered = dishSales.filter((s) => s.saleDate >= from && s.saleDate <= to);
+  const byDate = new Map();
+  filtered.forEach((s) => {
+    const cur = byDate.get(s.saleDate) || { date: s.saleDate, invoices: new Set(), revenue: 0, cost: 0, qty: 0 };
+    if (s.invoiceNo) cur.invoices.add(s.invoiceNo);
+    cur.revenue += s.totalAmount;
+    cur.cost += s.costAmount;
+    cur.qty += s.quantity;
+    byDate.set(s.saleDate, cur);
+  });
+  const rows = Array.from(byDate.values()).map((r) => ({
+    date: r.date, invoiceCount: r.invoices.size, revenue: r.revenue, cost: r.cost, qty: r.qty,
+    costRatio: r.revenue > 0 ? (r.cost / r.revenue) * 100 : 0,
+  })).sort((a, b) => b.date.localeCompare(a.date));
+  const totals = rows.reduce((acc, r) => ({
+    invoiceCount: acc.invoiceCount + r.invoiceCount, revenue: acc.revenue + r.revenue,
+    cost: acc.cost + r.cost, qty: acc.qty + r.qty,
+  }), { invoiceCount: 0, revenue: 0, cost: 0, qty: 0 });
+  totals.costRatio = totals.revenue > 0 ? (totals.cost / totals.revenue) * 100 : 0;
+  return { rows, totals };
+}
+
+function BaoCaoDoanhThuNgayModule({ data }) {
+  const [from, setFrom] = useState(daysAgoISO(7));
+  const [to, setTo] = useState(todayISO());
+  const report = dailySalesReport(data.dishSales, from, to);
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-1">Báo cáo doanh thu theo ngày</p>
+      <p className="text-xs text-slate-500 mb-3">Số liệu lấy từ các lần "Xuất kho tự động từ báo cáo doanh thu" — chỉ có dữ liệu từ thời điểm tính năng này được bật.</p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
+        <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+        <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-2 mb-4">
+        <div className="bg-slate-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-slate-500">Số hoá đơn</p>
+          <p className="text-sm font-semibold text-slate-700">{fmtNumber(report.totals.invoiceCount)}</p>
+        </div>
+        <div className="bg-slate-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-slate-500">Số món bán</p>
+          <p className="text-sm font-semibold text-slate-700">{fmtNumber(report.totals.qty)}</p>
+        </div>
+        <div className="bg-teal-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-teal-700">Tổng doanh số</p>
+          <p className="text-sm font-semibold text-teal-800">{fmtMoney(report.totals.revenue)}</p>
+        </div>
+        <div className="bg-amber-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-amber-700">Tổng giá cost</p>
+          <p className="text-sm font-semibold text-amber-800">{fmtMoney(report.totals.cost)}</p>
+        </div>
+        <div className={`rounded-xl px-3 py-2 ${report.totals.costRatio <= 35 ? "bg-emerald-50" : report.totals.costRatio <= 45 ? "bg-amber-50" : "bg-rose-50"}`}>
+          <p className={`text-xs ${report.totals.costRatio <= 35 ? "text-emerald-700" : report.totals.costRatio <= 45 ? "text-amber-700" : "text-rose-700"}`}>Tỉ lệ cost bình quân</p>
+          <p className={`text-sm font-semibold ${report.totals.costRatio <= 35 ? "text-emerald-800" : report.totals.costRatio <= 45 ? "text-amber-800" : "text-rose-800"}`}>{report.totals.costRatio.toFixed(1)}%</p>
+        </div>
+      </div>
+
+      {report.rows.length === 0 ? (
+        <EmptyState icon={BarChart3} text="Chưa có dữ liệu bán hàng trong khoảng thời gian này." />
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+              <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Số hoá đơn</th>
+              <th className="px-3 py-2 text-right">Số món bán</th><th className="px-3 py-2 text-right">Doanh số</th>
+              <th className="px-3 py-2 text-right">Giá cost</th><th className="px-3 py-2 text-right">Tỉ lệ cost</th>
+            </tr></thead>
+            <tbody>
+              {report.rows.map((r) => (
+                <tr key={r.date} className="border-b border-slate-50 last:border-0">
+                  <td className="px-3 py-2 font-medium text-slate-700">{fmtDate(r.date)}</td>
+                  <td className="px-3 py-2 text-right text-slate-500">{fmtNumber(r.invoiceCount)}</td>
+                  <td className="px-3 py-2 text-right text-slate-500">{fmtNumber(r.qty)}</td>
+                  <td className="px-3 py-2 text-right">{fmtMoney(r.revenue)}</td>
+                  <td className="px-3 py-2 text-right text-slate-500">{fmtMoney(r.cost)}</td>
+                  <td className="px-3 py-2 text-right text-slate-500">{r.costRatio.toFixed(1)}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function BaoCaoXuatModule({ data }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
@@ -2227,6 +2327,7 @@ function BaoCaoXuatModule({ data }) {
   return (
     <div>
       <SectionTitle icon={BarChart3} title="Báo cáo xuất hàng" subtitle="Doanh thu, giá vốn, lợi nhuận theo loại hình & nguồn doanh thu" />
+      <BaoCaoDoanhThuNgayModule data={data} />
       <Card className="p-4 mb-5">
         <div className="grid sm:grid-cols-2 gap-3">
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -3252,8 +3353,11 @@ export default function App() {
   // Xuất kho NVL tự động từ báo cáo doanh thu chi tiết theo hoá đơn & món ăn:
   // mỗi dòng "món X bán N suất" được nổ ra thành các dòng NVL theo đúng công thức
   // (Cost món ăn) — số lượng NVL tiêu hao = định lượng trong công thức × N.
+  // Đồng thời lưu lại chi tiết từng lượt bán món vào dish_sales — phục vụ
+  // "Báo cáo doanh thu theo ngày" (số hoá đơn, doanh số, giá vốn, số món bán, tỉ lệ cost).
   const bulkImportXuatFromBills = async ({ exportDate, rows }) => {
     const exportRows = [];
+    const saleRows = [];
     const notFoundDishes = new Set();
     rows.forEach((r) => {
       const dish = data.dishes.find((d) => normalizeForMatch(d.name) === normalizeForMatch(r.dishName));
@@ -3273,14 +3377,25 @@ export default function App() {
           total_amount: quantity * unitPrice, export_date: exportDate || todayISO(), created_by: currentUser.id,
         });
       });
+      const dishCostPerUnit = dishTotalCost(dish.id, data);
+      const dishSellingPrice = dish.sellingPrice || 0;
+      saleRows.push({
+        dish_id: dish.id, quantity: r.quantitySold, unit_price: dishSellingPrice,
+        total_amount: dishSellingPrice * r.quantitySold, cost_amount: dishCostPerUnit * r.quantitySold,
+        invoice_no: r.invoiceNo || null, receipt_code: null,
+        sale_date: exportDate || todayISO(), created_by: currentUser.id,
+      });
     });
     if (exportRows.length === 0) {
       throw new Error("Không có dòng nào khớp được với danh sách món ăn trong Cost món ăn.");
     }
     const receiptCode = genReceiptCode("XK", data.exportRecords.length);
     exportRows.forEach((r) => { r.receipt_code = receiptCode; });
+    saleRows.forEach((r) => { r.receipt_code = receiptCode; });
     const { error } = await supabase.from("export_records").insert(exportRows);
     if (error) throw error;
+    const { error: saleError } = await supabase.from("dish_sales").insert(saleRows);
+    if (saleError) console.error(saleError); // không chặn luồng chính nếu lỗi phần thống kê doanh thu
     await refreshAll();
     const matchedBills = rows.length - notFoundDishes.size;
     const totalAmount = exportRows.reduce((s, r) => s + r.total_amount, 0);
