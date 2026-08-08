@@ -1322,12 +1322,15 @@ function DeleteByReceiptCard({ records, onDeleteMany, label = "phiếu" }) {
     const map = new Map();
     records.forEach((r) => {
       if (!r.receiptCode) return;
-      const cur = map.get(r.receiptCode) || { receiptCode: r.receiptCode, lineCount: 0, totalAmount: 0, date: r.importDate || r.exportDate };
+      const d = r.importDate || r.exportDate;
+      const cur = map.get(r.receiptCode) || { receiptCode: r.receiptCode, lineCount: 0, totalAmount: 0, minDate: d, maxDate: d };
       cur.lineCount += 1;
       cur.totalAmount += r.totalAmount;
+      if (d && (!cur.minDate || d < cur.minDate)) cur.minDate = d;
+      if (d && (!cur.maxDate || d > cur.maxDate)) cur.maxDate = d;
       map.set(r.receiptCode, cur);
     });
-    return Array.from(map.values()).sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+    return Array.from(map.values()).sort((a, b) => (b.maxDate || "").localeCompare(a.maxDate || ""));
   }, [records]);
 
   const [selected, setSelected] = useState("");
@@ -1358,7 +1361,7 @@ function DeleteByReceiptCard({ records, onDeleteMany, label = "phiếu" }) {
             <option value="">— Chọn mã phiếu —</option>
             {receipts.map((r) => (
               <option key={r.receiptCode} value={r.receiptCode}>
-                {r.receiptCode} · {fmtDate(r.date)} · {r.lineCount} dòng · {fmtMoney(r.totalAmount)}
+                {r.receiptCode} · {r.minDate === r.maxDate ? fmtDate(r.minDate) : `${fmtDate(r.minDate)}–${fmtDate(r.maxDate)}`} · {r.lineCount} dòng · {fmtMoney(r.totalAmount)}
               </option>
             ))}
           </SelectField>
@@ -1683,10 +1686,10 @@ function NhapExcelImportForm({ data, onImport }) {
 }
 
 // Import Xuất kho NVL tự động từ báo cáo doanh thu chi tiết theo hoá đơn & món ăn —
-// mỗi dòng: Tên món, Số lượng bán (tuỳ chọn: Số hoá đơn). Hệ thống tự nổ theo công thức
-// Cost món ăn để trừ đúng NVL tiêu hao.
+// mỗi dòng: Ngày, Tên món, Số lượng bán (tuỳ chọn: Số hoá đơn). Hệ thống tự nổ theo công thức
+// Cost món ăn để trừ đúng NVL tiêu hao. Ngày lấy trực tiếp từ cột "Ngày" của từng dòng trong
+// file (không dùng 1 ngày chung cho cả file) — vì 1 file có thể gộp doanh thu nhiều ngày.
 function XuatExcelImportForm({ data, onImport }) {
-  const [exportDate, setExportDate] = useState(todayISO());
   const [fileName, setFileName] = useState("");
   const [preview, setPreview] = useState([]);
   const [unmatched, setUnmatched] = useState([]);
@@ -1710,10 +1713,11 @@ function XuatExcelImportForm({ data, onImport }) {
         const dishName = String(pickCol(row, "Tên món", "Ten mon", "Món ăn", "Mon an") ?? "").trim();
         const quantitySold = Number(pickCol(row, "SL bán", "SL ban", "Số lượng bán", "Số lượng", "So luong")) || 0;
         const invoiceNo = String(pickCol(row, "Số hóa đơn", "Số hoá đơn", "So hoa don", "Mã hoá đơn") ?? "").trim();
+        const saleDate = excelDateToISO(pickCol(row, "Ngày", "Ngay")) || todayISO();
         if (!dishName || quantitySold <= 0) return;
         const dish = data.dishes.find((d) => normalizeForMatch(d.name) === normalizeForMatch(dishName));
         if (!dish) { unmatchedNames.add(dishName); return; }
-        valid.push({ dishName, dishId: dish.id, quantitySold, invoiceNo });
+        valid.push({ dishName, dishId: dish.id, quantitySold, invoiceNo, saleDate });
       });
       setPreview(valid);
       setUnmatched(Array.from(unmatchedNames));
@@ -1728,7 +1732,7 @@ function XuatExcelImportForm({ data, onImport }) {
     if (preview.length === 0) return;
     setImporting(true);
     try {
-      await onImport({ exportDate, rows: preview });
+      await onImport({ rows: preview });
       setDone(preview.length);
       setPreview([]); setUnmatched([]); setFileName("");
     } catch (e) {
@@ -1741,10 +1745,7 @@ function XuatExcelImportForm({ data, onImport }) {
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Xuất kho NVL tự động từ báo cáo doanh thu</p>
-      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Tên món</b>, <b>SL bán</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn". App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), và tự bỏ qua các dòng tổng phụ theo hoá đơn.</p>
-      <div className="grid sm:grid-cols-2 gap-3 mb-3">
-        <TextField label="Ngày xuất" type="date" value={exportDate} onChange={(e) => setExportDate(e.target.value)} />
-      </div>
+      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Ngày</b>, <b>Tên món</b>, <b>SL bán</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn". App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), và tự bỏ qua các dòng tổng phụ theo hoá đơn. Ngày xuất của từng dòng lấy trực tiếp từ cột "Ngày" trong file (không cần chọn ngày thủ công) — file gộp nhiều ngày vẫn tách đúng theo từng ngày.</p>
 
       <div className="flex items-center gap-2 mb-3">
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-teal-700 border border-teal-300 bg-teal-50 hover:bg-teal-100 rounded-xl px-4 py-2">
@@ -1773,15 +1774,16 @@ function XuatExcelImportForm({ data, onImport }) {
       {preview.length > 0 && (
         <>
           <div className="overflow-x-auto rounded-xl border border-slate-200 mb-3 max-h-72 overflow-y-auto">
-            <table className="w-full text-sm min-w-[420px]">
+            <table className="w-full text-sm min-w-[480px]">
               <thead className="sticky top-0 bg-slate-50">
                 <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
-                  <th className="px-2 py-2">Món</th><th className="px-2 py-2">Hoá đơn</th><th className="px-2 py-2 text-right">SL bán</th>
+                  <th className="px-2 py-2">Ngày</th><th className="px-2 py-2">Món</th><th className="px-2 py-2">Hoá đơn</th><th className="px-2 py-2 text-right">SL bán</th>
                 </tr>
               </thead>
               <tbody>
                 {preview.map((r, i) => (
                   <tr key={i} className="border-b border-slate-100 last:border-0">
+                    <td className="px-2 py-1.5 text-slate-400">{fmtDate(r.saleDate)}</td>
                     <td className="px-2 py-1.5">{r.dishName}</td>
                     <td className="px-2 py-1.5 text-slate-400">{r.invoiceNo || "—"}</td>
                     <td className="px-2 py-1.5 text-right">{r.quantitySold}</td>
@@ -2158,7 +2160,6 @@ function XuatHangModule({ data, currentUser, onSubmit, onBulkImportFromBills, on
       <ReceiptSummaryCard summary={lastReceipt} icon={ArrowUpCircle} actionLabel="Xuất hàng" />
       <DeleteByReceiptCard records={data.exportRecords} onDeleteMany={onDeleteMany} label="phiếu xuất" />
       <XuatExcelImportForm data={data} onImport={handleBulkImport} />
-      <XuatHangForm data={data} currentUser={currentUser} onSubmit={handleSubmit} />
       <XuatHangList data={data} onDelete={onDelete} />
     </div>
   );
@@ -3353,15 +3354,18 @@ export default function App() {
   // Xuất kho NVL tự động từ báo cáo doanh thu chi tiết theo hoá đơn & món ăn:
   // mỗi dòng "món X bán N suất" được nổ ra thành các dòng NVL theo đúng công thức
   // (Cost món ăn) — số lượng NVL tiêu hao = định lượng trong công thức × N.
+  // Ngày của từng dòng lấy từ cột "Ngày" trong file (r.saleDate), không dùng 1 ngày chung
+  // cho cả file — vì 1 file có thể gộp doanh thu nhiều ngày.
   // Đồng thời lưu lại chi tiết từng lượt bán món vào dish_sales — phục vụ
   // "Báo cáo doanh thu theo ngày" (số hoá đơn, doanh số, giá vốn, số món bán, tỉ lệ cost).
-  const bulkImportXuatFromBills = async ({ exportDate, rows }) => {
+  const bulkImportXuatFromBills = async ({ rows }) => {
     const exportRows = [];
     const saleRows = [];
     const notFoundDishes = new Set();
     rows.forEach((r) => {
       const dish = data.dishes.find((d) => normalizeForMatch(d.name) === normalizeForMatch(r.dishName));
       if (!dish) { notFoundDishes.add(r.dishName); return; }
+      const rowDate = r.saleDate || todayISO();
       const ingredients = data.dishIngredients.filter((i) => i.dishId === dish.id);
       ingredients.forEach((ing) => {
         const product = data.products.find((p) => p.id === ing.productId);
@@ -3374,7 +3378,7 @@ export default function App() {
           order_number: r.invoiceNo || null, receipt_code: null,
           revenue_code_id: null, export_code_id: null,
           product_id: ing.productId, line_type: product.classification, quantity, unit_price: unitPrice,
-          total_amount: quantity * unitPrice, export_date: exportDate || todayISO(), created_by: currentUser.id,
+          total_amount: quantity * unitPrice, export_date: rowDate, created_by: currentUser.id,
         });
       });
       const dishCostPerUnit = dishTotalCost(dish.id, data);
@@ -3383,7 +3387,7 @@ export default function App() {
         dish_id: dish.id, quantity: r.quantitySold, unit_price: dishSellingPrice,
         total_amount: dishSellingPrice * r.quantitySold, cost_amount: dishCostPerUnit * r.quantitySold,
         invoice_no: r.invoiceNo || null, receipt_code: null,
-        sale_date: exportDate || todayISO(), created_by: currentUser.id,
+        sale_date: rowDate, created_by: currentUser.id,
       });
     });
     if (exportRows.length === 0) {
