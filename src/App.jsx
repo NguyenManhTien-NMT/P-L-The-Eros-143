@@ -2709,6 +2709,155 @@ const EXPENSE_CATEGORIES = [
 ];
 const EXPENSE_CATEGORY_META = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 
+// ---------------------------------------------------------------------------
+// QUỸ (Sổ quỹ thu-chi) — Phiếu thu lấy trực tiếp từ dữ liệu bán hàng (dish_sales,
+// nguồn "Xuất kho tự động từ báo cáo doanh thu"), không nhập tay. Phiếu chi nhập tay
+// theo ngày, chọn đúng loại chi phí — khi lưu sẽ ghi thẳng vào expense_records nên
+// tự động xuất hiện trong "Chi phí" / báo cáo chi phí, không cần đồng bộ thủ công.
+// ---------------------------------------------------------------------------
+function dailyReceiptsFromSales(dishSales, from, to) {
+  const filtered = dishSales.filter((s) => s.saleDate >= from && s.saleDate <= to);
+  const map = new Map();
+  filtered.forEach((s) => {
+    const cur = map.get(s.saleDate) || { date: s.saleDate, amount: 0, qty: 0 };
+    cur.amount += s.totalAmount;
+    cur.qty += s.quantity;
+    map.set(s.saleDate, cur);
+  });
+  return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function PhieuChiForm({ onSubmit }) {
+  const [expenseDate, setExpenseDate] = useState(todayISO());
+  const [category, setCategory] = useState("van_hanh");
+  const [itemName, setItemName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const chiCategories = EXPENSE_CATEGORIES.filter((c) => c.key !== "nvl"); // NVL đã ghi nhận riêng qua Nhập hàng
+
+  const submit = async () => {
+    if (!itemName.trim()) { setError("Vui lòng nhập tên khoản chi."); return; }
+    if (!amount || Number(amount) <= 0) { setError("Vui lòng nhập số tiền hợp lệ."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSubmit({ category, expenseDate, lines: [{ itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null }] });
+      setItemName(""); setAmount(""); setNote("");
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-3">Tạo phiếu chi</p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
+        <TextField label="Ngày chi" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+        <SelectField label="Loại chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
+          {chiCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+        </SelectField>
+        <TextField label="Tên khoản chi" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="VD: Tiền điện tháng 8" />
+        <TextField label="Số tiền" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+        <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
+      </div>
+      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />} Lưu phiếu chi</PrimaryButton>
+      <p className="text-xs text-slate-400 mt-2">Phiếu chi sau khi lưu sẽ tự động xuất hiện trong tab "Chi phí" đúng nhóm "{EXPENSE_CATEGORY_META[category]?.label}".</p>
+    </Card>
+  );
+}
+
+function QuyModule({ data, onSubmitExpense }) {
+  const [from, setFrom] = useState(daysAgoISO(30));
+  const [to, setTo] = useState(todayISO());
+
+  const receipts = dailyReceiptsFromSales(data.dishSales, from, to);
+  const totalThu = receipts.reduce((s, r) => s + r.amount, 0);
+
+  // Phiếu chi = toàn bộ expense_records (trừ nhóm nvl — NVL tính riêng vì có công nợ, chưa chắc đã chi tiền)
+  // + phần NVL đã trả bằng tiền mặt thực tế (payment_type = tien_mat) để sổ quỹ phản ánh đúng dòng tiền thật.
+  const chiExpense = data.expenseRecords.filter((r) => r.category !== "nvl" && r.expenseDate >= from && r.expenseDate <= to);
+  const chiNvlTienMat = data.importRecords.filter((r) => r.paymentType === "tien_mat" && r.importDate >= from && r.importDate <= to);
+  const totalChi = chiExpense.reduce((s, r) => s + r.amount, 0) + chiNvlTienMat.reduce((s, r) => s + r.totalAmount, 0);
+
+  const soDu = totalThu - totalChi;
+
+  return (
+    <div>
+      <SectionTitle icon={Wallet} title="Quỹ" subtitle="Sổ quỹ thu-chi: Phiếu thu tự động theo doanh số bán hàng, Phiếu chi ghi tay theo ngày" />
+
+      <Card className="p-4 sm:p-5 mb-5">
+        <div className="grid sm:grid-cols-2 gap-3">
+          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </div>
+      </Card>
+
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
+        <MetricCard label="Tổng thu" value={fmtMoney(totalThu)} icon={TrendingUp} accent="emerald" />
+        <MetricCard label="Tổng chi" value={fmtMoney(totalChi)} icon={TrendingDown} accent="rose" />
+        <MetricCard label="Số dư quỹ" value={fmtMoney(soDu)} icon={Wallet} accent={soDu >= 0 ? "teal" : "rose"} />
+      </div>
+
+      <PhieuChiForm onSubmit={onSubmitExpense} />
+
+      <div className="grid lg:grid-cols-2 gap-5">
+        <Card className="p-0 overflow-hidden">
+          <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu thu (tự động từ báo cáo doanh thu)</p></div>
+          {receipts.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có dữ liệu bán hàng trong khoảng này." /> : (
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                  <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Số món bán</th><th className="px-3 py-2 text-right">Số tiền thu</th>
+                </tr></thead>
+                <tbody>
+                  {receipts.map((r) => (
+                    <tr key={r.date} className="border-b border-slate-50 last:border-0">
+                      <td className="px-3 py-2 font-medium text-slate-700">{fmtDate(r.date)}</td>
+                      <td className="px-3 py-2 text-right text-slate-500">{fmtNumber(r.qty)}</td>
+                      <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.amount)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-0 overflow-hidden">
+          <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu chi gần đây</p></div>
+          {chiExpense.length === 0 && chiNvlTienMat.length === 0 ? <EmptyState icon={TrendingDown} text="Chưa có khoản chi nào trong khoảng này." /> : (
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                  <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2 text-right">Số tiền</th>
+                </tr></thead>
+                <tbody>
+                  {[...chiExpense.map((r) => ({ date: r.expenseDate, name: r.itemName, group: EXPENSE_CATEGORY_META[r.category]?.label || r.category, amount: r.amount })),
+                    ...chiNvlTienMat.map((r) => ({ date: r.importDate, name: "NVL (tiền mặt)", group: "Nguyên vật liệu", amount: r.totalAmount }))]
+                    .sort((a, b) => b.date.localeCompare(a.date))
+                    .map((r, i) => (
+                      <tr key={i} className="border-b border-slate-50 last:border-0">
+                        <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
+                        <td className="px-3 py-2">{r.name}</td>
+                        <td className="px-3 py-2 text-slate-500">{r.group}</td>
+                        <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
 // Chi phí "Bảo trì & vật tư" (mua sắm CCDC, vật tư, sửa chữa, vật dụng tiêu hao) —
 // bảng nhiều dòng tự do (không gắn danh mục sản phẩm), giống kiểu Nhập hàng.
 function BaoTriVatTuForm({ currentUser, onSubmit }) {
@@ -3673,6 +3822,7 @@ export default function App() {
     { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
     { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
+    { key: "quy", label: "Quỹ", icon: Wallet },
     { key: "mon_an", label: "Cost món ăn", icon: Package },
     { key: "danh_muc", label: "Danh mục", icon: Boxes },
     { key: "bao_cao_nhap", label: "Báo cáo nhập", icon: BarChart3 },
@@ -3685,6 +3835,7 @@ export default function App() {
     { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
     { key: "xuat", label: "Lịch sử xuất hàng", icon: ArrowUpCircle },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
+    { key: "quy", label: "Quỹ", icon: Wallet },
     { key: "mon_an", label: "Cost món ăn", icon: Package },
     { key: "bao_cao_nhap", label: "Báo cáo nhập", icon: BarChart3 },
     { key: "bao_cao_xuat", label: "Báo cáo xuất", icon: BarChart3 },
@@ -3769,6 +3920,7 @@ export default function App() {
             {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
+            {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
               <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
