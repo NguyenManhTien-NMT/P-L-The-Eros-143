@@ -125,13 +125,24 @@ function pickCol(row, ...names) {
   }
   return undefined;
 }
+// Tìm cột theo kiểu "chứa" (không cần khớp tuyệt đối tên cột) — dùng cho các cột có
+// tên hay bị gộp/biến thể giữa các phần mềm POS khác nhau, VD "Ngày" có thể xuất hiện
+// dưới dạng "Ngày/Giờ vào-ra", "Ngày giờ vào ra"... miễn có chứa chữ "ngay" là nhận.
+function pickColContains(row, substrNorm) {
+  const keys = Object.keys(row);
+  const found = keys.find((k) => stripDiacritics(k).replace(/\s+/g, "").includes(substrNorm));
+  return found !== undefined ? row[found] : undefined;
+}
 function excelDateToISO(v) {
   if (!v) return "";
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   const s = String(v).trim();
-  const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  // Chấp nhận cả trường hợp cột gộp chung ngày+giờ (VD "08/08/2026 12:35:20") —
+  // chỉ cần phần đầu chuỗi là ngày hợp lệ, không cần khớp tuyệt đối cả chuỗi.
+  const m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/);
   if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return iso[0];
   return "";
 }
 
@@ -1713,7 +1724,7 @@ function XuatExcelImportForm({ data, onImport }) {
         const dishName = String(pickCol(row, "Tên món", "Ten mon", "Món ăn", "Mon an") ?? "").trim();
         const quantitySold = Number(pickCol(row, "SL bán", "SL ban", "Số lượng bán", "Số lượng", "So luong")) || 0;
         const invoiceNo = String(pickCol(row, "Số hóa đơn", "Số hoá đơn", "So hoa don", "Mã hoá đơn") ?? "").trim();
-        const saleDate = excelDateToISO(pickCol(row, "Ngày", "Ngay")) || todayISO();
+        const saleDate = excelDateToISO(pickCol(row, "Ngày", "Ngay") ?? pickColContains(row, "ngay")) || todayISO();
         if (!dishName || quantitySold <= 0) return;
         const dish = data.dishes.find((d) => normalizeForMatch(d.name) === normalizeForMatch(dishName));
         if (!dish) { unmatchedNames.add(dishName); return; }
