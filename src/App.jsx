@@ -253,6 +253,12 @@ function mapCashierReceipt(r) {
     bankAmount: Number(r.bank_amount) || 0, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
   };
 }
+function mapInvoiceRevenue(r) {
+  return {
+    id: r.id, invoiceNo: r.invoice_no, invoiceDate: r.invoice_date, amount: Number(r.amount) || 0,
+    createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
 function mapDishIngredient(i) {
   return {
     id: i.id, dishId: i.dish_id, productId: i.product_id,
@@ -263,7 +269,7 @@ function mapDishIngredient(i) {
 }
 
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -277,8 +283,9 @@ async function fetchAll() {
     supabase.from("dish_ingredients").select("*").order("sort_order"),
     supabase.from("dish_sales").select("*").order("sale_date", { ascending: false }),
     supabase.from("cashier_receipts").select("*").order("receipt_date", { ascending: false }),
+    supabase.from("invoice_revenue").select("*").order("invoice_date", { ascending: false }),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -293,6 +300,7 @@ async function fetchAll() {
     dishIngredients: (dishIng.data || []).map(mapDishIngredient),
     dishSales: (dishSale.data || []).map(mapDishSale),
     cashierReceipts: (cashierRec.data || []).map(mapCashierReceipt),
+    invoiceRevenue: (invRev.data || []).map(mapInvoiceRevenue),
   };
 }
 
@@ -2904,12 +2912,98 @@ function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierRece
   );
 }
 
-function QuyModule({ data, onSubmitExpense, onBulkImportFromBills }) {
+// Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, cột: Ngày, Số hoá đơn, Doanh thu.
+function InvoiceRevenueImportForm({ onImport }) {
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState([]);
+  const [errors, setErrors] = useState([]);
+  const [importing, setImporting] = useState(false);
+  const [done, setDone] = useState(null);
+
+  const handleFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setDone(null);
+    try {
+      const rawRows = await readExcelRaw(file);
+      const headerIdx = detectHeaderRow(rawRows, ["Số hóa đơn", "Doanh thu"]);
+      if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Số hóa đơn" và "Doanh thu") trong file.']); setPreview([]); return; }
+      const rawObjRows = rowsToObjects(rawRows, headerIdx);
+      const valid = [];
+      rawObjRows.forEach((row) => {
+        const invoiceNo = String(pickCol(row, "Số hóa đơn", "So hoa don") ?? "").trim();
+        const amount = Number(pickCol(row, "Doanh thu", "Doanh thu bán hàng")) || 0;
+        const invoiceDate = excelDateToISO(pickCol(row, "Ngày", "Ngay") ?? pickColContains(row, "ngay")) || todayISO();
+        if (!invoiceNo) return;
+        valid.push({ invoiceNo, invoiceDate, amount });
+      });
+      setPreview(valid);
+      setErrors([]);
+    } catch (err) {
+      setErrors([err.message || "Không đọc được file, kiểm tra lại định dạng .xlsx/.xls."]);
+      setPreview([]);
+    }
+  };
+
+  const submit = async () => {
+    if (preview.length === 0) return;
+    setImporting(true);
+    try {
+      await onImport(preview);
+      setDone(preview.length);
+      setPreview([]); setFileName("");
+    } catch (e) {
+      setErrors([e.message || "Không import được, vui lòng thử lại."]);
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const totalPreview = preview.reduce((s, r) => s + r.amount, 0);
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-1">Import Doanh thu bán hàng theo hoá đơn</p>
+      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>. Import lại cùng số hoá đơn sẽ tự ghi đè, không bị trùng.</p>
+      <div className="flex items-center gap-2 mb-3">
+        <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
+          <Upload size={15} /> {fileName || "Chọn file Excel..."}
+          <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
+        </label>
+        {fileName && (
+          <button type="button" onClick={() => { setFileName(""); setPreview([]); setErrors([]); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
+            <X size={16} />
+          </button>
+        )}
+      </div>
+      {errors.length > 0 && (
+        <div className="mb-3 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-1">
+          {errors.map((e, i) => <p key={i} className="flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> {e}</p>)}
+        </div>
+      )}
+      {preview.length > 0 && (
+        <>
+          <p className="text-xs text-slate-500 mb-3">{preview.length} hoá đơn · Tổng doanh thu <span className="font-semibold text-sky-700">{fmtMoney(totalPreview)}</span></p>
+          <PrimaryButton onClick={submit} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Import {preview.length} hoá đơn</PrimaryButton>
+        </>
+      )}
+      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã import thành công {done} hoá đơn.</p>}
+    </Card>
+  );
+}
+
+function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportInvoiceRevenue }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
 
   const receipts = dailyReceiptsFromSales(data.dishSales, from, to);
   const totalThu = receipts.reduce((s, r) => s + r.amount, 0);
+
+  // Doanh thu bán hàng theo hoá đơn — import trực tiếp từ file "Bảng kê hoá đơn" POS,
+  // độc lập với totalThu (vốn tính từ dish_sales/"Xuất kho tự động từ báo cáo doanh thu").
+  const invoiceRevenueInRange = data.invoiceRevenue.filter((r) => r.invoiceDate >= from && r.invoiceDate <= to);
+  const totalInvoiceRevenue = invoiceRevenueInRange.reduce((s, r) => s + r.amount, 0);
 
   // Phiếu chi = toàn bộ expense_records (trừ nhóm nvl — NVL tính riêng vì có công nợ, chưa chắc đã chi tiền)
   // + phần NVL đã trả bằng tiền mặt thực tế (payment_type = tien_mat) để sổ quỹ phản ánh đúng dòng tiền thật.
@@ -2925,9 +3019,10 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills }) {
   const totalThuNganCash = cashierInRange.reduce((s, r) => s + r.cashAmount, 0);
   const totalThuNganBank = cashierInRange.reduce((s, r) => s + r.bankAmount, 0);
 
-  // So sánh Thu ngân vs Doanh thu từ báo cáo bán hàng để cảnh báo lệch quỹ.
-  const diff = totalThuNgan - totalThu;
-  const diffPct = totalThu > 0 ? (diff / totalThu) * 100 : 0;
+  // So sánh Thu ngân (tiền mặt + ngân hàng) vs Doanh thu bán hàng theo hoá đơn (Bảng kê hoá đơn) —
+  // dùng đúng số tiền thực thu để đối chiếu, không dùng số tính ngược từ Xuất kho.
+  const diff = totalThuNgan - totalInvoiceRevenue;
+  const diffPct = totalInvoiceRevenue > 0 ? (diff / totalInvoiceRevenue) * 100 : 0;
 
   return (
     <div>
@@ -2940,15 +3035,18 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills }) {
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
-        <MetricCard label="Tổng thu (báo cáo bán hàng)" value={fmtMoney(totalThu)} icon={TrendingUp} accent="emerald" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <MetricCard label="Doanh thu bán hàng theo hoá đơn" value={fmtMoney(totalInvoiceRevenue)} icon={FileText} accent="indigo" />
+        <MetricCard label="Doanh thu từ phiếu xuất kho" value={fmtMoney(totalThu)} icon={TrendingUp} accent="emerald" />
         <MetricCard label="Tổng chi" value={fmtMoney(totalChi)} icon={TrendingDown} accent="rose" />
         <MetricCard label="Số dư quỹ" value={fmtMoney(soDu)} icon={Wallet} accent={soDu >= 0 ? "teal" : "rose"} />
       </div>
 
-      {/* So sánh Thu ngân đã thu vs Doanh thu từ báo cáo bán hàng — cảnh báo lệch quỹ */}
+      <InvoiceRevenueImportForm onImport={onBulkImportInvoiceRevenue} />
+
+      {/* So sánh Thu ngân (tiền mặt+ngân hàng) đã thu vs Doanh thu bán hàng theo hoá đơn — cảnh báo lệch quỹ */}
       <Card className="p-4 sm:p-5 mb-5">
-        <p className="font-semibold text-slate-800 text-sm mb-3">Đối chiếu Thu ngân với Doanh thu bán hàng</p>
+        <p className="font-semibold text-slate-800 text-sm mb-3">Đối chiếu Thu ngân với Doanh thu bán hàng theo hoá đơn</p>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
           <div className="bg-slate-50 rounded-xl px-3 py-2">
             <p className="text-xs text-slate-500">Thu ngân - Tiền mặt</p>
@@ -2963,19 +3061,19 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills }) {
             <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalThuNgan)}</p>
           </div>
           <div className="bg-slate-50 rounded-xl px-3 py-2">
-            <p className="text-xs text-slate-500">Doanh thu báo cáo bán hàng</p>
-            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalThu)}</p>
+            <p className="text-xs text-slate-500">Doanh thu bán hàng theo hoá đơn</p>
+            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalInvoiceRevenue)}</p>
           </div>
         </div>
-        {totalThu === 0 && totalThuNgan === 0 ? (
-          <p className="text-xs text-slate-400">Chưa có đủ dữ liệu để đối chiếu trong khoảng thời gian này.</p>
+        {totalInvoiceRevenue === 0 && totalThuNgan === 0 ? (
+          <p className="text-xs text-slate-400">Chưa có đủ dữ liệu để đối chiếu trong khoảng thời gian này — cần import "Bảng kê hoá đơn" và/hoặc có phiếu Thu ngân.</p>
         ) : diff === 0 ? (
           <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
-            <CheckCircle2 size={15} /> Khớp tuyệt đối giữa Thu ngân và Doanh thu báo cáo bán hàng.
+            <CheckCircle2 size={15} /> Khớp tuyệt đối giữa Thu ngân và Doanh thu bán hàng theo hoá đơn.
           </div>
         ) : diff > 0 ? (
           <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-            <AlertTriangle size={15} /> <b>Thừa quỹ</b> {fmtMoney(diff)} ({diffPct.toFixed(1)}%) — Thu ngân báo thu nhiều hơn doanh thu ghi nhận từ báo cáo bán hàng.
+            <AlertTriangle size={15} /> <b>Thừa quỹ</b> {fmtMoney(diff)} ({diffPct.toFixed(1)}%) — Thu ngân báo thu nhiều hơn doanh thu theo hoá đơn.
           </div>
         ) : (
           <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
@@ -3924,6 +4022,19 @@ export default function App() {
     showToast("Đã ghi nhận phiếu thu ngân");
   };
 
+  // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
+  // tính từ Xuất kho tự động (dish_sales). Upsert theo invoice_no để import lại không bị trùng.
+  const bulkImportInvoiceRevenue = async (rows) => {
+    if (rows.length === 0) return;
+    const dbRows = rows.map((r) => ({
+      invoice_no: r.invoiceNo, invoice_date: r.invoiceDate, amount: r.amount, created_by: currentUser.id,
+    }));
+    const { error } = await supabase.from("invoice_revenue").upsert(dbRows, { onConflict: "invoice_no" });
+    if (error) throw error;
+    await refreshAll();
+    showToast(`Đã import ${rows.length} hoá đơn doanh thu`);
+  };
+
   // ---------------- Cost món ăn ----------------
   const addDish = async ({ name, sellingPrice, note }) => {
     const { error } = await supabase.from("dishes").insert({
@@ -4116,7 +4227,7 @@ export default function App() {
             {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
-            {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportFromBills={bulkImportXuatFromBills} />}
+            {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
             {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
