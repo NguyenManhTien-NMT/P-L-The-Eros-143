@@ -3458,6 +3458,14 @@ export default function App() {
   };
   const deleteExportRecordsByIds = async (ids) => {
     if (ids.length === 0) return;
+    // Xoá kèm dish_sales cùng phiếu (nếu có) để "Báo cáo doanh thu theo ngày" không còn dữ liệu ma.
+    const receiptCodes = Array.from(new Set(
+      ids.map((id) => data.exportRecords.find((r) => r.id === id)?.receiptCode).filter(Boolean)
+    ));
+    if (receiptCodes.length > 0) {
+      const { error: saleErr } = await supabase.from("dish_sales").delete().in("receipt_code", receiptCodes);
+      if (saleErr) console.error(saleErr);
+    }
     await deleteInChunks("export_records", ids);
     await refreshAll();
     showToast(`Đã xoá ${ids.length} dòng xuất hàng`);
