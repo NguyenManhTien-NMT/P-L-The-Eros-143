@@ -1403,16 +1403,19 @@ function DeleteByReceiptCard({ records, onDeleteMany, label = "phiếu" }) {
 
   const [selected, setSelected] = useState("");
   const [deleting, setDeleting] = useState(false);
+  const [error, setError] = useState("");
   const chosen = receipts.find((r) => r.receiptCode === selected);
 
   const handleDelete = async () => {
     if (!chosen) return;
     if (!window.confirm(`Xoá toàn bộ ${label} "${chosen.receiptCode}" (${chosen.lineCount} dòng, tổng ${fmtMoney(chosen.totalAmount)})? Không thể hoàn tác.`)) return;
-    setDeleting(true);
+    setDeleting(true); setError("");
     try {
       const ids = records.filter((r) => r.receiptCode === chosen.receiptCode).map((r) => r.id);
       await onDeleteMany(ids);
       setSelected("");
+    } catch (e) {
+      setError(e.message || "Không xoá được, vui lòng thử lại.");
     } finally {
       setDeleting(false);
     }
@@ -1443,6 +1446,7 @@ function DeleteByReceiptCard({ records, onDeleteMany, label = "phiếu" }) {
           {deleting ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />} Xoá cả phiếu
         </button>
       </div>
+      {error && <p className="text-xs text-rose-600 mt-2 flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> {error}</p>}
     </Card>
   );
 }
@@ -3865,17 +3869,25 @@ export default function App() {
   // — tránh request quá dài bị từ chối khi phiếu có rất nhiều dòng.
   const CHUNK_SIZE = 100;
   const deleteInChunks = async (table, ids) => {
+    let totalDeleted = 0;
     for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
       const chunk = ids.slice(i, i + CHUNK_SIZE);
-      const { error } = await supabase.from(table).delete().in("id", chunk);
+      // .select("id") để biết CHÍNH XÁC bao nhiêu dòng thực sự bị xoá — nếu RLS chặn ngầm,
+      // Supabase trả về thành công nhưng 0 dòng bị xoá (không báo lỗi), nên phải tự kiểm tra.
+      const { data: deletedRows, error } = await supabase.from(table).delete().in("id", chunk).select("id");
       if (error) throw error;
+      totalDeleted += (deletedRows || []).length;
+    }
+    if (totalDeleted < ids.length) {
+      throw new Error(`Chỉ xoá được ${totalDeleted}/${ids.length} dòng — có thể bị chặn quyền (RLS) trên Supabase. Vui lòng chạy DELETE trực tiếp trong Supabase SQL Editor hoặc kiểm tra lại policy.`);
     }
   };
 
   // Xoá 1 dòng phiếu nhập, hoặc cả phiếu (theo receiptCode) nếu truyền receiptCode thay vì id.
   const deleteImportRecord = async (id) => {
-    const { error } = await supabase.from("import_records").delete().eq("id", id);
+    const { data: deletedRows, error } = await supabase.from("import_records").delete().eq("id", id).select("id");
     if (error) throw error;
+    if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
     await refreshAll();
     showToast("Đã xoá dòng nhập hàng");
   };
@@ -3888,8 +3900,9 @@ export default function App() {
 
   // Xoá 1 dòng phiếu xuất, hoặc nhiều dòng cùng lúc theo danh sách id.
   const deleteExportRecord = async (id) => {
-    const { error } = await supabase.from("export_records").delete().eq("id", id);
+    const { data: deletedRows, error } = await supabase.from("export_records").delete().eq("id", id).select("id");
     if (error) throw error;
+    if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
     await refreshAll();
     showToast("Đã xoá dòng xuất hàng");
   };
