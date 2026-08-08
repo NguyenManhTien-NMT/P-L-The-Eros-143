@@ -3103,6 +3103,17 @@ export default function App() {
     return { receiptCode, lineCount: rows.length, totalAmount, supplierName: data.suppliers.find((s) => s.id === supplierId)?.name };
   };
 
+  // Xoá theo từng đợt nhỏ (thay vì xoá hàng nghìn id cùng lúc trong 1 câu lệnh)
+  // — tránh request quá dài bị từ chối khi phiếu có rất nhiều dòng.
+  const CHUNK_SIZE = 100;
+  const deleteInChunks = async (table, ids) => {
+    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
+      const chunk = ids.slice(i, i + CHUNK_SIZE);
+      const { error } = await supabase.from(table).delete().in("id", chunk);
+      if (error) throw error;
+    }
+  };
+
   // Xoá 1 dòng phiếu nhập, hoặc cả phiếu (theo receiptCode) nếu truyền receiptCode thay vì id.
   const deleteImportRecord = async (id) => {
     const { error } = await supabase.from("import_records").delete().eq("id", id);
@@ -3112,8 +3123,7 @@ export default function App() {
   };
   const deleteImportRecordsByIds = async (ids) => {
     if (ids.length === 0) return;
-    const { error } = await supabase.from("import_records").delete().in("id", ids);
-    if (error) throw error;
+    await deleteInChunks("import_records", ids);
     await refreshAll();
     showToast(`Đã xoá ${ids.length} dòng nhập hàng`);
   };
@@ -3127,8 +3137,7 @@ export default function App() {
   };
   const deleteExportRecordsByIds = async (ids) => {
     if (ids.length === 0) return;
-    const { error } = await supabase.from("export_records").delete().in("id", ids);
-    if (error) throw error;
+    await deleteInChunks("export_records", ids);
     await refreshAll();
     showToast(`Đã xoá ${ids.length} dòng xuất hàng`);
   };
