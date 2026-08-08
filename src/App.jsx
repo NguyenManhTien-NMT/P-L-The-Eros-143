@@ -21,7 +21,7 @@ import {
 // HẰNG SỐ
 // ---------------------------------------------------------------------------
 const ROLE_META = {
-  nhan_vien_kho: { label: "Nhân viên kho", color: "bg-teal-50 text-teal-700 border-teal-200" },
+  nhan_vien_kho: { label: "Nhân viên kho", color: "bg-sky-50 text-sky-700 border-sky-200" },
   quan_ly: { label: "Quản lý", color: "bg-slate-800 text-white border-slate-800" },
   bao_cao: { label: "Quản lý (Báo cáo)", color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
 };
@@ -31,7 +31,7 @@ const PAYMENT_TYPE_META = {
   noi_bo: { label: "Nội bộ", color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
 };
 const CLASSIFICATION_META = {
-  NL: { label: "Nguyên vật liệu", color: "bg-teal-50 text-teal-700 border-teal-200" },
+  NL: { label: "Nguyên vật liệu", color: "bg-sky-50 text-sky-700 border-sky-200" },
   TP: { label: "Thành phẩm", color: "bg-purple-50 text-purple-700 border-purple-200" },
 };
 const SESSION_KEY = "kho_session_employee_id";
@@ -367,12 +367,12 @@ function genReceiptCode(prefix, existingCount) {
 // UI DÙNG CHUNG
 // ---------------------------------------------------------------------------
 function Card({ children, className = "" }) {
-  return <div className={`bg-white rounded-2xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow duration-200 ${className}`}>{children}</div>;
+  return <div className={`bg-white/90 backdrop-blur-sm rounded-3xl border border-slate-200/80 shadow-sm hover:shadow-md transition-shadow duration-200 ${className}`}>{children}</div>;
 }
 function SectionTitle({ icon: Icon, title, subtitle }) {
   return (
     <div className="flex items-start gap-3 mb-4">
-      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-700 to-teal-900 text-white flex items-center justify-center shrink-0 shadow-sm shadow-teal-900/20">
+      <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center shrink-0 shadow-sm shadow-sky-900/20">
         <Icon size={19} />
       </div>
       <div>
@@ -394,14 +394,14 @@ function EmptyState({ icon: Icon, text }) {
 }
 function MetricCard({ label, value, icon: Icon, accent = "teal" }) {
   const a = {
-    teal: { text: "text-teal-700", bg: "bg-teal-50", bar: "bg-teal-600" },
+    teal: { text: "text-sky-700", bg: "bg-sky-50", bar: "bg-sky-600" },
     amber: { text: "text-amber-700", bg: "bg-amber-50", bar: "bg-amber-600" },
     emerald: { text: "text-emerald-700", bg: "bg-emerald-50", bar: "bg-emerald-600" },
     rose: { text: "text-rose-700", bg: "bg-rose-50", bar: "bg-rose-600" },
     indigo: { text: "text-indigo-700", bg: "bg-indigo-50", bar: "bg-indigo-600" },
   }[accent];
   return (
-    <div className="relative bg-white rounded-2xl border border-slate-200/80 shadow-sm p-4 flex items-center gap-3 overflow-hidden">
+    <div className="relative bg-white/90 backdrop-blur-sm rounded-3xl border border-slate-200/80 shadow-sm p-4 flex items-center gap-3 overflow-hidden">
       <span className={`absolute left-0 top-0 bottom-0 w-1 ${a.bar}`} />
       <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 ${a.bg} ${a.text}`}>
         <Icon size={19} />
@@ -418,7 +418,7 @@ function Badge({ children, className = "" }) {
 }
 function PrimaryButton({ children, className = "", ...props }) {
   return (
-    <button {...props} className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-b from-teal-700 to-teal-800 text-white text-sm font-medium shadow-sm hover:from-teal-800 hover:to-teal-900 active:scale-[0.98] transition disabled:opacity-40 disabled:cursor-not-allowed ${className}`}>
+    <button {...props} className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-b from-sky-700 to-sky-800 text-white text-sm font-medium shadow-sm hover:from-sky-800 hover:to-sky-900 active:scale-[0.98] transition disabled:opacity-40 disabled:cursor-not-allowed ${className}`}>
       {children}
     </button>
   );
@@ -441,7 +441,7 @@ function TextField({ label, hint, ...props }) {
   return (
     <label className="block">
       {label && <span className="block text-xs font-medium text-slate-600 mb-1">{label}</span>}
-      <input {...props} className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm transition focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600" />
+      <input {...props} className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm transition focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-600" />
       {hint && <span className="block text-[11px] text-slate-400 mt-1">{hint}</span>}
     </label>
   );
@@ -450,7 +450,7 @@ function SelectField({ label, children, hint, ...props }) {
   return (
     <label className="block">
       {label && <span className="block text-xs font-medium text-slate-600 mb-1">{label}</span>}
-      <select {...props} className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white transition focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600">
+      <select {...props} className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm bg-white transition focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-600">
         {children}
       </select>
       {hint && <span className="block text-[11px] text-slate-400 mt-1">{hint}</span>}
@@ -468,7 +468,7 @@ function Toast({ toast }) {
 function FullScreenLoader() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50">
-      <Loader2 size={28} className="text-teal-600 animate-spin" />
+      <Loader2 size={28} className="text-sky-600 animate-spin" />
     </div>
   );
 }
@@ -535,10 +535,10 @@ function LoginScreen({ onLogin }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-teal-50 via-slate-50 to-slate-50 px-4 py-10">
+    <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-sky-50 via-slate-50 to-slate-50 px-4 py-10">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-700 to-teal-900 mx-auto mb-3 flex items-center justify-center shadow-lg shadow-teal-900/25">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-sky-700 to-sky-900 mx-auto mb-3 flex items-center justify-center shadow-lg shadow-sky-900/25">
             <Warehouse size={26} className="text-white" />
           </div>
           <h1 className="text-2xl font-semibold text-slate-800 tracking-tight">P&amp;L The Eros 143</h1>
@@ -547,14 +547,14 @@ function LoginScreen({ onLogin }) {
         <form onSubmit={handleSubmit} className="bg-white rounded-2xl border border-slate-200/80 shadow-xl shadow-slate-900/5 p-5 space-y-4">
           <label className="block">
             <span className="block text-xs font-medium text-slate-600 mb-1">Tên đăng nhập</span>
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 focus-within:ring-2 focus-within:ring-teal-500/40 focus-within:border-teal-600">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 focus-within:ring-2 focus-within:ring-sky-500/40 focus-within:border-sky-600">
               <User size={15} className="text-slate-400 shrink-0" />
               <input value={username} onChange={(e) => setUsername(e.target.value)} className="flex-1 text-sm outline-none" placeholder="vd: nvkho1" autoFocus />
             </div>
           </label>
           <label className="block">
             <span className="block text-xs font-medium text-slate-600 mb-1">Mật khẩu</span>
-            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 focus-within:ring-2 focus-within:ring-teal-500/40 focus-within:border-teal-600">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-xl border border-slate-300 focus-within:ring-2 focus-within:ring-sky-500/40 focus-within:border-sky-600">
               <Lock size={15} className="text-slate-400 shrink-0" />
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} className="flex-1 text-sm outline-none" placeholder="••••••" />
             </div>
@@ -862,7 +862,7 @@ function DanhMucModule({ data, onAddSupplier, onAddProduct, onAddRevenueCode, on
       <SectionTitle icon={Boxes} title="Danh mục" subtitle="Dữ liệu gốc — thêm mới bất cứ lúc nào, mã tự động gợi ý" />
       <div className="flex gap-1 mb-4 overflow-x-auto">
         {TABS.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition ${tab === t.key ? "bg-teal-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100"}`}>
+          <button key={t.key} onClick={() => setTab(t.key)} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition ${tab === t.key ? "bg-sky-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100"}`}>
             <t.icon size={15} /> {t.label}
           </button>
         ))}
@@ -929,13 +929,13 @@ function ProductCodeNameFields({ products, productId, onSelectProduct, codeLabel
           onFocus={() => setShowCodeList(true)}
           onBlur={() => setTimeout(() => setShowCodeList(false), 150)}
           placeholder="Gõ mã..."
-          className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
+          className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-600"
         />
         {showCodeList && codeMatches.length > 0 && (
           <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
             {codeMatches.map((p) => (
               <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
-                <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
+                <span className="text-sky-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
               </button>
             ))}
           </div>
@@ -949,13 +949,13 @@ function ProductCodeNameFields({ products, productId, onSelectProduct, codeLabel
           onFocus={() => setShowNameList(true)}
           onBlur={() => setTimeout(() => setShowNameList(false), 150)}
           placeholder="Gõ tên..."
-          className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
+          className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-600"
         />
         {showNameList && nameMatches.length > 0 && (
           <div className="absolute z-20 left-0 right-0 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
             {nameMatches.map((p) => (
               <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
-                <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
+                <span className="text-sky-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
               </button>
             ))}
           </div>
@@ -1017,13 +1017,13 @@ function ProductCodeNameCells({ products, productId, onSelectProduct, codePlaceh
           onBlur={() => setTimeout(() => setShowCodeList(false), 150)}
           onKeyDown={(e) => onCellKeyDown?.(e, 0)}
           placeholder={codePlaceholder}
-          className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
+          className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-600"
         />
         {showCodeList && codeMatches.length > 0 && (
           <div className="absolute z-20 left-2 right-2 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
             {codeMatches.map((p) => (
               <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
-                <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
+                <span className="text-sky-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
               </button>
             ))}
           </div>
@@ -1038,13 +1038,13 @@ function ProductCodeNameCells({ products, productId, onSelectProduct, codePlaceh
           onBlur={() => setTimeout(() => setShowNameList(false), 150)}
           onKeyDown={(e) => onCellKeyDown?.(e, 1)}
           placeholder={namePlaceholder}
-          className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-600"
+          className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-600"
         />
         {showNameList && nameMatches.length > 0 && (
           <div className="absolute z-20 left-2 right-2 mt-1 bg-white rounded-xl border border-slate-200 shadow-lg max-h-56 overflow-y-auto">
             {nameMatches.map((p) => (
               <button type="button" key={p.id} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p)} className="w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center gap-2">
-                <span className="text-teal-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
+                <span className="text-sky-600 font-medium">{p.code}</span> {p.name} <span className="text-slate-400 text-xs">({p.unit})</span>
               </button>
             ))}
           </div>
@@ -1194,7 +1194,7 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
                       onChange={(e) => updateLine(l.key, { quantity: e.target.value })}
                       onKeyDown={(e) => handleCellKeyDown(e, idx, 2)}
                       placeholder="0"
-                      className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40"
                     />
                   </td>
                   <td className="px-2 py-1.5">
@@ -1205,7 +1205,7 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
                       onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })}
                       onKeyDown={(e) => { handleCellKeyDown(e, idx, 3); handlePriceKeyDown(e, isLastRow); }}
                       placeholder="0"
-                      className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+                      className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40"
                     />
                   </td>
                   <td className="px-2 py-1.5 text-right font-medium text-slate-700">{rowTotal > 0 ? fmtMoney(rowTotal) : "—"}</td>
@@ -1222,9 +1222,9 @@ function NhapHangForm({ data, currentUser, onSubmit }) {
             })}
           </tbody>
           <tfoot>
-            <tr className="bg-teal-50/60">
-              <td colSpan={5} className="px-2 py-2 text-right text-teal-700 font-medium">Tổng thành tiền cả phiếu</td>
-              <td className="px-2 py-2 text-right font-semibold text-teal-800">{fmtMoney(grandTotal)}</td>
+            <tr className="bg-sky-50/60">
+              <td colSpan={5} className="px-2 py-2 text-right text-sky-700 font-medium">Tổng thành tiền cả phiếu</td>
+              <td className="px-2 py-2 text-right font-semibold text-sky-800">{fmtMoney(grandTotal)}</td>
               <td></td>
             </tr>
           </tfoot>
@@ -1294,12 +1294,12 @@ function ExcelHeaderFilter({ label, align = "left", options, selected, onChangeS
   return (
     <th className={`px-3 py-2 relative select-none ${align === "right" ? "text-right" : "text-left"} ${className}`}>
       <div className={`flex items-center gap-1 ${align === "right" ? "justify-end" : ""}`}>
-        <button type="button" onClick={onSort} className="flex items-center gap-1 hover:text-teal-700">
+        <button type="button" onClick={onSort} className="flex items-center gap-1 hover:text-sky-700">
           {label}
-          <ArrowUpDown size={11} className={sortDir ? "text-teal-600" : "text-slate-300"} />
+          <ArrowUpDown size={11} className={sortDir ? "text-sky-600" : "text-slate-300"} />
         </button>
         {options && (
-          <button type="button" onClick={() => setOpen((o) => !o)} className={`p-0.5 rounded hover:bg-slate-100 ${!allChecked ? "text-teal-600" : "text-slate-300"}`}>
+          <button type="button" onClick={() => setOpen((o) => !o)} className={`p-0.5 rounded hover:bg-slate-100 ${!allChecked ? "text-sky-600" : "text-slate-300"}`}>
             <Filter size={11} />
           </button>
         )}
@@ -1307,17 +1307,17 @@ function ExcelHeaderFilter({ label, align = "left", options, selected, onChangeS
       {open && options && (
         <div className="absolute z-30 top-full mt-1 left-0 w-56 bg-white rounded-xl border border-slate-200 shadow-lg text-xs font-normal normal-case text-slate-700 max-h-64 overflow-y-auto">
           <div className="flex items-center justify-between px-3 py-2 border-b border-slate-100 sticky top-0 bg-white">
-            <button type="button" onClick={selectAll} className="text-teal-700 hover:underline">Chọn tất cả</button>
+            <button type="button" onClick={selectAll} className="text-sky-700 hover:underline">Chọn tất cả</button>
             <button type="button" onClick={clearAll} className="text-slate-400 hover:underline">Bỏ chọn</button>
           </div>
           {options.map((o) => (
             <label key={o.value} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
-              <input type="checkbox" checked={isChecked(o.value)} onChange={() => toggleValue(o.value)} className="rounded border-slate-300 text-teal-600 focus:ring-teal-500" />
+              <input type="checkbox" checked={isChecked(o.value)} onChange={() => toggleValue(o.value)} className="rounded border-slate-300 text-sky-600 focus:ring-sky-500" />
               <span className="truncate">{o.label}</span>
             </label>
           ))}
           <div className="p-2 border-t border-slate-100 sticky bottom-0 bg-white">
-            <button type="button" onClick={() => setOpen(false)} className="w-full text-center text-teal-700 text-xs py-1 hover:bg-teal-50 rounded-lg">Đóng</button>
+            <button type="button" onClick={() => setOpen(false)} className="w-full text-center text-sky-700 text-xs py-1 hover:bg-sky-50 rounded-lg">Đóng</button>
           </div>
         </div>
       )}
@@ -1500,21 +1500,9 @@ function LichSuNhapModule({ data, onDelete, onDeleteMany }) {
       <DeleteByReceiptCard records={data.importRecords} onDeleteMany={onDeleteMany} label="phiếu nhập" />
 
       <Card className="p-4 sm:p-5 mb-5">
-        <div className="grid sm:grid-cols-3 lg:grid-cols-4 gap-3">
+        <div className="grid sm:grid-cols-2 gap-3">
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-          <TextField label="Mã phiếu" value={receiptCode} onChange={(e) => setReceiptCode(e.target.value)} placeholder="VD: NK-T8-N1" />
-          <TextField label="Sản phẩm (mã/tên)" value={productQuery} onChange={(e) => setProductQuery(e.target.value)} placeholder="Gõ mã hoặc tên..." />
-          <SelectField label="Nhà cung cấp" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-            <option value="">— Tất cả —</option>
-            {data.suppliers.map((s) => <option key={s.id} value={s.id}>{s.code} — {s.name}</option>)}
-          </SelectField>
-          <TextField label="Số lượng từ" type="number" value={qtyFrom} onChange={(e) => setQtyFrom(e.target.value)} />
-          <TextField label="Số lượng đến" type="number" value={qtyTo} onChange={(e) => setQtyTo(e.target.value)} />
-          <TextField label="Đơn giá từ" type="number" value={priceFrom} onChange={(e) => setPriceFrom(e.target.value)} />
-          <TextField label="Đơn giá đến" type="number" value={priceTo} onChange={(e) => setPriceTo(e.target.value)} />
-          <TextField label="Thành tiền từ" type="number" value={amountFrom} onChange={(e) => setAmountFrom(e.target.value)} />
-          <TextField label="Thành tiền đến" type="number" value={amountTo} onChange={(e) => setAmountTo(e.target.value)} />
         </div>
         <div className="flex items-center justify-between mt-3">
           <div className="flex items-center gap-2">
@@ -1527,7 +1515,7 @@ function LichSuNhapModule({ data, onDelete, onDeleteMany }) {
           </div>
           <p className="text-sm text-slate-500">
             <span className="font-medium text-slate-700">{filtered.length}</span> dòng · Tổng thành tiền{" "}
-            <span className="font-semibold text-teal-700">{fmtMoney(totalAmount)}</span>
+            <span className="font-semibold text-sky-700">{fmtMoney(totalAmount)}</span>
           </p>
         </div>
       </Card>
@@ -1648,7 +1636,7 @@ function NhapExcelImportForm({ data, onImport }) {
       <p className="font-semibold text-slate-800 text-sm mb-1">Nhập hàng loạt từ Excel</p>
       <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Mã NCC</b>, <b>Mã SP</b>, <b>Số lượng</b>, <b>Đơn giá</b> (tuỳ chọn: Đơn số, Ngày nhập).</p>
       <div className="flex items-center gap-2 mb-3">
-        <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-teal-700 border border-teal-300 bg-teal-50 hover:bg-teal-100 rounded-xl px-4 py-2">
+        <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
           <Upload size={15} /> {fileName || "Chọn file Excel..."}
           <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
         </label>
@@ -1760,7 +1748,7 @@ function XuatExcelImportForm({ data, onImport }) {
       <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Ngày</b>, <b>Tên món</b>, <b>SL bán</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn". App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), và tự bỏ qua các dòng tổng phụ theo hoá đơn. Ngày xuất của từng dòng lấy trực tiếp từ cột "Ngày" trong file (không cần chọn ngày thủ công) — file gộp nhiều ngày vẫn tách đúng theo từng ngày.</p>
 
       <div className="flex items-center gap-2 mb-3">
-        <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-teal-700 border border-teal-300 bg-teal-50 hover:bg-teal-100 rounded-xl px-4 py-2">
+        <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
           <Upload size={15} /> {fileName || "Chọn file Excel..."}
           <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
         </label>
@@ -1817,19 +1805,19 @@ function XuatExcelImportForm({ data, onImport }) {
 function ReceiptSummaryCard({ summary, icon: Icon, actionLabel }) {
   if (!summary) return null;
   return (
-    <Card className="p-4 sm:p-5 mb-5 border-teal-200 bg-teal-50/40">
+    <Card className="p-4 sm:p-5 mb-5 border-sky-200 bg-sky-50/40">
       <div className="flex items-center gap-3">
-        <div className="w-11 h-11 rounded-2xl bg-teal-100 text-teal-700 flex items-center justify-center shrink-0"><Icon size={20} /></div>
+        <div className="w-11 h-11 rounded-2xl bg-sky-100 text-sky-700 flex items-center justify-center shrink-0"><Icon size={20} /></div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-teal-800">{actionLabel} thành công — Phiếu {summary.receiptCode}</p>
-          <p className="text-xs text-teal-700/80 mt-0.5">
+          <p className="text-sm font-semibold text-sky-800">{actionLabel} thành công — Phiếu {summary.receiptCode}</p>
+          <p className="text-xs text-sky-700/80 mt-0.5">
             {summary.lineCount} dòng
             {summary.supplierName ? ` · NCC: ${summary.supplierName}` : ""}
           </p>
         </div>
         <div className="text-right shrink-0">
-          <p className="text-xs text-teal-700/80">Tổng giá trị phiếu</p>
-          <p className="text-lg font-bold text-teal-800">{fmtMoney(summary.totalAmount)}</p>
+          <p className="text-xs text-sky-700/80">Tổng giá trị phiếu</p>
+          <p className="text-lg font-bold text-sky-800">{fmtMoney(summary.totalAmount)}</p>
         </div>
       </div>
     </Card>
@@ -1853,7 +1841,6 @@ function NhapHangModule({ data, currentUser, onSubmit, onBulkImport }) {
       <SectionTitle icon={ArrowDownCircle} title="Nhập hàng" subtitle="Ghi nhận nhập hàng từ nhà cung cấp" />
       <ReceiptSummaryCard summary={lastReceipt} icon={ArrowDownCircle} actionLabel="Nhập hàng" />
       <NhapExcelImportForm data={data} onImport={handleBulkImport} />
-      <NhapHangForm data={data} currentUser={currentUser} onSubmit={handleSubmit} />
     </div>
   );
 }
@@ -1891,6 +1878,21 @@ function BaoCaoNhapModule({ data }) {
       map.set(key, (map.get(key) || 0) + r.totalAmount);
     });
     return [...map.entries()].map(([name, value]) => ({ name, value })).sort((a, b) => b.value - a.value).slice(0, 10);
+  }, [filtered]);
+
+  // Báo cáo mua hàng theo Nhà cung cấp × Tình trạng thanh toán — mỗi NCC 1 dòng,
+  // tách rõ đã trả (tiền mặt/nội bộ) và còn nợ (công nợ) để dễ đối chiếu công nợ NCC.
+  const bySupplierPayment = useMemo(() => {
+    const map = new Map();
+    filtered.forEach((r) => {
+      const s = data.suppliers.find((x) => x.id === r.supplierId);
+      const key = s?.name || "Không rõ";
+      const cur = map.get(key) || { name: key, tien_mat: 0, cong_no: 0, noi_bo: 0, total: 0 };
+      cur[r.paymentType] = (cur[r.paymentType] || 0) + r.totalAmount;
+      cur.total += r.totalAmount;
+      map.set(key, cur);
+    });
+    return Array.from(map.values()).sort((a, b) => b.total - a.total);
   }, [filtered]);
 
   const groupCodes = [...new Set(data.products.map((p) => p.groupCode).filter(Boolean))];
@@ -1934,9 +1936,36 @@ function BaoCaoNhapModule({ data }) {
                 <XAxis type="number" tickFormatter={(v) => fmtNumber(v)} tick={{ fontSize: 11 }} />
                 <YAxis type="category" dataKey="name" width={140} tick={{ fontSize: 11 }} />
                 <Tooltip formatter={(v) => fmtMoney(v)} />
-                <Bar dataKey="value" fill="#0f766e" radius={[0, 6, 6, 0]} />
+                <Bar dataKey="value" fill="#0369a1" radius={[0, 6, 6, 0]} />
               </BarChart>
             </ResponsiveContainer>
+          </div>
+        )}
+      </Card>
+      <Card className="p-0 overflow-hidden mb-5">
+        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Báo cáo mua hàng theo Nhà cung cấp &amp; Tình trạng thanh toán</p></div>
+        {bySupplierPayment.length === 0 ? <EmptyState icon={BarChart3} text="Chưa có dữ liệu." /> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                <th className="px-3 py-2">Nhà cung cấp</th>
+                <th className="px-3 py-2 text-right">Tiền mặt</th>
+                <th className="px-3 py-2 text-right">Công nợ</th>
+                <th className="px-3 py-2 text-right">Nội bộ</th>
+                <th className="px-3 py-2 text-right">Tổng cộng</th>
+              </tr></thead>
+              <tbody>
+                {bySupplierPayment.map((r) => (
+                  <tr key={r.name} className="border-b border-slate-50 last:border-0">
+                    <td className="px-3 py-2 font-medium text-slate-700">{r.name}</td>
+                    <td className="px-3 py-2 text-right text-emerald-700">{r.tien_mat ? fmtMoney(r.tien_mat) : "—"}</td>
+                    <td className="px-3 py-2 text-right text-amber-700">{r.cong_no ? fmtMoney(r.cong_no) : "—"}</td>
+                    <td className="px-3 py-2 text-right text-indigo-700">{r.noi_bo ? fmtMoney(r.noi_bo) : "—"}</td>
+                    <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmtMoney(r.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </Card>
@@ -2287,9 +2316,9 @@ function BaoCaoDoanhThuNgayModule({ data }) {
           <p className="text-xs text-slate-500">Số món bán</p>
           <p className="text-sm font-semibold text-slate-700">{fmtNumber(report.totals.qty)}</p>
         </div>
-        <div className="bg-teal-50 rounded-xl px-3 py-2">
-          <p className="text-xs text-teal-700">Tổng doanh số</p>
-          <p className="text-sm font-semibold text-teal-800">{fmtMoney(report.totals.revenue)}</p>
+        <div className="bg-sky-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-sky-700">Tổng doanh số</p>
+          <p className="text-sm font-semibold text-sky-800">{fmtMoney(report.totals.revenue)}</p>
         </div>
         <div className="bg-amber-50 rounded-xl px-3 py-2">
           <p className="text-xs text-amber-700">Tổng giá cost</p>
@@ -2369,9 +2398,9 @@ function PLTongHopModule({ data }) {
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-2 mb-4">
-        <div className="bg-teal-50 rounded-xl px-3 py-2">
-          <p className="text-xs text-teal-700">Doanh thu</p>
-          <p className="text-sm font-semibold text-teal-800">{fmtMoney(revenue)}</p>
+        <div className="bg-sky-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-sky-700">Doanh thu</p>
+          <p className="text-sm font-semibold text-sky-800">{fmtMoney(revenue)}</p>
         </div>
         <div className="bg-amber-50 rounded-xl px-3 py-2">
           <p className="text-xs text-amber-700">Giá vốn</p>
@@ -2547,7 +2576,7 @@ function TonKhoModule({ data, currentUser, onSaveOpening }) {
                     </td>
                     <td className="px-3 py-2"><Badge className={CLASSIFICATION_META[r.product.classification]?.color}>{r.product.classification}</Badge></td>
                     <td className="px-3 py-2 text-right">{fmtNumber(r.openingQty)} {r.product.unit}</td>
-                    <td className="px-3 py-2 text-right text-teal-700">+{fmtNumber(r.importQty)}</td>
+                    <td className="px-3 py-2 text-right text-sky-700">+{fmtNumber(r.importQty)}</td>
                     <td className="px-3 py-2 text-right text-rose-600">-{fmtNumber(r.exportQty)}</td>
                     <td className="px-3 py-2 text-right font-medium">{fmtNumber(r.closingQty)} {r.product.unit}</td>
                     <td className="px-3 py-2 text-right font-medium">{fmtMoney(r.closingValue)}</td>
@@ -2596,7 +2625,7 @@ function ResetPasswordModal({ currentUser, employee, onClose, onSuccess }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
       <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5">
         <div className="flex items-center justify-between mb-1">
-          <p className="font-semibold text-slate-800 flex items-center gap-2"><Lock size={17} className="text-teal-700" /> Đặt lại mật khẩu</p>
+          <p className="font-semibold text-slate-800 flex items-center gap-2"><Lock size={17} className="text-sky-700" /> Đặt lại mật khẩu</p>
           <button onClick={onClose}><X size={18} className="text-slate-400" /></button>
         </div>
         <p className="text-sm text-slate-500 mb-4">Cho tài khoản: <span className="font-medium text-slate-700">{employee.name}</span> ({employee.username})</p>
@@ -2723,13 +2752,13 @@ function BaoTriVatTuForm({ currentUser, onSubmit }) {
               return (
                 <tr key={l.key} className="border-b border-slate-100 last:border-0">
                   <td className="px-2 py-1.5">
-                    <input value={l.itemName} onChange={(e) => updateLine(l.key, { itemName: e.target.value })} placeholder="VD: Sửa máy hút mùi, mua khay inox..." className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                    <input value={l.itemName} onChange={(e) => updateLine(l.key, { itemName: e.target.value })} placeholder="VD: Sửa máy hút mùi, mua khay inox..." className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
                   </td>
                   <td className="px-2 py-1.5">
-                    <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                    <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
                   </td>
                   <td className="px-2 py-1.5">
-                    <input type="number" value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                    <input type="number" value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
                   </td>
                   <td className="px-2 py-1.5 text-right font-medium text-slate-700">{rowTotal > 0 ? fmtMoney(rowTotal) : "—"}</td>
                   <td className="px-2 py-1.5 text-center">
@@ -2740,9 +2769,9 @@ function BaoTriVatTuForm({ currentUser, onSubmit }) {
             })}
           </tbody>
           <tfoot>
-            <tr className="bg-teal-50/60">
-              <td colSpan={3} className="px-2 py-2 text-right text-teal-700 font-medium">Tổng chi phí</td>
-              <td className="px-2 py-2 text-right font-semibold text-teal-800">{fmtMoney(grandTotal)}</td>
+            <tr className="bg-sky-50/60">
+              <td colSpan={3} className="px-2 py-2 text-right text-sky-700 font-medium">Tổng chi phí</td>
+              <td className="px-2 py-2 text-right font-semibold text-sky-800">{fmtMoney(grandTotal)}</td>
               <td></td>
             </tr>
           </tfoot>
@@ -2798,15 +2827,15 @@ function PresetExpenseForm({ category, onSubmit }) {
               value={amounts[n]}
               onChange={(e) => setAmounts((prev) => ({ ...prev, [n]: e.target.value }))}
               placeholder="0"
-              className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+              className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40"
             />
             <span className="text-xs text-slate-400 w-8">đ</span>
           </div>
         ))}
       </div>
-      <div className="bg-teal-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm mb-4">
-        <span className="text-teal-700">Tổng chi phí</span>
-        <span className="font-semibold text-teal-800">{fmtMoney(grandTotal)}</span>
+      <div className="bg-sky-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm mb-4">
+        <span className="text-sky-700">Tổng chi phí</span>
+        <span className="font-semibold text-sky-800">{fmtMoney(grandTotal)}</span>
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
       <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Receipt size={15} />} Lưu chi phí</PrimaryButton>
@@ -2853,16 +2882,16 @@ function OtherExpenseForm({ onSubmit }) {
       <div className="space-y-2 mb-4">
         {lines.map((l) => (
           <div key={l.key} className="flex items-center gap-2">
-            <input value={l.itemName} onChange={(e) => updateLine(l.key, { itemName: e.target.value })} placeholder="Tên khoản chi..." className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
-            <input type="number" value={l.amount} onChange={(e) => updateLine(l.key, { amount: e.target.value })} placeholder="Số tiền" className="w-40 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+            <input value={l.itemName} onChange={(e) => updateLine(l.key, { itemName: e.target.value })} placeholder="Tên khoản chi..." className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
+            <input type="number" value={l.amount} onChange={(e) => updateLine(l.key, { amount: e.target.value })} placeholder="Số tiền" className="w-40 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
             <button type="button" onClick={() => removeRow(l.key)} className="text-slate-400 hover:text-rose-600 shrink-0"><X size={16} /></button>
           </div>
         ))}
       </div>
       <GhostButton type="button" onClick={addRow} className="mb-3"><Plus size={14} /> Thêm dòng</GhostButton>
-      <div className="bg-teal-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm mb-4">
-        <span className="text-teal-700">Tổng chi phí</span>
-        <span className="font-semibold text-teal-800">{fmtMoney(grandTotal)}</span>
+      <div className="bg-sky-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm mb-4">
+        <span className="text-sky-700">Tổng chi phí</span>
+        <span className="font-semibold text-sky-800">{fmtMoney(grandTotal)}</span>
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
       <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Receipt size={15} />} Lưu chi phí</PrimaryButton>
@@ -2896,6 +2925,11 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport }) {
   const [category, setCategory] = useState("van_hanh");
   const meta = EXPENSE_CATEGORY_META[category];
 
+  // Công nợ nguyên vật liệu: các phiếu nhập NVL có tình trạng thanh toán = Công nợ.
+  const nvlRows = data.importRecords.slice(0, 30);
+  const nvlTotal = nvlRows.reduce((s, r) => s + r.totalAmount, 0);
+  const nvlDebt = nvlRows.filter((r) => r.paymentType === "cong_no").reduce((s, r) => s + r.totalAmount, 0);
+
   return (
     <div>
       <SectionTitle icon={Receipt} title="Chi phí" subtitle="Ghi nhận toàn bộ chi phí phát sinh hàng tháng" />
@@ -2907,11 +2941,24 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport }) {
 
       {category === "nvl" && (
         <>
-          <div className="mb-4 flex items-center gap-2 text-sm text-teal-700 bg-teal-50 border border-teal-200 rounded-xl px-3 py-2">
-            <ArrowDownCircle size={15} /> Chi phí nguyên vật liệu được ghi nhận qua đúng màn "Nhập hàng" bên dưới (dùng chung dữ liệu, không tách riêng để tránh trùng lặp).
+          <div className="mb-4 flex items-center gap-2 text-sm text-sky-700 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2">
+            <ArrowDownCircle size={15} /> Chi phí nguyên vật liệu được ghi nhận qua đúng màn "Nhập hàng" (dùng chung dữ liệu, không tách riêng để tránh trùng lặp) — nhập qua file Excel ở tab "Nhập hàng".
           </div>
-          <NhapHangForm data={data} currentUser={currentUser} onSubmit={onSubmitImport} />
-          <NhapHangList data={data} />
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
+            <div className="bg-slate-50 rounded-xl px-3 py-2">
+              <p className="text-xs text-slate-500">Tổng giá trị NVL (30 phiếu gần nhất)</p>
+              <p className="text-sm font-semibold text-slate-700">{fmtMoney(nvlTotal)}</p>
+            </div>
+            <div className="bg-amber-50 rounded-xl px-3 py-2">
+              <p className="text-xs text-amber-700">Công nợ</p>
+              <p className="text-sm font-semibold text-amber-800">{fmtMoney(nvlDebt)}</p>
+            </div>
+            <div className="bg-emerald-50 rounded-xl px-3 py-2">
+              <p className="text-xs text-emerald-700">Đã thanh toán</p>
+              <p className="text-sm font-semibold text-emerald-800">{fmtMoney(nvlTotal - nvlDebt)}</p>
+            </div>
+          </div>
+          <NhapHangList data={data} rows={nvlRows} />
         </>
       )}
       {category === "bao_tri_vat_tu" && <BaoTriVatTuForm currentUser={currentUser} onSubmit={onSubmitExpense} />}
@@ -3038,17 +3085,17 @@ function DishRecipeEditor({ dish, data, onSave, onClose }) {
                       namePlaceholder="Tên NVL"
                     />
                     <td className="px-2 py-1.5">
-                      <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder={p ? p.unit : "0"} className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                      <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder={p ? p.unit : "0"} className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
                     </td>
                     <td className="px-2 py-1.5">
-                      <select value={l.costMode} onChange={(e) => updateLine(l.key, { costMode: e.target.value })} className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-teal-500/40">
+                      <select value={l.costMode} onChange={(e) => updateLine(l.key, { costMode: e.target.value })} className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/40">
                         <option value="xuat_kho">Giá xuất kho</option>
                         <option value="phan_bo">Phân bổ (giá cố định)</option>
                       </select>
                     </td>
                     <td className="px-2 py-1.5">
                       {l.costMode === "phan_bo" ? (
-                        <input type="number" value={l.allocatedCost} onChange={(e) => updateLine(l.key, { allocatedCost: e.target.value })} placeholder="Giá phân bổ (đ)" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40" />
+                        <input type="number" value={l.allocatedCost} onChange={(e) => updateLine(l.key, { allocatedCost: e.target.value })} placeholder="Giá phân bổ (đ)" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
                       ) : (
                         <p className="px-2 py-1.5 text-slate-400 text-xs">{p ? `${fmtMoney(avgPrice)}/${p.unit}` : "—"}</p>
                       )}
@@ -3165,7 +3212,7 @@ function MonAnModule({ data, onAddDish, onSaveRecipe, onDeleteDish }) {
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Tìm món ăn..."
-              className="w-full pl-8 pr-8 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-teal-500/40"
+              className="w-full pl-8 pr-8 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40"
             />
             {search && (
               <button type="button" onClick={() => setSearch("")} className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-rose-600">
@@ -3238,7 +3285,7 @@ function TaiKhoanModule({ currentUser, employees, onAddEmployee }) {
           {filtered.map((e) => (
             <Card key={e.id} className="p-3.5 flex items-center justify-between gap-3">
               <div className="min-w-0 flex items-center gap-3">
-                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-teal-700 to-teal-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
+                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
                   {e.name?.trim()?.split(" ").slice(-1)[0]?.[0] || "?"}
                 </div>
                 <div className="min-w-0">
@@ -3626,12 +3673,12 @@ export default function App() {
   const navItems = isQuanLy ? NAV_QUAN_LY : isBaoCao ? NAV_BAO_CAO : NAV_NHAN_VIEN;
 
   return (
-    <div className="min-h-screen bg-slate-50">
+    <div className="min-h-screen bg-gradient-to-b from-sky-50 via-slate-50 to-slate-50">
       <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}`}</style>
       <div className="bg-white/90 backdrop-blur border-b border-slate-200 sticky top-0 z-30">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-teal-700 to-teal-900 text-white flex items-center justify-center shrink-0 shadow-sm">
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center shrink-0 shadow-sm">
               <Warehouse size={18} />
             </div>
             <div className="min-w-0">
@@ -3641,7 +3688,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-teal-700 to-teal-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
+              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
                 {currentUser.name?.trim()?.split(" ").slice(-1)[0]?.[0] || "?"}
               </div>
               <div className="hidden md:block text-right leading-tight">
@@ -3659,7 +3706,7 @@ export default function App() {
         </div>
         <div className="max-w-6xl mx-auto px-4 pb-2 flex items-center gap-1 overflow-x-auto sm:flex-wrap sm:overflow-visible">
           {navItems.map((n) => (
-            <button key={n.key} onClick={() => setTab(n.key)} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition ${tab === n.key ? "bg-teal-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"}`}>
+            <button key={n.key} onClick={() => setTab(n.key)} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition ${tab === n.key ? "bg-sky-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"}`}>
               <n.icon size={15} /> {n.label}
             </button>
           ))}
@@ -3687,7 +3734,7 @@ export default function App() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5">
             <div className="flex items-center justify-between mb-3">
-              <p className="font-semibold text-slate-800 flex items-center gap-2"><Lock size={17} className="text-teal-700" /> Đổi mật khẩu</p>
+              <p className="font-semibold text-slate-800 flex items-center gap-2"><Lock size={17} className="text-sky-700" /> Đổi mật khẩu</p>
               <button onClick={() => setShowChangePassword(false)}><X size={18} className="text-slate-400" /></button>
             </div>
             <ChangePasswordForm currentUser={currentUser} onCancel={() => setShowChangePassword(false)} onSuccess={() => { setShowChangePassword(false); showToast("Đã đổi mật khẩu thành công"); }} />
