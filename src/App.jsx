@@ -3692,62 +3692,103 @@ export default function App() {
   const navItems = isQuanLy ? NAV_QUAN_LY : isBaoCao ? NAV_BAO_CAO : NAV_NHAN_VIEN;
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-sky-50 via-slate-50 to-slate-50">
+    <div className="min-h-screen bg-gradient-to-b from-sky-50 via-slate-50 to-slate-50 lg:flex">
       <style>{`@keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}`}</style>
-      <div className="bg-white/90 backdrop-blur border-b border-slate-200 sticky top-0 z-30">
-        <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center shrink-0 shadow-sm">
-              <Warehouse size={18} />
-            </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800 leading-tight tracking-tight">P&amp;L The Eros 143</p>
-              <p className="text-[11px] text-slate-400 leading-tight truncate">Nhập - Xuất - Tồn kho</p>
-            </div>
+
+      {/* Sidebar dọc cố định bên trái — chỉ từ breakpoint lg trở lên */}
+      <aside className="hidden lg:flex lg:flex-col lg:w-60 lg:shrink-0 lg:h-screen lg:sticky lg:top-0 bg-white/90 backdrop-blur-sm border-r border-slate-200 px-3 py-4">
+        <div className="flex items-center gap-2.5 px-2 mb-6">
+          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center shrink-0 shadow-sm">
+            <Warehouse size={18} />
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
-              <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
-                {currentUser.name?.trim()?.split(" ").slice(-1)[0]?.[0] || "?"}
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-slate-800 leading-tight tracking-tight">P&amp;L The Eros 143</p>
+            <p className="text-[11px] text-slate-400 leading-tight truncate">Nhập - Xuất - Tồn kho</p>
+          </div>
+        </div>
+        <nav className="flex-1 space-y-1 overflow-y-auto">
+          {navItems.map((n) => (
+            <button key={n.key} onClick={() => setTab(n.key)} className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium text-left transition ${tab === n.key ? "bg-sky-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"}`}>
+              <n.icon size={16} className="shrink-0" /> {n.label}
+            </button>
+          ))}
+        </nav>
+        <div className="pt-3 mt-3 border-t border-slate-200 flex items-center gap-2">
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
+            {currentUser.name?.trim()?.split(" ").slice(-1)[0]?.[0] || "?"}
+          </div>
+          <div className="min-w-0 flex-1 leading-tight">
+            <p className="text-xs font-medium text-slate-800 truncate">{currentUser.name}</p>
+            <p className="text-[11px] text-slate-400 truncate">{ROLE_META[currentUser.role]?.label}</p>
+          </div>
+          <button onClick={() => setShowChangePassword(true)} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition shrink-0" title="Đổi mật khẩu">
+            <Lock size={14} className="text-slate-500" />
+          </button>
+          <button onClick={handleLogout} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition shrink-0" title="Đăng xuất">
+            <LogOut size={14} className="text-slate-500" />
+          </button>
+        </div>
+      </aside>
+
+      <div className="flex-1 min-w-0 pb-20 lg:pb-0">
+        {/* Header trên cùng — chỉ hiện khi chưa có sidebar (dưới breakpoint lg) */}
+        <div className="lg:hidden bg-white/90 backdrop-blur border-b border-slate-200 sticky top-0 z-30">
+          <div className="px-4 py-3 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center shrink-0 shadow-sm">
+                <Warehouse size={18} />
               </div>
-              <div className="hidden md:block text-right leading-tight">
-                <p className="text-xs font-medium text-slate-800">{currentUser.name}</p>
-                <p className="text-[11px] text-slate-400">{ROLE_META[currentUser.role]?.label}</p>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-800 leading-tight tracking-tight">P&amp;L The Eros 143</p>
+                <p className="text-[11px] text-slate-400 leading-tight truncate">Nhập - Xuất - Tồn kho</p>
               </div>
-              <button onClick={() => setShowChangePassword(true)} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition" title="Đổi mật khẩu">
-                <Lock size={14} className="text-slate-500" />
-              </button>
-              <button onClick={handleLogout} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition" title="Đăng xuất">
-                <LogOut size={14} className="text-slate-500" />
-              </button>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center text-xs font-semibold shrink-0">
+                  {currentUser.name?.trim()?.split(" ").slice(-1)[0]?.[0] || "?"}
+                </div>
+                <div className="hidden md:block text-right leading-tight">
+                  <p className="text-xs font-medium text-slate-800">{currentUser.name}</p>
+                  <p className="text-[11px] text-slate-400">{ROLE_META[currentUser.role]?.label}</p>
+                </div>
+                <button onClick={() => setShowChangePassword(true)} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition" title="Đổi mật khẩu">
+                  <Lock size={14} className="text-slate-500" />
+                </button>
+                <button onClick={handleLogout} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition" title="Đăng xuất">
+                  <LogOut size={14} className="text-slate-500" />
+                </button>
+              </div>
             </div>
           </div>
         </div>
-        <div className="max-w-6xl mx-auto px-4 pb-2 flex items-center gap-1 overflow-x-auto sm:flex-wrap sm:overflow-visible">
-          {navItems.map((n) => (
-            <button key={n.key} onClick={() => setTab(n.key)} className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-medium whitespace-nowrap transition ${tab === n.key ? "bg-sky-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100 hover:text-slate-700"}`}>
-              <n.icon size={15} /> {n.label}
-            </button>
-          ))}
+
+        <div className="max-w-6xl mx-auto px-4 py-6">
+          <TabErrorBoundary resetKey={tab}>
+            {tab === "nhap" && !isBaoCao && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
+            {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
+            {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
+            {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
+            {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
+            {tab === "danh_muc" && !isBaoCao && (
+              <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
+            )}
+            {tab === "bao_cao_nhap" && canViewReports && <BaoCaoNhapModule data={data} />}
+            {tab === "bao_cao_xuat" && canViewReports && <BaoCaoXuatModule data={data} />}
+            {tab === "ton_kho" && !isBaoCao && <TonKhoModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
+            {tab === "tai_khoan" && isQuanLy && <TaiKhoanModule currentUser={currentUser} employees={data.employees} onAddEmployee={addEmployee} />}
+          </TabErrorBoundary>
         </div>
       </div>
 
-      <div className="max-w-6xl mx-auto px-4 py-6">
-        <TabErrorBoundary resetKey={tab}>
-          {tab === "nhap" && !isBaoCao && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
-          {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
-          {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
-          {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
-          {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
-          {tab === "danh_muc" && !isBaoCao && (
-            <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
-          )}
-          {tab === "bao_cao_nhap" && canViewReports && <BaoCaoNhapModule data={data} />}
-          {tab === "bao_cao_xuat" && canViewReports && <BaoCaoXuatModule data={data} />}
-          {tab === "ton_kho" && !isBaoCao && <TonKhoModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
-          {tab === "tai_khoan" && isQuanLy && <TaiKhoanModule currentUser={currentUser} employees={data.employees} onAddEmployee={addEmployee} />}
-        </TabErrorBoundary>
-      </div>
+      {/* Thanh điều hướng cố định đáy màn hình, cuộn ngang — chỉ hiện dưới breakpoint lg */}
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 flex items-center gap-1 px-2 py-2 overflow-x-auto">
+        {navItems.map((n) => (
+          <button key={n.key} onClick={() => setTab(n.key)} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-[11px] font-medium whitespace-nowrap shrink-0 transition ${tab === n.key ? "bg-sky-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100"}`}>
+            <n.icon size={16} /> {n.label}
+          </button>
+        ))}
+      </nav>
 
       {showChangePassword && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
