@@ -357,10 +357,13 @@ function nktForProduct(productId, from, to, data) {
 }
 
 // Sinh mã phiếu tự động — VD NK-20260803-0001 / XK-20260803-0001
-function genReceiptCode(prefix, existingCount) {
+// Mã phiếu = tiền tố + ngày + giờ:phút:giây:mili giây — không dựa vào số lượng bản ghi hiện có,
+// nên không bao giờ bị trùng dù dữ liệu vừa bị xoá sạch trước đó (tránh trùng mã phiếu).
+function genReceiptCode(prefix) {
   const d = new Date();
   const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
-  return `${prefix}-${ymd}-${String(existingCount + 1).padStart(4, "0")}`;
+  const hms = `${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}${String(d.getSeconds()).padStart(2, "0")}${String(d.getMilliseconds()).padStart(3, "0")}`;
+  return `${prefix}-${ymd}-${hms}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -2184,6 +2187,7 @@ function XuatHangList({ data, onDelete }) {
 
 function XuatHangModule({ data, currentUser, onSubmit, onBulkImportFromBills, onDelete, onDeleteMany }) {
   const [lastReceipt, setLastReceipt] = useState(null);
+  const [resetKey, setResetKey] = useState(0);
 
   const handleSubmit = async (payload) => {
     const summary = await onSubmit(payload);
@@ -2194,13 +2198,20 @@ function XuatHangModule({ data, currentUser, onSubmit, onBulkImportFromBills, on
     if (result) setLastReceipt(result);
     return result;
   };
+  // Sau khi xoá phiếu, làm mới toàn bộ màn hình về trạng thái sạch như trước khi import —
+  // xoá luôn thẻ "Tổng quan phiếu vừa xuất" và dòng thông báo "Đã xuất kho thành công..." còn đọng lại.
+  const handleDeleteMany = async (ids) => {
+    await onDeleteMany(ids);
+    setLastReceipt(null);
+    setResetKey((k) => k + 1);
+  };
 
   return (
     <div>
       <SectionTitle icon={ArrowUpCircle} title="Xuất hàng" subtitle="Ghi nhận tiêu hao nguyên liệu và bán thành phẩm" />
       <ReceiptSummaryCard summary={lastReceipt} icon={ArrowUpCircle} actionLabel="Xuất hàng" />
-      <DeleteByReceiptCard records={data.exportRecords} onDeleteMany={onDeleteMany} label="phiếu xuất" />
-      <XuatExcelImportForm data={data} onImport={handleBulkImport} />
+      <DeleteByReceiptCard records={data.exportRecords} onDeleteMany={handleDeleteMany} label="phiếu xuất" />
+      <XuatExcelImportForm key={resetKey} data={data} onImport={handleBulkImport} />
       <XuatHangList data={data} onDelete={onDelete} />
     </div>
   );
@@ -3410,7 +3421,7 @@ export default function App() {
 
   // ---------------- Nhập hàng ----------------
   const submitImport = async ({ orderNumber, supplierId, lines, paymentType }) => {
-    const receiptCode = genReceiptCode("NK", data.importRecords.length);
+    const receiptCode = genReceiptCode("NK");
     const rows = lines.map((l) => ({
       order_number: orderNumber || null, receipt_code: receiptCode, supplier_id: supplierId, product_id: l.productId,
       quantity: l.quantity, unit_price: l.unitPrice, total_amount: l.totalAmount, payment_type: paymentType,
@@ -3473,7 +3484,7 @@ export default function App() {
 
   // Nhập hàng hàng loạt từ file Excel — mỗi dòng Excel tự mang đúng NCC/SP/SL/Đơn giá riêng.
   const bulkImportNhap = async (rows) => {
-    const receiptCode = genReceiptCode("NK", data.importRecords.length);
+    const receiptCode = genReceiptCode("NK");
     const dbRows = rows.map((r) => ({
       order_number: r.orderNumber || null, receipt_code: receiptCode, supplier_id: r.supplierId, product_id: r.productId,
       quantity: r.quantity, unit_price: r.unitPrice, total_amount: r.quantity * r.unitPrice,
@@ -3489,7 +3500,7 @@ export default function App() {
 
   // ---------------- Xuất hàng ----------------
   const submitExport = async ({ orderNumber, revenueCodeId, exportCodeId, lines }) => {
-    const receiptCode = genReceiptCode("XK", data.exportRecords.length);
+    const receiptCode = genReceiptCode("XK");
     const rows = lines.map((l) => ({
       order_number: orderNumber || null, receipt_code: receiptCode,
       revenue_code_id: revenueCodeId, export_code_id: exportCodeId,
@@ -3546,7 +3557,7 @@ export default function App() {
     if (exportRows.length === 0) {
       throw new Error("Không có dòng nào khớp được với danh sách món ăn trong Cost món ăn.");
     }
-    const receiptCode = genReceiptCode("XK", data.exportRecords.length);
+    const receiptCode = genReceiptCode("XK");
     exportRows.forEach((r) => { r.receipt_code = receiptCode; });
     saleRows.forEach((r) => { r.receipt_code = receiptCode; });
     const { error } = await supabase.from("export_records").insert(exportRows);
