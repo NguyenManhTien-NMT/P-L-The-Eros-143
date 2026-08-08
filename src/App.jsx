@@ -1805,13 +1805,17 @@ function XuatExcelImportForm({ data, onImport }) {
         const dishName = String(pickCol(row, "Tên món", "Ten mon", "Món ăn", "Mon an") ?? "").trim();
         const quantitySold = Number(pickCol(row, "SL bán", "SL ban", "Số lượng bán", "Số lượng", "So luong")) || 0;
         const unitPriceInFile = Number(pickCol(row, "Đơn giá", "Don gia")) || 0;
+        // Doanh thu thực tế của dòng — ưu tiên lấy thẳng cột "Doanh thu" của file thay vì tự nhân
+        // SL bán × Đơn giá, vì có trường hợp Đơn giá niêm yết không đổi nhưng thực thu khác
+        // (khuyến mãi/tặng kèm/giảm giá riêng dòng) khiến SL × Đơn giá bị sai lệch so với thực tế.
+        const revenueInFile = Number(pickCol(row, "Doanh thu", "Doanh thu bán hàng")) || 0;
         const invoiceNo = String(pickCol(row, "Số hóa đơn", "Số hoá đơn", "So hoa don", "Mã hoá đơn") ?? "").trim();
         const saleDate = excelDateToISO(pickCol(row, "Ngày", "Ngay") ?? pickColContains(row, "ngay")) || todayISO();
         if (!dishName || quantitySold <= 0) return;
         if (unitPriceInFile <= 0) return; // bỏ dòng rác của POS (VD "Mở két"...) — đơn giá 0đ không phải bán hàng thật
         const dish = data.dishes.find((d) => normalizeForMatch(d.name) === normalizeForMatch(dishName));
         if (!dish) { unmatchedNames.add(dishName); return; }
-        valid.push({ dishName, dishId: dish.id, quantitySold, unitPriceInFile, invoiceNo, saleDate });
+        valid.push({ dishName, dishId: dish.id, quantitySold, unitPriceInFile, revenueInFile, invoiceNo, saleDate });
       });
       setPreview(valid);
       setUnmatched(Array.from(unmatchedNames));
@@ -1839,7 +1843,7 @@ function XuatExcelImportForm({ data, onImport }) {
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Xuất kho NVL tự động từ báo cáo doanh thu</p>
-      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Ngày</b>, <b>Tên món</b>, <b>SL bán</b>, <b>Đơn giá</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn"; <b>doanh thu ghi nhận dùng đúng Đơn giá thực tế trong file</b> (không dùng giá cấu hình sẵn trong Cost món ăn), nên vẫn đúng ngay cả khi hoá đơn có khuyến mãi/giảm giá. App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), tự bỏ qua các dòng tổng phụ theo hoá đơn và các dòng có Đơn giá = 0đ (dữ liệu rác của máy POS như "Mở két"...). Ngày xuất của từng dòng lấy trực tiếp từ cột "Ngày" trong file (không cần chọn ngày thủ công) — file gộp nhiều ngày vẫn tách đúng theo từng ngày.</p>
+      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Ngày</b>, <b>Tên món</b>, <b>SL bán</b>, <b>Đơn giá</b>, <b>Doanh thu</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn"; <b>doanh thu ghi nhận dùng đúng cột "Doanh thu" của file</b> (không tự nhân SL × Đơn giá, không dùng giá cấu hình sẵn trong Cost món ăn) — vì có trường hợp Đơn giá niêm yết không đổi nhưng thực thu khác do khuyến mãi/giảm giá/tặng kèm riêng từng dòng. App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), tự bỏ qua các dòng tổng phụ theo hoá đơn và các dòng có Đơn giá = 0đ (dữ liệu rác của máy POS như "Mở két"...). Ngày xuất của từng dòng lấy trực tiếp từ cột "Ngày" trong file (không cần chọn ngày thủ công) — file gộp nhiều ngày vẫn tách đúng theo từng ngày.</p>
 
       <div className="flex items-center gap-2 mb-3">
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
@@ -1872,22 +1876,24 @@ function XuatExcelImportForm({ data, onImport }) {
               <thead className="sticky top-0 bg-slate-50">
                 <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
                   <th className="px-2 py-2">Ngày</th><th className="px-2 py-2">Món</th><th className="px-2 py-2">Hoá đơn</th>
-                  <th className="px-2 py-2 text-right">SL bán</th><th className="px-2 py-2 text-right">Giá bán</th>
-                  <th className="px-2 py-2 text-right">Giá vốn/suất</th><th className="px-2 py-2 text-right">Cost %</th>
+                  <th className="px-2 py-2 text-right">SL bán</th><th className="px-2 py-2 text-right">Đơn giá</th>
+                  <th className="px-2 py-2 text-right">Doanh thu</th><th className="px-2 py-2 text-right">Giá vốn/suất</th><th className="px-2 py-2 text-right">Cost %</th>
                 </tr>
               </thead>
               <tbody>
                 {preview.map((r, i) => {
                   const costPerUnit = dishTotalCost(r.dishId, data);
-                  const costPct = r.unitPriceInFile > 0 ? (costPerUnit / r.unitPriceInFile) * 100 : 0;
+                  const totalCost = costPerUnit * r.quantitySold;
+                  const costPct = r.revenueInFile > 0 ? (totalCost / r.revenueInFile) * 100 : 0;
                   return (
                     <tr key={i} className="border-b border-slate-100 last:border-0">
                       <td className="px-2 py-1.5 text-slate-400">{fmtDate(r.saleDate)}</td>
                       <td className="px-2 py-1.5">{r.dishName}</td>
                       <td className="px-2 py-1.5 text-slate-400">{r.invoiceNo || "—"}</td>
                       <td className="px-2 py-1.5 text-right">{r.quantitySold}</td>
-                      <td className="px-2 py-1.5 text-right">{fmtMoney(r.unitPriceInFile)}</td>
-                      <td className="px-2 py-1.5 text-right text-amber-700">{fmtMoney(costPerUnit)}</td>
+                      <td className="px-2 py-1.5 text-right text-slate-400">{fmtMoney(r.unitPriceInFile)}</td>
+                      <td className="px-2 py-1.5 text-right">{fmtMoney(r.revenueInFile)}</td>
+                      <td className="px-2 py-1.5 text-right text-amber-700">{fmtMoney(totalCost)}</td>
                       <td className="px-2 py-1.5 text-right text-slate-500">{costPct.toFixed(1)}%</td>
                     </tr>
                   );
@@ -4038,13 +4044,15 @@ export default function App() {
         });
       });
       const dishCostPerUnit = dishTotalCost(dish.id, data);
-      // Doanh thu (dish_sales) dùng đúng giá bán THỰC TẾ trong file (r.unitPriceInFile) — không dùng
-      // giá cấu hình cứng trong Cost món ăn — để "Doanh thu từ phiếu xuất kho" luôn khớp với
-      // "Doanh thu bán hàng theo hoá đơn", kể cả khi hoá đơn có khuyến mãi/giảm giá.
-      const dishSellingPrice = r.unitPriceInFile || dish.sellingPrice || 0;
+      // Doanh thu (dish_sales) lấy thẳng cột "Doanh thu" của file (r.revenueInFile) — không tự nhân
+      // SL bán × Đơn giá, không dùng giá cấu hình cứng trong Cost món ăn — vì có trường hợp Đơn giá
+      // niêm yết không đổi nhưng thực thu khác (khuyến mãi/giảm giá/tặng kèm riêng từng dòng hoá đơn).
+      // Nhờ đó "Doanh thu từ phiếu xuất kho" luôn khớp đúng với "Doanh thu bán hàng theo hoá đơn".
+      const lineRevenue = r.revenueInFile || 0;
+      const dishSellingPrice = r.quantitySold > 0 ? lineRevenue / r.quantitySold : 0;
       saleRows.push({
         dish_id: dish.id, quantity: r.quantitySold, unit_price: dishSellingPrice,
-        total_amount: dishSellingPrice * r.quantitySold, cost_amount: dishCostPerUnit * r.quantitySold,
+        total_amount: lineRevenue, cost_amount: dishCostPerUnit * r.quantitySold,
         invoice_no: r.invoiceNo || null, receipt_code: null,
         sale_date: rowDate, created_by: currentUser.id,
       });
