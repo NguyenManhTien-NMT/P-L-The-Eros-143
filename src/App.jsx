@@ -61,6 +61,16 @@ function daysAgoISO(n) {
 function stripDiacritics(str) {
   return (str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
 }
+// Chuẩn hoá chuỗi để SO KHỚP tên món/tên NVL giữa 2 nguồn khác nhau (Cost món ăn
+// gõ tay vs. tên trích từ file Excel POS) — ngoài bỏ dấu còn loại các ký tự
+// "vô hình" hay gặp trong file Excel xuất từ phần mềm POS (khoảng trắng không
+// ngắt dòng, zero-width space...) và gộp nhiều khoảng trắng liền nhau thành 1.
+function normalizeForMatch(str) {
+  return stripDiacritics(str)
+    .replace(/[\u200B-\u200D\uFEFF\u00A0]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 // Đọc 1 file Excel (.xlsx/.xls/.csv) thành mảng-các-mảng thô (không giả định dòng 1
 // là tiêu đề, vì nhiều file xuất từ phần mềm POS có vài dòng mô tả phía trên bảng thật).
@@ -1691,7 +1701,7 @@ function XuatExcelImportForm({ data, onImport }) {
         const quantitySold = Number(pickCol(row, "SL bán", "SL ban", "Số lượng bán", "Số lượng", "So luong")) || 0;
         const invoiceNo = String(pickCol(row, "Số hóa đơn", "Số hoá đơn", "So hoa don", "Mã hoá đơn") ?? "").trim();
         if (!dishName || quantitySold <= 0) return;
-        const dish = data.dishes.find((d) => stripDiacritics(d.name).trim() === stripDiacritics(dishName).trim());
+        const dish = data.dishes.find((d) => normalizeForMatch(d.name) === normalizeForMatch(dishName));
         if (!dish) { unmatchedNames.add(dishName); return; }
         valid.push({ dishName, dishId: dish.id, quantitySold, invoiceNo });
       });
@@ -3163,7 +3173,7 @@ export default function App() {
     const exportRows = [];
     const notFoundDishes = new Set();
     rows.forEach((r) => {
-      const dish = data.dishes.find((d) => stripDiacritics(d.name).trim() === stripDiacritics(r.dishName).trim());
+      const dish = data.dishes.find((d) => normalizeForMatch(d.name) === normalizeForMatch(r.dishName));
       if (!dish) { notFoundDishes.add(r.dishName); return; }
       const ingredients = data.dishIngredients.filter((i) => i.dishId === dish.id);
       ingredients.forEach((ing) => {
