@@ -24,6 +24,7 @@ const ROLE_META = {
   nhan_vien_kho: { label: "Nhân viên kho", color: "bg-sky-50 text-sky-700 border-sky-200" },
   quan_ly: { label: "Quản lý", color: "bg-slate-800 text-white border-slate-800" },
   bao_cao: { label: "Quản lý (Báo cáo)", color: "bg-indigo-50 text-indigo-700 border-indigo-200" },
+  thu_ngan: { label: "Thu ngân", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
 };
 const PAYMENT_TYPE_META = {
   tien_mat: { label: "Tiền mặt", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -246,6 +247,12 @@ function mapDishSale(r) {
     receiptCode: r.receipt_code, saleDate: r.sale_date, createdBy: r.created_by, createdAt: r.created_at,
   };
 }
+function mapCashierReceipt(r) {
+  return {
+    id: r.id, receiptDate: r.receipt_date, cashAmount: Number(r.cash_amount) || 0,
+    bankAmount: Number(r.bank_amount) || 0, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
 function mapDishIngredient(i) {
   return {
     id: i.id, dishId: i.dish_id, productId: i.product_id,
@@ -256,7 +263,7 @@ function mapDishIngredient(i) {
 }
 
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -269,8 +276,9 @@ async function fetchAll() {
     supabase.from("dishes").select("*").order("name"),
     supabase.from("dish_ingredients").select("*").order("sort_order"),
     supabase.from("dish_sales").select("*").order("sale_date", { ascending: false }),
+    supabase.from("cashier_receipts").select("*").order("receipt_date", { ascending: false }),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -284,6 +292,7 @@ async function fetchAll() {
     dishes: (dish.data || []).map(mapDish),
     dishIngredients: (dishIng.data || []).map(mapDishIngredient),
     dishSales: (dishSale.data || []).map(mapDishSale),
+    cashierReceipts: (cashierRec.data || []).map(mapCashierReceipt),
   };
 }
 
@@ -445,6 +454,42 @@ function TextField({ label, hint, ...props }) {
     <label className="block">
       {label && <span className="block text-xs font-medium text-slate-600 mb-1">{label}</span>}
       <input {...props} className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm transition focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-600" />
+      {hint && <span className="block text-[11px] text-slate-400 mt-1">{hint}</span>}
+    </label>
+  );
+}
+// Ô nhập số tiền — tự hiện dấu phẩy ngăn cách hàng nghìn trong lúc gõ (VD: 1,500,000).
+// Giá trị thật (không dấu phẩy) trả về qua onChange(rawDigitsString), cho phần thập phân
+// (số lượng dạng kg lẻ) dùng allowDecimal để giữ được dấu chấm thập phân.
+function MoneyField({ label, value, onChange, placeholder = "0", hint, className = "", allowDecimal = false, disabled }) {
+  const formatDisplay = (v) => {
+    if (v === "" || v === null || v === undefined) return "";
+    const s = String(v);
+    if (allowDecimal) {
+      const [intPart, decPart] = s.split(".");
+      const intFmt = intPart === "" ? "" : Number(intPart || 0).toLocaleString("en-US");
+      return decPart !== undefined ? `${intFmt}.${decPart}` : intFmt;
+    }
+    return s === "" ? "" : Number(s).toLocaleString("en-US");
+  };
+  const handleChange = (e) => {
+    const raw = allowDecimal
+      ? e.target.value.replace(/[^\d.]/g, "").replace(/(\..*)\./g, "$1")
+      : e.target.value.replace(/[^\d]/g, "");
+    onChange(raw);
+  };
+  return (
+    <label className="block">
+      {label && <span className="block text-xs font-medium text-slate-600 mb-1">{label}</span>}
+      <input
+        type="text"
+        inputMode="decimal"
+        value={formatDisplay(value)}
+        onChange={handleChange}
+        placeholder={placeholder}
+        disabled={disabled}
+        className={`w-full px-3 py-2 rounded-xl border border-slate-300 text-sm transition focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-600 disabled:bg-slate-50 disabled:text-slate-400 ${className}`}
+      />
       {hint && <span className="block text-[11px] text-slate-400 mt-1">{hint}</span>}
     </label>
   );
@@ -2519,8 +2564,8 @@ function StockOpeningForm({ data, currentUser, onSubmit }) {
       </div>
       <div className="grid sm:grid-cols-2 gap-3 mb-3">
         <TextField label="Ngày chốt" type="date" value={asOfDate} onChange={(e) => setAsOfDate(e.target.value)} />
-        <TextField label={`Số lượng thực tế${selectedProduct ? ` (${selectedProduct.unit})` : ""}`} type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-        <TextField label="Đơn giá (đ)" type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
+        <MoneyField label={`Số lượng thực tế${selectedProduct ? ` (${selectedProduct.unit})` : ""}`} allowDecimal value={quantity} onChange={setQuantity} />
+        <MoneyField label="Đơn giá (đ)" value={unitPrice} onChange={setUnitPrice} />
         <TextField label="Ghi chú" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
@@ -2687,6 +2732,7 @@ function AddEmployeeForm({ onAdd }) {
           <option value="nhan_vien_kho">Nhân viên kho</option>
           <option value="quan_ly">Quản lý</option>
           <option value="bao_cao">Quản lý (Báo cáo)</option>
+          <option value="thu_ngan">Thu ngân</option>
         </SelectField>
         <TextField label="Xác nhận: mật khẩu của chính bạn" type="password" value={adminPassword} onChange={(e) => setAdminPassword(e.target.value)} className="sm:col-span-3" />
       </div>
@@ -2761,7 +2807,7 @@ function PhieuChiForm({ onSubmit }) {
           {chiCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
         </SelectField>
         <TextField label="Tên khoản chi" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="VD: Tiền điện tháng 8" />
-        <TextField label="Số tiền" type="number" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+        <MoneyField label="Số tiền" value={amount} onChange={setAmount} />
         <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
@@ -2771,7 +2817,94 @@ function PhieuChiForm({ onSubmit }) {
   );
 }
 
-function QuyModule({ data, onSubmitExpense }) {
+function CashierReceiptForm({ onSubmit }) {
+  const [receiptDate, setReceiptDate] = useState(todayISO());
+  const [cashAmount, setCashAmount] = useState("");
+  const [bankAmount, setBankAmount] = useState("");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const total = (Number(cashAmount) || 0) + (Number(bankAmount) || 0);
+
+  const submit = async () => {
+    if (total <= 0) { setError("Vui lòng nhập ít nhất 1 trong 2 khoản: tiền mặt hoặc tiền ngân hàng."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSubmit({ receiptDate, cashAmount, bankAmount, note: note.trim() });
+      setCashAmount(""); setBankAmount(""); setNote("");
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-3">Ghi nhận Thu ngân</p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
+        <TextField label="Ngày thu" type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.target.value)} />
+        <div />
+        <MoneyField label="Thu tiền mặt" value={cashAmount} onChange={setCashAmount} />
+        <MoneyField label="Thu tiền ngân hàng" value={bankAmount} onChange={setBankAmount} />
+        <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
+      </div>
+      <div className="bg-emerald-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm mb-4">
+        <span className="text-emerald-700">Tổng thu</span>
+        <span className="font-semibold text-emerald-800">{fmtMoney(total)}</span>
+      </div>
+      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <TrendingUp size={15} />} Lưu phiếu thu</PrimaryButton>
+      <p className="text-xs text-slate-400 mt-2">Số liệu này độc lập với doanh thu tính từ báo cáo bán hàng — dùng để Quản lý đối chiếu quỹ thực tế.</p>
+    </Card>
+  );
+}
+
+function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierReceipt }) {
+  const myReceipts = data.cashierReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 15);
+  const todayReceipts = data.cashierReceipts.filter((r) => r.receiptDate === todayISO());
+  const todayTotal = todayReceipts.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
+
+  return (
+    <div>
+      <SectionTitle icon={Wallet} title="Thu ngân" subtitle="Ghi nhận phiếu thu (tiền mặt/ngân hàng) và phiếu chi phát sinh trong ngày" />
+
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        <MetricCard label="Tổng thu hôm nay" value={fmtMoney(todayTotal)} icon={TrendingUp} accent="emerald" />
+        <MetricCard label="Số phiếu thu hôm nay" value={fmtNumber(todayReceipts.length)} icon={Receipt} accent="teal" />
+      </div>
+
+      <CashierReceiptForm onSubmit={onSubmitCashierReceipt} />
+      <PhieuChiForm onSubmit={onSubmitExpense} />
+
+      <Card className="p-0 overflow-hidden">
+        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu thu gần đây (của bạn)</p></div>
+        {myReceipts.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có phiếu thu nào." /> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Ngân hàng</th><th className="px-3 py-2 text-right">Tổng</th>
+              </tr></thead>
+              <tbody>
+                {myReceipts.map((r) => (
+                  <tr key={r.id} className="border-b border-slate-50 last:border-0">
+                    <td className="px-3 py-2 text-slate-500">{fmtDate(r.receiptDate)}</td>
+                    <td className="px-3 py-2 text-right">{fmtMoney(r.cashAmount)}</td>
+                    <td className="px-3 py-2 text-right">{fmtMoney(r.bankAmount)}</td>
+                    <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function QuyModule({ data, onSubmitExpense, onBulkImportFromBills }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
 
@@ -2786,6 +2919,16 @@ function QuyModule({ data, onSubmitExpense }) {
 
   const soDu = totalThu - totalChi;
 
+  // Thu ngân đã thu (Thu tiền mặt + Thu tiền ngân hàng) — độc lập với "Phiếu thu" tính từ báo cáo bán hàng.
+  const cashierInRange = data.cashierReceipts.filter((r) => r.receiptDate >= from && r.receiptDate <= to);
+  const totalThuNgan = cashierInRange.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
+  const totalThuNganCash = cashierInRange.reduce((s, r) => s + r.cashAmount, 0);
+  const totalThuNganBank = cashierInRange.reduce((s, r) => s + r.bankAmount, 0);
+
+  // So sánh Thu ngân vs Doanh thu từ báo cáo bán hàng để cảnh báo lệch quỹ.
+  const diff = totalThuNgan - totalThu;
+  const diffPct = totalThu > 0 ? (diff / totalThu) * 100 : 0;
+
   return (
     <div>
       <SectionTitle icon={Wallet} title="Quỹ" subtitle="Sổ quỹ thu-chi: Phiếu thu tự động theo doanh số bán hàng, Phiếu chi ghi tay theo ngày" />
@@ -2798,12 +2941,54 @@ function QuyModule({ data, onSubmitExpense }) {
       </Card>
 
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
-        <MetricCard label="Tổng thu" value={fmtMoney(totalThu)} icon={TrendingUp} accent="emerald" />
+        <MetricCard label="Tổng thu (báo cáo bán hàng)" value={fmtMoney(totalThu)} icon={TrendingUp} accent="emerald" />
         <MetricCard label="Tổng chi" value={fmtMoney(totalChi)} icon={TrendingDown} accent="rose" />
         <MetricCard label="Số dư quỹ" value={fmtMoney(soDu)} icon={Wallet} accent={soDu >= 0 ? "teal" : "rose"} />
       </div>
 
+      {/* So sánh Thu ngân đã thu vs Doanh thu từ báo cáo bán hàng — cảnh báo lệch quỹ */}
+      <Card className="p-4 sm:p-5 mb-5">
+        <p className="font-semibold text-slate-800 text-sm mb-3">Đối chiếu Thu ngân với Doanh thu bán hàng</p>
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
+          <div className="bg-slate-50 rounded-xl px-3 py-2">
+            <p className="text-xs text-slate-500">Thu ngân - Tiền mặt</p>
+            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalThuNganCash)}</p>
+          </div>
+          <div className="bg-slate-50 rounded-xl px-3 py-2">
+            <p className="text-xs text-slate-500">Thu ngân - Ngân hàng</p>
+            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalThuNganBank)}</p>
+          </div>
+          <div className="bg-slate-50 rounded-xl px-3 py-2">
+            <p className="text-xs text-slate-500">Tổng Thu ngân đã thu</p>
+            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalThuNgan)}</p>
+          </div>
+          <div className="bg-slate-50 rounded-xl px-3 py-2">
+            <p className="text-xs text-slate-500">Doanh thu báo cáo bán hàng</p>
+            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalThu)}</p>
+          </div>
+        </div>
+        {totalThu === 0 && totalThuNgan === 0 ? (
+          <p className="text-xs text-slate-400">Chưa có đủ dữ liệu để đối chiếu trong khoảng thời gian này.</p>
+        ) : diff === 0 ? (
+          <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
+            <CheckCircle2 size={15} /> Khớp tuyệt đối giữa Thu ngân và Doanh thu báo cáo bán hàng.
+          </div>
+        ) : diff > 0 ? (
+          <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+            <AlertTriangle size={15} /> <b>Thừa quỹ</b> {fmtMoney(diff)} ({diffPct.toFixed(1)}%) — Thu ngân báo thu nhiều hơn doanh thu ghi nhận từ báo cáo bán hàng.
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+            <AlertTriangle size={15} /> Thiếu {fmtMoney(Math.abs(diff))} ({Math.abs(diffPct).toFixed(1)}%) — có thể <b>nhân sự chưa cập nhật hết các chi phí phát sinh</b> (chi trực tiếp từ quỹ chưa ghi phiếu chi), hoặc Thu ngân chưa nộp đủ.
+          </div>
+        )}
+      </Card>
+
       <PhieuChiForm onSubmit={onSubmitExpense} />
+
+      {onBulkImportFromBills && (
+        <XuatExcelImportForm data={data} onImport={onBulkImportFromBills} />
+      )}
 
       <div className="grid lg:grid-cols-2 gap-5">
         <Card className="p-0 overflow-hidden">
@@ -2915,10 +3100,10 @@ function BaoTriVatTuForm({ currentUser, onSubmit }) {
                     <input value={l.itemName} onChange={(e) => updateLine(l.key, { itemName: e.target.value })} placeholder="VD: Sửa máy hút mùi, mua khay inox..." className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
                   </td>
                   <td className="px-2 py-1.5">
-                    <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
+                    <MoneyField allowDecimal value={l.quantity} onChange={(v) => updateLine(l.key, { quantity: v })} className="!py-1.5" />
                   </td>
                   <td className="px-2 py-1.5">
-                    <input type="number" value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} placeholder="0" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
+                    <MoneyField value={l.unitPrice} onChange={(v) => updateLine(l.key, { unitPrice: v })} className="!py-1.5" />
                   </td>
                   <td className="px-2 py-1.5 text-right font-medium text-slate-700">{rowTotal > 0 ? fmtMoney(rowTotal) : "—"}</td>
                   <td className="px-2 py-1.5 text-center">
@@ -2982,13 +3167,7 @@ function PresetExpenseForm({ category, onSubmit }) {
         {meta.presetItems.map((n) => (
           <div key={n} className="flex items-center gap-3">
             <span className="text-sm text-slate-600 w-32 shrink-0">{n}</span>
-            <input
-              type="number"
-              value={amounts[n]}
-              onChange={(e) => setAmounts((prev) => ({ ...prev, [n]: e.target.value }))}
-              placeholder="0"
-              className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40"
-            />
+            <MoneyField value={amounts[n]} onChange={(v) => setAmounts((prev) => ({ ...prev, [n]: v }))} className="flex-1" />
             <span className="text-xs text-slate-400 w-8">đ</span>
           </div>
         ))}
@@ -3043,7 +3222,7 @@ function OtherExpenseForm({ onSubmit }) {
         {lines.map((l) => (
           <div key={l.key} className="flex items-center gap-2">
             <input value={l.itemName} onChange={(e) => updateLine(l.key, { itemName: e.target.value })} placeholder="Tên khoản chi..." className="flex-1 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
-            <input type="number" value={l.amount} onChange={(e) => updateLine(l.key, { amount: e.target.value })} placeholder="Số tiền" className="w-40 px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
+            <MoneyField value={l.amount} onChange={(v) => updateLine(l.key, { amount: v })} placeholder="Số tiền" className="w-40" />
             <button type="button" onClick={() => removeRow(l.key)} className="text-slate-400 hover:text-rose-600 shrink-0"><X size={16} /></button>
           </div>
         ))}
@@ -3157,7 +3336,7 @@ function DishCreateForm({ onSubmit }) {
       <p className="font-semibold text-slate-800 text-sm mb-3">Thêm món ăn mới</p>
       <div className="grid sm:grid-cols-2 gap-3 mb-3">
         <TextField label="Tên món" value={name} onChange={(e) => setName(e.target.value)} placeholder="VD: Gỏi cá trê xù" />
-        <TextField label="Giá bán / suất (đ, tuỳ chọn)" type="number" value={sellingPrice} onChange={(e) => setSellingPrice(e.target.value)} />
+        <MoneyField label="Giá bán / suất (đ, tuỳ chọn)" value={sellingPrice} onChange={setSellingPrice} />
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
       <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Thêm món</PrimaryButton>
@@ -3245,7 +3424,7 @@ function DishRecipeEditor({ dish, data, onSave, onClose }) {
                       namePlaceholder="Tên NVL"
                     />
                     <td className="px-2 py-1.5">
-                      <input type="number" value={l.quantity} onChange={(e) => updateLine(l.key, { quantity: e.target.value })} placeholder={p ? p.unit : "0"} className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
+                      <MoneyField allowDecimal value={l.quantity} onChange={(v) => updateLine(l.key, { quantity: v })} placeholder={p ? p.unit : "0"} className="!py-1.5" />
                     </td>
                     <td className="px-2 py-1.5">
                       <select value={l.costMode} onChange={(e) => updateLine(l.key, { costMode: e.target.value })} className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-sky-500/40">
@@ -3255,7 +3434,7 @@ function DishRecipeEditor({ dish, data, onSave, onClose }) {
                     </td>
                     <td className="px-2 py-1.5">
                       {l.costMode === "phan_bo" ? (
-                        <input type="number" value={l.allocatedCost} onChange={(e) => updateLine(l.key, { allocatedCost: e.target.value })} placeholder="Giá phân bổ (đ)" className="w-full px-2 py-1.5 rounded-lg border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
+                        <MoneyField value={l.allocatedCost} onChange={(v) => updateLine(l.key, { allocatedCost: v })} placeholder="Giá phân bổ (đ)" className="!py-1.5" />
                       ) : (
                         <p className="px-2 py-1.5 text-slate-400 text-xs">{p ? `${fmtMoney(avgPrice)}/${p.unit}` : "—"}</p>
                       )}
@@ -3535,7 +3714,7 @@ export default function App() {
   const handleLogin = (employee) => {
     setCurrentUser(employee);
     localStorage.setItem(SESSION_KEY, employee.id);
-    setTab(employee.role === "bao_cao" ? "lich_su_nhap" : "nhap");
+    setTab(employee.role === "bao_cao" ? "lich_su_nhap" : employee.role === "thu_ngan" ? "thu_ngan" : "nhap");
   };
   const handleLogout = () => {
     setCurrentUser(null);
@@ -3733,6 +3912,18 @@ export default function App() {
     showToast(`Đã ghi nhận ${rows.length} khoản chi phí`);
   };
 
+  // Thu ngân — ghi nhận Thu tiền mặt / Thu tiền ngân hàng theo ngày (độc lập với doanh thu
+  // tính từ báo cáo bán hàng/dish_sales) — dùng để đối chiếu quỹ thực tế trong tab Quỹ.
+  const submitCashierReceipt = async ({ receiptDate, cashAmount, bankAmount, note }) => {
+    const { error } = await supabase.from("cashier_receipts").insert({
+      receipt_date: receiptDate || todayISO(), cash_amount: Number(cashAmount) || 0,
+      bank_amount: Number(bankAmount) || 0, note: note || null, created_by: currentUser.id,
+    });
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã ghi nhận phiếu thu ngân");
+  };
+
   // ---------------- Cost món ăn ----------------
   const addDish = async ({ name, sellingPrice, note }) => {
     const { error } = await supabase.from("dishes").insert({
@@ -3807,6 +3998,7 @@ export default function App() {
 
   const isQuanLy = currentUser.role === "quan_ly";
   const isBaoCao = currentUser.role === "bao_cao";
+  const isThuNgan = currentUser.role === "thu_ngan";
   const canViewReports = isQuanLy || isBaoCao;
   const NAV_NHAN_VIEN = [
     { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
@@ -3840,7 +4032,11 @@ export default function App() {
     { key: "bao_cao_nhap", label: "Báo cáo nhập", icon: BarChart3 },
     { key: "bao_cao_xuat", label: "Báo cáo xuất", icon: BarChart3 },
   ];
-  const navItems = isQuanLy ? NAV_QUAN_LY : isBaoCao ? NAV_BAO_CAO : NAV_NHAN_VIEN;
+  // Nhóm 4: Thu ngân — chỉ có màn ghi phiếu thu (tiền mặt/ngân hàng) + phiếu chi phát sinh.
+  const NAV_THU_NGAN = [
+    { key: "thu_ngan", label: "Thu ngân", icon: Wallet },
+  ];
+  const navItems = isQuanLy ? NAV_QUAN_LY : isBaoCao ? NAV_BAO_CAO : isThuNgan ? NAV_THU_NGAN : NAV_NHAN_VIEN;
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-sky-50 via-slate-50 to-slate-50 lg:flex">
@@ -3920,7 +4116,8 @@ export default function App() {
             {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
-            {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} />}
+            {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportFromBills={bulkImportXuatFromBills} />}
+            {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
               <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
