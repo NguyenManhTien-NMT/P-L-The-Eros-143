@@ -2901,9 +2901,48 @@ function MonAnModule({ data, onAddDish, onSaveRecipe, onDeleteDish }) {
     try { await onDeleteDish(dishId); } finally { setDeleting(null); }
   };
 
+  // Tỷ lệ cost bình quân: tổng chi phí nguyên liệu / tổng giá bán, tính trên các
+  // món ĐÃ có giá bán (món chưa đặt giá bán không có ý nghĩa để đưa vào tỷ lệ này).
+  const costRatioStats = useMemo(() => {
+    let totalCost = 0, totalRevenue = 0, countPriced = 0;
+    data.dishes.forEach((d) => {
+      if (!d.sellingPrice || d.sellingPrice <= 0) return;
+      totalCost += dishTotalCost(d.id, data);
+      totalRevenue += d.sellingPrice;
+      countPriced += 1;
+    });
+    const ratio = totalRevenue > 0 ? (totalCost / totalRevenue) * 100 : null;
+    return { ratio, totalCost, totalRevenue, countPriced };
+  }, [data]);
+
   return (
     <div>
       <SectionTitle icon={Package} title="Cost món ăn" subtitle="Công thức, chi phí nguyên liệu và lợi nhuận theo từng món" />
+
+      <Card className="p-4 sm:p-5 mb-5">
+        <p className="font-semibold text-slate-800 text-sm mb-3">Tỷ lệ cost bình quân</p>
+        {costRatioStats.ratio === null ? (
+          <p className="text-xs text-slate-400">Chưa có món nào có giá bán để tính tỷ lệ cost.</p>
+        ) : (
+          <div className="grid sm:grid-cols-3 gap-2">
+            <div className={`rounded-xl px-3 py-2 ${costRatioStats.ratio <= 35 ? "bg-emerald-50" : costRatioStats.ratio <= 45 ? "bg-amber-50" : "bg-rose-50"}`}>
+              <p className="text-xs text-slate-500">Tỷ lệ cost bình quân</p>
+              <p className={`text-lg font-semibold ${costRatioStats.ratio <= 35 ? "text-emerald-800" : costRatioStats.ratio <= 45 ? "text-amber-800" : "text-rose-800"}`}>
+                {costRatioStats.ratio.toFixed(1)}%
+              </p>
+            </div>
+            <div className="bg-slate-50 rounded-xl px-3 py-2">
+              <p className="text-xs text-slate-500">Tổng chi phí nguyên liệu</p>
+              <p className="text-sm font-semibold text-slate-700">{fmtMoney(costRatioStats.totalCost)}</p>
+            </div>
+            <div className="bg-slate-50 rounded-xl px-3 py-2">
+              <p className="text-xs text-slate-500">Tổng giá bán ({costRatioStats.countPriced} món)</p>
+              <p className="text-sm font-semibold text-slate-700">{fmtMoney(costRatioStats.totalRevenue)}</p>
+            </div>
+          </div>
+        )}
+      </Card>
+
       <DishCreateForm onSubmit={onAddDish} />
 
       <Card className="p-0 overflow-hidden">
@@ -2914,11 +2953,15 @@ function MonAnModule({ data, onAddDish, onSaveRecipe, onDeleteDish }) {
               const cost = dishTotalCost(d.id, data);
               const ingCount = data.dishIngredients.filter((i) => i.dishId === d.id).length;
               const profit = d.sellingPrice ? d.sellingPrice - cost : null;
+              const costRatio = d.sellingPrice > 0 ? (cost / d.sellingPrice) * 100 : null;
               return (
                 <div key={d.id} className="px-4 py-3 flex items-center justify-between gap-3 flex-wrap">
                   <div className="min-w-0">
                     <p className="text-sm font-medium text-slate-800 truncate">{d.name}</p>
-                    <p className="text-xs text-slate-400">{ingCount} nguyên liệu · Chi phí {fmtMoney(cost)}{d.sellingPrice ? ` · Giá bán ${fmtMoney(d.sellingPrice)}` : ""}</p>
+                    <p className="text-xs text-slate-400">
+                      {ingCount} nguyên liệu · Chi phí {fmtMoney(cost)}{d.sellingPrice ? ` · Giá bán ${fmtMoney(d.sellingPrice)}` : ""}
+                      {costRatio !== null && ` · Cost ${costRatio.toFixed(1)}%`}
+                    </p>
                   </div>
                   <div className="flex items-center gap-2 shrink-0">
                     {profit !== null && (
