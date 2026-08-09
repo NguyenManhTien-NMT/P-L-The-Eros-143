@@ -36,6 +36,15 @@ const CLASSIFICATION_META = {
   TP: { label: "Thành phẩm", color: "bg-purple-50 text-purple-700 border-purple-200" },
 };
 const SESSION_KEY = "kho_session_employee_id";
+// Tab mặc định theo vai trò — dùng chung cho cả lúc đăng nhập MỚI lẫn lúc App tự khôi phục
+// phiên đăng nhập đã lưu (localStorage) khi mở lại trang, để tránh lệch giữa sidebar (đã lọc
+// đúng theo role) và tab nội dung đang hiển thị (trước đây chỉ set đúng lúc login, quên set
+// lại khi khôi phục phiên — khiến ví dụ Thu ngân mở lại app vẫn thấy nội dung "Nhập hàng").
+function defaultTabForRole(role) {
+  if (role === "bao_cao") return "lich_su_nhap";
+  if (role === "thu_ngan") return "thu_ngan";
+  return "nhap";
+}
 
 // ---------------------------------------------------------------------------
 // HÀM TIỆN ÍCH
@@ -4170,7 +4179,7 @@ export default function App() {
       if (savedId) {
         const fresh = await fetchAll();
         const found = fresh.employees.find((e) => e.id === savedId);
-        if (found) setCurrentUser(found);
+        if (found) { setCurrentUser(found); setTab(defaultTabForRole(found.role)); }
         else localStorage.removeItem(SESSION_KEY);
       }
       setLoading(false);
@@ -4186,7 +4195,7 @@ export default function App() {
   const handleLogin = (employee) => {
     setCurrentUser(employee);
     localStorage.setItem(SESSION_KEY, employee.id);
-    setTab(employee.role === "bao_cao" ? "lich_su_nhap" : employee.role === "thu_ngan" ? "thu_ngan" : "nhap");
+    setTab(defaultTabForRole(employee.role));
   };
   const handleLogout = () => {
     setCurrentUser(null);
@@ -4651,19 +4660,19 @@ export default function App() {
 
         <div className="max-w-6xl mx-auto px-4 py-6">
           <TabErrorBoundary resetKey={tab}>
-            {tab === "nhap" && !isBaoCao && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
-            {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
-            {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
-            {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
-            {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
+            {tab === "nhap" && !isBaoCao && !isThuNgan && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
+            {tab === "lich_su_nhap" && !isThuNgan && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
+            {tab === "xuat" && !isThuNgan && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
+            {tab === "chi_phi" && !isThuNgan && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
+            {tab === "quy" && canViewReports && !isThuNgan && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
             {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} onUpdateCashierReceipt={updateCashierReceipt} onUpdateExpense={updateExpenseRecord} />}
-            {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
-            {tab === "danh_muc" && !isBaoCao && (
+            {tab === "mon_an" && !isThuNgan && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
+            {tab === "danh_muc" && !isBaoCao && !isThuNgan && (
               <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
             )}
-            {tab === "bao_cao_nhap" && canViewReports && <BaoCaoNhapModule data={data} />}
-            {tab === "bao_cao_xuat" && canViewReports && <BaoCaoXuatModule data={data} />}
-            {tab === "ton_kho" && !isBaoCao && <TonKhoModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
+            {tab === "bao_cao_nhap" && canViewReports && !isThuNgan && <BaoCaoNhapModule data={data} />}
+            {tab === "bao_cao_xuat" && canViewReports && !isThuNgan && <BaoCaoXuatModule data={data} />}
+            {tab === "ton_kho" && !isBaoCao && !isThuNgan && <TonKhoModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
             {tab === "tai_khoan" && isQuanLy && <TaiKhoanModule currentUser={currentUser} employees={data.employees} onAddEmployee={addEmployee} />}
           </TabErrorBoundary>
         </div>
