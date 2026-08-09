@@ -250,7 +250,10 @@ function mapDishSale(r) {
 function mapCashierReceipt(r) {
   return {
     id: r.id, receiptDate: r.receipt_date, cashAmount: Number(r.cash_amount) || 0,
-    bankAmount: Number(r.bank_amount) || 0, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
+    bankAmount: Number(r.bank_amount) || 0,
+    openingCashAmount: r.opening_cash_amount === null || r.opening_cash_amount === undefined ? null : Number(r.opening_cash_amount),
+    openingBankAmount: r.opening_bank_amount === null || r.opening_bank_amount === undefined ? null : Number(r.opening_bank_amount),
+    note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
   };
 }
 function mapInvoiceRevenue(r) {
@@ -2894,22 +2897,27 @@ function PhieuChiForm({ onSubmit }) {
   );
 }
 
-function CashierReceiptForm({ onSubmit }) {
+function CashierReceiptForm({ data, onSubmit }) {
   const [receiptDate, setReceiptDate] = useState(todayISO());
   const [cashAmount, setCashAmount] = useState("");
   const [bankAmount, setBankAmount] = useState("");
+  const [openingCashAmount, setOpeningCashAmount] = useState("");
+  const [openingBankAmount, setOpeningBankAmount] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const total = (Number(cashAmount) || 0) + (Number(bankAmount) || 0);
+  const expected = useMemo(() => expectedOpeningBalance(data, receiptDate), [data, receiptDate]);
+  const mismatchCash = expected && openingCashAmount !== "" && Number(openingCashAmount) !== expected.cash;
+  const mismatchBank = expected && openingBankAmount !== "" && Number(openingBankAmount) !== expected.bank;
 
   const submit = async () => {
     if (total <= 0) { setError("Vui lòng nhập ít nhất 1 trong 2 khoản: tiền mặt hoặc tiền ngân hàng."); return; }
     setError(""); setSaving(true);
     try {
-      await onSubmit({ receiptDate, cashAmount, bankAmount, note: note.trim() });
-      setCashAmount(""); setBankAmount(""); setNote("");
+      await onSubmit({ receiptDate, cashAmount, bankAmount, openingCashAmount, openingBankAmount, note: note.trim() });
+      setCashAmount(""); setBankAmount(""); setOpeningCashAmount(""); setOpeningBankAmount(""); setNote("");
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
     } finally {
@@ -2920,9 +2928,21 @@ function CashierReceiptForm({ onSubmit }) {
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-3">Ghi nhận Thu ngân</p>
-      <div className="grid sm:grid-cols-2 gap-3 mb-3">
+      <div className="grid sm:grid-cols-2 gap-3 mb-1">
         <TextField label="Ngày thu" type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.target.value)} />
         <div />
+        <MoneyField label="Tồn quỹ đầu ngày - Tiền mặt" value={openingCashAmount} onChange={setOpeningCashAmount} />
+        <MoneyField label="Tồn quỹ đầu ngày - Ngân hàng" value={openingBankAmount} onChange={setOpeningBankAmount} />
+      </div>
+      {expected && (
+        <p className="text-xs text-slate-400 mb-3">Số App tự tính từ cuối ngày {fmtDate(expected.fromDate)}: Tiền mặt <b className="text-slate-500">{fmtMoney(expected.cash)}</b> · Ngân hàng <b className="text-slate-500">{fmtMoney(expected.bank)}</b></p>
+      )}
+      {(mismatchCash || mismatchBank) && (
+        <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-1">
+          <AlertTriangle size={12} className="shrink-0" /> Tồn quỹ đầu ngày bạn nhập lệch với số App tự tính từ hôm trước — vẫn lưu được, Quản lý sẽ thấy cảnh báo này để đối chiếu lại.
+        </div>
+      )}
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
         <MoneyField label="Thu tiền mặt" value={cashAmount} onChange={setCashAmount} />
         <MoneyField label="Thu tiền ngân hàng" value={bankAmount} onChange={setBankAmount} />
         <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
@@ -2952,7 +2972,7 @@ function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierRece
         <MetricCard label="Số phiếu thu hôm nay" value={fmtNumber(todayReceipts.length)} icon={Receipt} accent="teal" />
       </div>
 
-      <CashierReceiptForm onSubmit={onSubmitCashierReceipt} />
+      <CashierReceiptForm data={data} onSubmit={onSubmitCashierReceipt} />
       <PhieuChiForm onSubmit={onSubmitExpense} />
 
       <Card className="p-0 overflow-hidden">
@@ -3064,11 +3084,12 @@ function InvoiceRevenueImportForm({ onImport }) {
   };
 
   const totalPreview = preview.reduce((s, r) => s + r.amount, 0);
+  const previewDates = Array.from(new Set(preview.map((r) => r.invoiceDate))).sort();
 
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Import Doanh thu bán hàng theo hoá đơn</p>
-      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>, và nếu có thêm cột <b>Tiền mặt</b>/<b>Chuyển khoản</b> sẽ tự tách quỹ theo phương thức thanh toán. <b className="text-rose-600">Import file mới sẽ thay thế toàn bộ dữ liệu doanh thu cũ</b> (không cộng dồn) — luôn dùng file xuất đầy đủ cho cả khoảng thời gian cần theo dõi. Hoá đơn có ghi chú "đã huỷ" sẽ tự động bị loại bỏ, không tính vào doanh thu.</p>
+      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>, và nếu có thêm cột <b>Tiền mặt</b>/<b>Chuyển khoản</b> sẽ tự tách quỹ theo phương thức thanh toán. Có thể xuất file cho <b>1 ngày</b> hoặc nhiều ngày/cả tháng đều được — import sẽ chỉ <b className="text-amber-700">thay thế đúng những ngày có trong file</b>, không ảnh hưởng dữ liệu các ngày khác. Hoá đơn có ghi chú "đã huỷ" sẽ tự động bị loại bỏ, không tính vào doanh thu.</p>
       <div className="flex items-center gap-2 mb-3">
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
           <Upload size={15} /> {fileName || "Chọn file Excel..."}
@@ -3092,30 +3113,78 @@ function InvoiceRevenueImportForm({ onImport }) {
       )}
       {preview.length > 0 && (
         <>
-          <p className="text-xs text-slate-500 mb-3">{preview.length} hoá đơn · Tổng doanh thu <span className="font-semibold text-sky-700">{fmtMoney(totalPreview)}</span></p>
-          <p className="text-xs text-rose-600 mb-3 flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> Toàn bộ dữ liệu doanh thu hoá đơn hiện có sẽ bị xoá và thay bằng {preview.length} hoá đơn trong file này.</p>
-          <PrimaryButton onClick={() => { if (window.confirm(`Xoá toàn bộ dữ liệu doanh thu hoá đơn hiện có và thay bằng ${preview.length} hoá đơn từ file mới?`)) submit(); }} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Thay thế bằng {preview.length} hoá đơn</PrimaryButton>
+          <p className="text-xs text-slate-500 mb-3">{preview.length} hoá đơn · Tổng doanh thu <span className="font-semibold text-sky-700">{fmtMoney(totalPreview)}</span> · {previewDates.length === 1 ? <>ngày <b>{fmtDate(previewDates[0])}</b></> : <>{previewDates.length} ngày (<b>{fmtDate(previewDates[0])}</b> → <b>{fmtDate(previewDates[previewDates.length - 1])}</b>)</>}</p>
+          <p className="text-xs text-amber-700 mb-3 flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> Dữ liệu doanh thu hoá đơn hiện có của {previewDates.length === 1 ? "ngày này" : `${previewDates.length} ngày này`} sẽ bị xoá và thay bằng dữ liệu trong file — các ngày khác không bị ảnh hưởng.</p>
+          <PrimaryButton onClick={() => { if (window.confirm(`Thay thế dữ liệu doanh thu hoá đơn của ${previewDates.length} ngày (${fmtDate(previewDates[0])} → ${fmtDate(previewDates[previewDates.length - 1])}) bằng ${preview.length} hoá đơn từ file mới?`)) submit(); }} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Cập nhật {preview.length} hoá đơn</PrimaryButton>
         </>
       )}
-      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã thay thế thành công — hiện có {done} hoá đơn.</p>}
+      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã cập nhật thành công {done} hoá đơn.</p>}
     </Card>
   );
 }
 
-function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportInvoiceRevenue }) {
+// Xây sổ quỹ đầy đủ theo TỪNG NGÀY có phát sinh, dùng toàn bộ lịch sử (không giới hạn theo
+// khoảng ngày đang xem trong bộ lọc) để tính đúng số dư luỹ kế. Tồn quỹ cuối ngày = Tồn quỹ đầu
+// ngày (Thu ngân tự điền, nếu có) hoặc số dư cuối ngày hôm trước App tự tính (nếu Thu ngân bỏ
+// trống) + Doanh thu hoá đơn trong ngày - Chi trong ngày. Nếu Thu ngân điền tồn đầu ngày mà KHÁC
+// với số App tự tính từ hôm trước, đánh dấu openingMismatch để cảnh báo.
+function buildQuyLedger(data) {
+  const map = new Map();
+  const ensure = (date) => {
+    if (!map.has(date)) map.set(date, {
+      date, invoiceCash: 0, invoiceBank: 0, cashierCash: 0, cashierBank: 0, chiCash: 0, chiBank: 0,
+      openingCashEntered: null, openingBankEntered: null,
+    });
+    return map.get(date);
+  };
+  data.invoiceRevenue.forEach((r) => { const d = ensure(r.invoiceDate); d.invoiceCash += r.cashAmount; d.invoiceBank += r.bankAmount; });
+  data.cashierReceipts.forEach((r) => {
+    const d = ensure(r.receiptDate); d.cashierCash += r.cashAmount; d.cashierBank += r.bankAmount;
+    if (r.openingCashAmount !== null) d.openingCashEntered = (d.openingCashEntered ?? 0) + r.openingCashAmount;
+    if (r.openingBankAmount !== null) d.openingBankEntered = (d.openingBankEntered ?? 0) + r.openingBankAmount;
+  });
+  data.expenseRecords.filter((r) => r.category !== "nvl").forEach((r) => {
+    const d = ensure(r.expenseDate);
+    if (r.paymentMethod === "ngan_hang") d.chiBank += r.amount; else d.chiCash += r.amount;
+  });
+  data.importRecords.filter((r) => r.paymentType === "tien_mat").forEach((r) => { const d = ensure(r.importDate); d.chiCash += r.totalAmount; });
+
+  const sorted = Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
+  let runningCash = 0, runningBank = 0, hasAnchor = false;
+  sorted.forEach((d) => {
+    d.openingMismatchCash = d.openingCashEntered !== null && hasAnchor && d.openingCashEntered !== runningCash;
+    d.openingMismatchBank = d.openingBankEntered !== null && hasAnchor && d.openingBankEntered !== runningBank;
+    d.expectedOpeningCash = hasAnchor ? runningCash : null;
+    d.expectedOpeningBank = hasAnchor ? runningBank : null;
+    const openingCash = d.openingCashEntered !== null ? d.openingCashEntered : runningCash;
+    const openingBank = d.openingBankEntered !== null ? d.openingBankEntered : runningBank;
+    d.closingCash = openingCash + d.invoiceCash - d.chiCash;
+    d.closingBank = openingBank + d.invoiceBank - d.chiBank;
+    d.diffCash = d.cashierCash - d.invoiceCash;
+    d.diffBank = d.cashierBank - d.invoiceBank;
+    runningCash = d.closingCash; runningBank = d.closingBank; hasAnchor = true;
+  });
+  return sorted; // tăng dần theo ngày
+}
+// Tồn quỹ cuối ngày App tự tính, tính đến hết ngày trước "date" — dùng làm số gợi ý/đối chiếu
+// cho "Tồn quỹ đầu ngày" Thu ngân điền vào ngày "date".
+function expectedOpeningBalance(data, date) {
+  const ledger = buildQuyLedger(data).filter((d) => d.date < date);
+  if (ledger.length === 0) return null;
+  const last = ledger[ledger.length - 1];
+  return { cash: last.closingCash, bank: last.closingBank, fromDate: last.date };
+}
+// Báo cáo đối chiếu Quỹ theo từng ngày trong khoảng from-to (lọc từ sổ quỹ đầy đủ ở trên) —
+// để Quản lý rà soát ngay khi Thu ngân gửi số liệu, không phải đợi cuối kỳ.
+function dailyQuyReport(data, from, to) {
+  return buildQuyLedger(data).filter((d) => d.date >= from && d.date <= to).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
 
-  const receipts = dailyReceiptsFromSales(data.dishSales, from, to, data.dishes);
-  const totalThu = receipts.reduce((s, r) => s + r.amount, 0);
-  // Giá vốn xuất kho (Cost) — hiển thị riêng vì giá bán thay đổi theo từng thời kỳ
-  // (nên Doanh thu xuất kho có thể không phản ánh đúng thời điểm bán), còn giá vốn
-  // NVL đã snapshot cố định lúc xuất kho nên không bị ảnh hưởng bởi biến động giá bán.
-  const totalCostXuatKho = receipts.reduce((s, r) => s + r.cost, 0);
-  const tyLeCostXuatKho = totalThu > 0 ? (totalCostXuatKho / totalThu) * 100 : 0;
-
-  // Doanh thu bán hàng theo hoá đơn — import trực tiếp từ file "Bảng kê hoá đơn" POS,
-  // độc lập với totalThu (vốn tính từ dish_sales/"Xuất kho tự động từ báo cáo doanh thu").
+  // Doanh thu bán hàng theo hoá đơn — import trực tiếp từ file "Bảng kê hoá đơn" POS.
   const invoiceRevenueInRange = data.invoiceRevenue.filter((r) => r.invoiceDate >= from && r.invoiceDate <= to);
   const totalInvoiceRevenue = invoiceRevenueInRange.reduce((s, r) => s + r.amount, 0);
   const totalInvoiceRevenueCash = invoiceRevenueInRange.reduce((s, r) => s + r.cashAmount, 0);
@@ -3149,6 +3218,7 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportI
   // Đối chiếu riêng theo từng phương thức: Tiền mặt file hoá đơn vs Tiền mặt Thu ngân, tương tự Ngân hàng.
   const diffCash = totalThuNganCash - totalInvoiceRevenueCash;
   const diffBank = totalThuNganBank - totalInvoiceRevenueBank;
+  const dailyReport = dailyQuyReport(data, from, to);
 
   return (
     <div>
@@ -3161,9 +3231,8 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportI
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-3">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
         <MetricCard label="Doanh thu bán hàng theo hoá đơn" value={fmtMoney(totalInvoiceRevenue)} icon={FileText} accent="indigo" />
-        <MetricCard label="Cost món ăn" value={fmtMoney(totalCostXuatKho)} icon={Package} accent="amber" note={`${tyLeCostXuatKho.toFixed(1)}% doanh thu xuất kho`} />
         <MetricCard label="Tổng chi" value={fmtMoney(totalChi)} icon={TrendingDown} accent="rose" />
         <MetricCard label="Số dư quỹ" value={fmtMoney(soDu)} icon={Wallet} accent={soDu >= 0 ? "teal" : "rose"} note="Doanh thu hoá đơn - Tổng chi" />
       </div>
@@ -3247,61 +3316,94 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportI
         )}
       </Card>
 
-      <PhieuChiForm onSubmit={onSubmitExpense} />
+      {/* Báo cáo đối chiếu quỹ theo từng ngày — để Quản lý rà soát ngay khi Thu ngân gửi số liệu hàng ngày */}
+      <Card className="p-0 overflow-hidden mb-5">
+        <div className="p-4 border-b border-slate-100">
+          <p className="font-semibold text-slate-800 text-sm">Đối chiếu quỹ theo ngày</p>
+          <p className="text-xs text-slate-400 mt-0.5">So khớp Doanh thu hoá đơn (file import), Thu ngân báo cáo, Chi phí, và Tồn quỹ đầu ngày Thu ngân điền so với số cuối ngày hôm trước App tự tính.</p>
+        </div>
+        {dailyReport.some((d) => d.openingMismatchCash || d.openingMismatchBank) && (
+          <div className="m-4 mb-0 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-center gap-1">
+            <AlertTriangle size={13} className="shrink-0" /> Có ngày Tồn quỹ đầu ngày Thu ngân điền <b>không khớp</b> với số cuối ngày hôm trước App tự tính — xem cột "Tồn đầu ngày" bên dưới (tô đỏ).
+          </div>
+        )}
+        {dailyReport.length === 0 ? (
+          <EmptyState icon={Wallet} text="Chưa có dữ liệu quỹ trong khoảng thời gian này." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-slate-500 border-b border-slate-100">
+                  <th className="text-left px-4 py-2 font-medium">Ngày</th>
+                  <th className="text-right px-3 py-2 font-medium">Tồn đầu ngày (TM/NH)</th>
+                  <th className="text-right px-3 py-2 font-medium">Hoá đơn - TM</th>
+                  <th className="text-right px-3 py-2 font-medium">Thu ngân - TM</th>
+                  <th className="text-right px-3 py-2 font-medium">Lệch TM</th>
+                  <th className="text-right px-3 py-2 font-medium">Hoá đơn - NH</th>
+                  <th className="text-right px-3 py-2 font-medium">Thu ngân - NH</th>
+                  <th className="text-right px-3 py-2 font-medium">Lệch NH</th>
+                  <th className="text-right px-3 py-2 font-medium">Chi TM</th>
+                  <th className="text-right px-3 py-2 font-medium">Chi NH</th>
+                  <th className="text-right px-3 py-2 font-medium">Tồn cuối ngày (TM/NH)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {dailyReport.map((d) => (
+                  <tr key={d.date} className="hover:bg-slate-50/60">
+                    <td className="px-4 py-2 text-slate-700 font-medium whitespace-nowrap">{fmtDate(d.date)}</td>
+                    <td className={`px-3 py-2 text-right whitespace-nowrap ${d.openingMismatchCash || d.openingMismatchBank ? "text-rose-600 font-medium" : "text-slate-500"}`}>
+                      {d.openingCashEntered === null && d.openingBankEntered === null ? (
+                        <span className="text-slate-300">chưa điền</span>
+                      ) : (
+                        <>{fmtMoney(d.openingCashEntered ?? 0)} / {fmtMoney(d.openingBankEntered ?? 0)}
+                          {(d.openingMismatchCash || d.openingMismatchBank) && (
+                            <span className="block text-[10px] text-rose-500">lệch với dự kiến {fmtMoney(d.expectedOpeningCash ?? 0)} / {fmtMoney(d.expectedOpeningBank ?? 0)}</span>
+                          )}
+                        </>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmtMoney(d.invoiceCash)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmtMoney(d.cashierCash)}</td>
+                    <td className={`px-3 py-2 text-right font-medium ${d.diffCash === 0 ? "text-emerald-600" : d.diffCash > 0 ? "text-amber-600" : "text-rose-600"}`}>{d.diffCash === 0 ? "Khớp" : fmtMoney(d.diffCash)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmtMoney(d.invoiceBank)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600">{fmtMoney(d.cashierBank)}</td>
+                    <td className={`px-3 py-2 text-right font-medium ${d.diffBank === 0 ? "text-emerald-600" : d.diffBank > 0 ? "text-amber-600" : "text-rose-600"}`}>{d.diffBank === 0 ? "Khớp" : fmtMoney(d.diffBank)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500">{fmtMoney(d.chiCash)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500">{fmtMoney(d.chiBank)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700 font-medium whitespace-nowrap">{fmtMoney(d.closingCash)} / {fmtMoney(d.closingBank)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
 
-      {onBulkImportFromBills && (
-        <XuatExcelImportForm data={data} onImport={onBulkImportFromBills} />
-      )}
-
-      <div className="grid lg:grid-cols-2 gap-5">
-        <Card className="p-0 overflow-hidden">
-          <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu thu (tự động từ báo cáo doanh thu)</p></div>
-          {receipts.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có dữ liệu bán hàng trong khoảng này." /> : (
-            <div className="overflow-x-auto max-h-96 overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                  <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Số món bán</th><th className="px-3 py-2 text-right">Số tiền thu</th>
-                </tr></thead>
-                <tbody>
-                  {receipts.map((r) => (
-                    <tr key={r.date} className="border-b border-slate-50 last:border-0">
-                      <td className="px-3 py-2 font-medium text-slate-700">{fmtDate(r.date)}</td>
-                      <td className="px-3 py-2 text-right text-slate-500">{fmtNumber(r.qty)}</td>
-                      <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.amount)}</td>
+      <Card className="p-0 overflow-hidden">
+        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu chi gần đây</p></div>
+        {chiExpense.length === 0 && chiNvlTienMat.length === 0 ? <EmptyState icon={TrendingDown} text="Chưa có khoản chi nào trong khoảng này." /> : (
+          <div className="overflow-x-auto max-h-96 overflow-y-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2 text-right">Số tiền</th>
+              </tr></thead>
+              <tbody>
+                {[...chiExpense.map((r) => ({ date: r.expenseDate, name: r.itemName, group: EXPENSE_CATEGORY_META[r.category]?.label || r.category, amount: r.amount })),
+                  ...chiNvlTienMat.map((r) => ({ date: r.importDate, name: "NVL (tiền mặt)", group: "Nguyên vật liệu", amount: r.totalAmount }))]
+                  .sort((a, b) => b.date.localeCompare(a.date))
+                  .map((r, i) => (
+                    <tr key={i} className="border-b border-slate-50 last:border-0">
+                      <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
+                      <td className="px-3 py-2">{r.name}</td>
+                      <td className="px-3 py-2 text-slate-500">{r.group}</td>
+                      <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
                     </tr>
                   ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-
-        <Card className="p-0 overflow-hidden">
-          <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu chi gần đây</p></div>
-          {chiExpense.length === 0 && chiNvlTienMat.length === 0 ? <EmptyState icon={TrendingDown} text="Chưa có khoản chi nào trong khoảng này." /> : (
-            <div className="overflow-x-auto max-h-96 overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                  <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2 text-right">Số tiền</th>
-                </tr></thead>
-                <tbody>
-                  {[...chiExpense.map((r) => ({ date: r.expenseDate, name: r.itemName, group: EXPENSE_CATEGORY_META[r.category]?.label || r.category, amount: r.amount })),
-                    ...chiNvlTienMat.map((r) => ({ date: r.importDate, name: "NVL (tiền mặt)", group: "Nguyên vật liệu", amount: r.totalAmount }))]
-                    .sort((a, b) => b.date.localeCompare(a.date))
-                    .map((r, i) => (
-                      <tr key={i} className="border-b border-slate-50 last:border-0">
-                        <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
-                        <td className="px-3 py-2">{r.name}</td>
-                        <td className="px-3 py-2 text-slate-500">{r.group}</td>
-                        <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      </div>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
@@ -3545,6 +3647,9 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport }) {
   return (
     <div>
       <SectionTitle icon={Receipt} title="Chi phí" subtitle="Ghi nhận toàn bộ chi phí phát sinh hàng tháng" />
+
+      <PhieuChiForm onSubmit={onSubmitExpense} />
+
       <Card className="p-4 sm:p-5 mb-5">
         <SelectField label="Loại chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
           {EXPENSE_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
@@ -4202,10 +4307,15 @@ export default function App() {
 
   // Thu ngân — ghi nhận Thu tiền mặt / Thu tiền ngân hàng theo ngày (độc lập với doanh thu
   // tính từ báo cáo bán hàng/dish_sales) — dùng để đối chiếu quỹ thực tế trong tab Quỹ.
-  const submitCashierReceipt = async ({ receiptDate, cashAmount, bankAmount, note }) => {
+  // Kèm "Tồn quỹ đầu ngày" (Tiền mặt/Ngân hàng) Thu ngân tự đếm/kiểm đầu ca, để đối chiếu với
+  // số quỹ tồn cuối ngày hôm trước App tự tính (tồn cuối ngày trước = tồn đầu ngày đó + Thu - Chi).
+  const submitCashierReceipt = async ({ receiptDate, cashAmount, bankAmount, openingCashAmount, openingBankAmount, note }) => {
     const { error } = await supabase.from("cashier_receipts").insert({
       receipt_date: receiptDate || todayISO(), cash_amount: Number(cashAmount) || 0,
-      bank_amount: Number(bankAmount) || 0, note: note || null, created_by: currentUser.id,
+      bank_amount: Number(bankAmount) || 0,
+      opening_cash_amount: openingCashAmount === "" || openingCashAmount === undefined ? null : Number(openingCashAmount),
+      opening_bank_amount: openingBankAmount === "" || openingBankAmount === undefined ? null : Number(openingBankAmount),
+      note: note || null, created_by: currentUser.id,
     });
     if (error) throw error;
     await refreshAll();
@@ -4215,12 +4325,13 @@ export default function App() {
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
   // tính từ Xuất kho tự động (dish_sales). Upsert theo invoice_no để import lại không bị trùng.
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
-  // tính từ Xuất kho tự động (dish_sales). Mỗi lần import là THAY THẾ TOÀN BỘ dữ liệu cũ
-  // bằng file mới nhất (không upsert cộng dồn nữa) — vì file "Bảng kê hoá đơn" luôn xuất
-  // đầy đủ cho cả khoảng thời gian, import file mới coi như nguồn dữ liệu chuẩn duy nhất.
+  // tính từ Xuất kho tự động (dish_sales). Chỉ THAY THẾ đúng những NGÀY có mặt trong file mới
+  // (xoá dữ liệu cũ của các ngày đó rồi nạp lại) — giữ nguyên dữ liệu các ngày khác, để hỗ trợ
+  // import theo ngày riêng lẻ (Thu ngân gửi từng ngày) lẫn import file gộp nhiều ngày/cả tháng.
   const bulkImportInvoiceRevenue = async (rows) => {
     if (rows.length === 0) return;
-    const { error: delError } = await supabase.from("invoice_revenue").delete().not("id", "is", null);
+    const dates = Array.from(new Set(rows.map((r) => r.invoiceDate)));
+    const { error: delError } = await supabase.from("invoice_revenue").delete().in("invoice_date", dates);
     if (delError) throw delError;
     const dbRows = rows.map((r) => ({
       invoice_no: r.invoiceNo, invoice_date: r.invoiceDate, amount: r.amount,
@@ -4229,7 +4340,7 @@ export default function App() {
     const { error } = await supabase.from("invoice_revenue").insert(dbRows);
     if (error) throw error;
     await refreshAll();
-    showToast(`Đã thay thế toàn bộ dữ liệu doanh thu bằng ${rows.length} hoá đơn từ file mới`);
+    showToast(`Đã cập nhật doanh thu cho ${dates.length} ngày (${rows.length} hoá đơn)`);
   };
 
   // ---------------- Cost món ăn ----------------
@@ -4424,7 +4535,7 @@ export default function App() {
             {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
-            {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
+            {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
             {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
