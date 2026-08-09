@@ -2822,12 +2822,18 @@ const EXPENSE_CATEGORY_META = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [
 // theo ngày, chọn đúng loại chi phí — khi lưu sẽ ghi thẳng vào expense_records nên
 // tự động xuất hiện trong "Chi phí" / báo cáo chi phí, không cần đồng bộ thủ công.
 // ---------------------------------------------------------------------------
-function dailyReceiptsFromSales(dishSales, from, to) {
+function dailyReceiptsFromSales(dishSales, from, to, dishes) {
   const filtered = dishSales.filter((s) => s.saleDate >= from && s.saleDate <= to);
+  // Doanh thu tính lại = SL bán × giá bán HIỆN TẠI trong Cost món ăn (data.dishes),
+  // không dùng total_amount đã lưu sẵn lúc xuất kho — để phản ánh đúng giá bán mới nhất
+  // ngay cả khi giá trong Cost món ăn đã thay đổi sau thời điểm xuất kho.
+  const dishMap = new Map((dishes || []).map((d) => [d.id, d]));
   const map = new Map();
   filtered.forEach((s) => {
+    const dish = dishMap.get(s.dishId);
+    const gia = dish && dish.sellingPrice != null ? dish.sellingPrice : s.unitPrice;
     const cur = map.get(s.saleDate) || { date: s.saleDate, amount: 0, qty: 0 };
-    cur.amount += s.totalAmount;
+    cur.amount += s.quantity * gia;
     cur.qty += s.quantity;
     map.set(s.saleDate, cur);
   });
@@ -3060,7 +3066,7 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportI
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
 
-  const receipts = dailyReceiptsFromSales(data.dishSales, from, to);
+  const receipts = dailyReceiptsFromSales(data.dishSales, from, to, data.dishes);
   const totalThu = receipts.reduce((s, r) => s + r.amount, 0);
 
   // Doanh thu bán hàng theo hoá đơn — import trực tiếp từ file "Bảng kê hoá đơn" POS,
