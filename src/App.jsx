@@ -412,7 +412,7 @@ function EmptyState({ icon: Icon, text }) {
     </div>
   );
 }
-function MetricCard({ label, value, icon: Icon, accent = "teal" }) {
+function MetricCard({ label, value, icon: Icon, accent = "teal", note }) {
   const a = {
     teal: { text: "text-sky-700", bg: "bg-sky-50", bar: "bg-sky-600" },
     amber: { text: "text-amber-700", bg: "bg-amber-50", bar: "bg-amber-600" },
@@ -429,6 +429,7 @@ function MetricCard({ label, value, icon: Icon, accent = "teal" }) {
       <div className="min-w-0">
         <p className="text-xs text-slate-500 truncate">{label}</p>
         <p className="text-lg font-semibold text-slate-800 truncate tracking-tight">{value}</p>
+        {note && <p className="text-[11px] text-slate-400 truncate">{note}</p>}
       </div>
     </div>
   );
@@ -2832,9 +2833,12 @@ function dailyReceiptsFromSales(dishSales, from, to, dishes) {
   filtered.forEach((s) => {
     const dish = dishMap.get(s.dishId);
     const gia = dish && dish.sellingPrice != null ? dish.sellingPrice : s.unitPrice;
-    const cur = map.get(s.saleDate) || { date: s.saleDate, amount: 0, qty: 0 };
+    const cur = map.get(s.saleDate) || { date: s.saleDate, amount: 0, qty: 0, cost: 0 };
     cur.amount += s.quantity * gia;
     cur.qty += s.quantity;
+    // Giá vốn (cost_amount) đã snapshot đúng giá vốn NVL tại thời điểm xuất kho —
+    // không tính lại theo giá hiện tại như doanh thu, vì giá vốn từng lô hàng đã chốt xong.
+    cur.cost += s.costAmount;
     map.set(s.saleDate, cur);
   });
   return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
@@ -3068,6 +3072,11 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportI
 
   const receipts = dailyReceiptsFromSales(data.dishSales, from, to, data.dishes);
   const totalThu = receipts.reduce((s, r) => s + r.amount, 0);
+  // Giá vốn xuất kho (Cost) — hiển thị riêng vì giá bán thay đổi theo từng thời kỳ
+  // (nên Doanh thu xuất kho có thể không phản ánh đúng thời điểm bán), còn giá vốn
+  // NVL đã snapshot cố định lúc xuất kho nên không bị ảnh hưởng bởi biến động giá bán.
+  const totalCostXuatKho = receipts.reduce((s, r) => s + r.cost, 0);
+  const tyLeCostXuatKho = totalThu > 0 ? (totalCostXuatKho / totalThu) * 100 : 0;
 
   // Doanh thu bán hàng theo hoá đơn — import trực tiếp từ file "Bảng kê hoá đơn" POS,
   // độc lập với totalThu (vốn tính từ dish_sales/"Xuất kho tự động từ báo cáo doanh thu").
@@ -3106,7 +3115,7 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportI
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         <MetricCard label="Doanh thu bán hàng theo hoá đơn" value={fmtMoney(totalInvoiceRevenue)} icon={FileText} accent="indigo" />
-        <MetricCard label="Doanh thu từ phiếu xuất kho" value={fmtMoney(totalThu)} icon={TrendingUp} accent="emerald" />
+        <MetricCard label="Cost món ăn" value={fmtMoney(totalCostXuatKho)} icon={Package} accent="amber" note={`${tyLeCostXuatKho.toFixed(1)}% doanh thu xuất kho`} />
         <MetricCard label="Tổng chi" value={fmtMoney(totalChi)} icon={TrendingDown} accent="rose" />
         <MetricCard label="Số dư quỹ" value={fmtMoney(soDu)} icon={Wallet} accent={soDu >= 0 ? "teal" : "rose"} />
       </div>
