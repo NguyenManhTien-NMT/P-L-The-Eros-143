@@ -281,8 +281,16 @@ function mapDishIngredient(i) {
   };
 }
 
+function mapDepositReceipt(r) {
+  return {
+    id: r.id, receiptDate: r.receipt_date, cashAmount: Number(r.cash_amount) || 0,
+    bankAmount: Number(r.bank_amount) || 0, customerName: r.customer_name || "",
+    note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
+
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, depositRec] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -297,8 +305,9 @@ async function fetchAll() {
     supabase.from("dish_sales").select("*").order("sale_date", { ascending: false }),
     supabase.from("cashier_receipts").select("*").order("receipt_date", { ascending: false }),
     supabase.from("invoice_revenue").select("*").order("invoice_date", { ascending: false }),
+    supabase.from("deposit_receipts").select("*").order("receipt_date", { ascending: false }),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, depositRec].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -314,6 +323,7 @@ async function fetchAll() {
     dishSales: (dishSale.data || []).map(mapDishSale),
     cashierReceipts: (cashierRec.data || []).map(mapCashierReceipt),
     invoiceRevenue: (invRev.data || []).map(mapInvoiceRevenue),
+    depositReceipts: (depositRec.data || []).map(mapDepositReceipt),
   };
 }
 
@@ -3005,22 +3015,88 @@ function CashierReceiptForm({ data, onSubmit, editRecord, onUpdate, onCancelEdit
   );
 }
 
-function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierReceipt, onUpdateCashierReceipt, onUpdateExpense }) {
-  const [subTab, setSubTab] = useState("thu"); // "thu" | "chi"
+function DepositReceiptForm({ onSubmit, editRecord, onUpdate, onCancelEdit }) {
+  const isEditing = !!editRecord;
+  const [receiptDate, setReceiptDate] = useState(editRecord?.receiptDate || todayISO());
+  const [customerName, setCustomerName] = useState(editRecord?.customerName || "");
+  const [cashAmount, setCashAmount] = useState(editRecord ? String(editRecord.cashAmount) : "");
+  const [bankAmount, setBankAmount] = useState(editRecord ? String(editRecord.bankAmount) : "");
+  const [note, setNote] = useState(editRecord?.note || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    setReceiptDate(editRecord?.receiptDate || todayISO());
+    setCustomerName(editRecord?.customerName || "");
+    setCashAmount(editRecord ? String(editRecord.cashAmount) : "");
+    setBankAmount(editRecord ? String(editRecord.bankAmount) : "");
+    setNote(editRecord?.note || "");
+    setError("");
+  }, [editRecord?.id]);
+
+  const total = (Number(cashAmount) || 0) + (Number(bankAmount) || 0);
+
+  const submit = async () => {
+    if (total <= 0) { setError("Vui lòng nhập ít nhất 1 trong 2 khoản: tiền mặt hoặc tiền ngân hàng."); return; }
+    setError(""); setSaving(true);
+    try {
+      if (isEditing) {
+        await onUpdate(editRecord.id, { receiptDate, cashAmount, bankAmount, customerName: customerName.trim(), note: note.trim() });
+        onCancelEdit();
+      } else {
+        await onSubmit({ receiptDate, cashAmount, bankAmount, customerName: customerName.trim(), note: note.trim() });
+        setCashAmount(""); setBankAmount(""); setCustomerName(""); setNote("");
+      }
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <div className="flex items-center justify-between mb-3">
+        <p className="font-semibold text-slate-800 text-sm">{isEditing ? "Sửa phiếu thu cọc" : "Lập phiếu thu cọc"}</p>
+        {isEditing && <button type="button" onClick={onCancelEdit} className="text-xs text-slate-400 hover:text-rose-600 flex items-center gap-1"><X size={13} /> Huỷ sửa</button>}
+      </div>
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
+        <TextField label="Ngày thu cọc" type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.target.value)} />
+        <TextField label="Khách hàng / Ghi chú đặt cọc" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="VD: Anh Tuấn - đặt tiệc 20 khách 15/8" />
+        <MoneyField label="Thu cọc - Tiền mặt" value={cashAmount} onChange={setCashAmount} />
+        <MoneyField label="Thu cọc - Ngân hàng" value={bankAmount} onChange={setBankAmount} />
+        <TextField label="Ghi chú khác (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
+      </div>
+      <div className="bg-indigo-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm mb-4">
+        <span className="text-indigo-700">Tổng thu cọc</span>
+        <span className="font-semibold text-indigo-800">{fmtMoney(total)}</span>
+      </div>
+      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />} {isEditing ? "Cập nhật phiếu thu cọc" : "Lưu phiếu thu cọc"}</PrimaryButton>
+      {!isEditing && <p className="text-xs text-slate-400 mt-2">Thu cọc độc lập với doanh thu bán hàng — không tính vào đối chiếu Doanh thu hoá đơn, nhưng vẫn cộng vào Tồn quỹ thực tế.</p>}
+    </Card>
+  );
+}
+
+function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierReceipt, onUpdateCashierReceipt, onUpdateExpense, onSubmitDepositReceipt, onUpdateDepositReceipt }) {
+  const [subTab, setSubTab] = useState("thu"); // "thu" | "coc" | "chi"
   const [editingReceiptId, setEditingReceiptId] = useState(null);
   const [editingExpenseId, setEditingExpenseId] = useState(null);
+  const [editingDepositId, setEditingDepositId] = useState(null);
 
   const myReceipts = data.cashierReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 30);
   const myExpenses = data.expenseRecords.filter((r) => r.createdBy === currentUser.id && r.category !== "nvl").slice(0, 30);
+  const myDeposits = data.depositReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 30);
   const todayReceipts = data.cashierReceipts.filter((r) => r.receiptDate === todayISO());
   const todayTotal = todayReceipts.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
 
   const editingReceipt = editingReceiptId ? myReceipts.find((r) => r.id === editingReceiptId) : null;
   const editingExpense = editingExpenseId ? myExpenses.find((r) => r.id === editingExpenseId) : null;
+  const editingDeposit = editingDepositId ? myDeposits.find((r) => r.id === editingDepositId) : null;
 
   return (
     <div>
-      <SectionTitle icon={Wallet} title="Thu ngân" subtitle="Lập phiếu thu (tiền mặt/ngân hàng) và phiếu chi phát sinh trong ngày" />
+      <SectionTitle icon={Wallet} title="Thu ngân" subtitle="Lập phiếu thu, phiếu thu cọc, và phiếu chi phát sinh trong ngày" />
 
       <div className="grid grid-cols-2 gap-3 mb-5">
         <MetricCard label="Tổng thu hôm nay" value={fmtMoney(todayTotal)} icon={TrendingUp} accent="emerald" />
@@ -3029,6 +3105,7 @@ function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierRece
 
       <div className="flex gap-2 mb-5 border-b border-slate-200">
         <button type="button" onClick={() => setSubTab("thu")} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${subTab === "thu" ? "border-sky-600 text-sky-700" : "border-transparent text-slate-400 hover:text-slate-600"}`}>Lập phiếu thu</button>
+        <button type="button" onClick={() => setSubTab("coc")} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${subTab === "coc" ? "border-sky-600 text-sky-700" : "border-transparent text-slate-400 hover:text-slate-600"}`}>Lập phiếu thu cọc</button>
         <button type="button" onClick={() => setSubTab("chi")} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${subTab === "chi" ? "border-sky-600 text-sky-700" : "border-transparent text-slate-400 hover:text-slate-600"}`}>Lập phiếu chi</button>
       </div>
 
@@ -3055,6 +3132,41 @@ function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierRece
                         <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
                         <td className="px-3 py-2 text-right">
                           <button type="button" onClick={() => setEditingReceiptId(r.id)} className="text-xs text-sky-600 hover:text-sky-800 font-medium">Sửa</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+
+      {subTab === "coc" && (
+        <>
+          <DepositReceiptForm
+            onSubmit={onSubmitDepositReceipt}
+            editRecord={editingDeposit} onUpdate={onUpdateDepositReceipt} onCancelEdit={() => setEditingDepositId(null)}
+          />
+          <Card className="p-0 overflow-hidden">
+            <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử phiếu thu cọc (của bạn)</p></div>
+            {myDeposits.length === 0 ? <EmptyState icon={Wallet} text="Chưa có phiếu thu cọc nào." /> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                    <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khách hàng</th><th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Ngân hàng</th><th className="px-3 py-2 text-right">Tổng</th><th className="px-3 py-2"></th>
+                  </tr></thead>
+                  <tbody>
+                    {myDeposits.map((r) => (
+                      <tr key={r.id} className={`border-b border-slate-50 last:border-0 ${editingDepositId === r.id ? "bg-sky-50" : ""}`}>
+                        <td className="px-3 py-2 text-slate-500">{fmtDate(r.receiptDate)}</td>
+                        <td className="px-3 py-2">{r.customerName || <span className="text-slate-300">—</span>}</td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(r.cashAmount)}</td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(r.bankAmount)}</td>
+                        <td className="px-3 py-2 text-right font-medium text-indigo-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
+                        <td className="px-3 py-2 text-right">
+                          <button type="button" onClick={() => setEditingDepositId(r.id)} className="text-xs text-sky-600 hover:text-sky-800 font-medium">Sửa</button>
                         </td>
                       </tr>
                     ))}
@@ -3236,7 +3348,7 @@ function buildQuyLedger(data) {
   const ensure = (date) => {
     if (!map.has(date)) map.set(date, {
       date, invoiceCash: 0, invoiceBank: 0, cashierCash: 0, cashierBank: 0, chiCash: 0, chiBank: 0,
-      openingCashEntered: null, openingBankEntered: null,
+      depositCash: 0, depositBank: 0, openingCashEntered: null, openingBankEntered: null,
     });
     return map.get(date);
   };
@@ -3251,6 +3363,9 @@ function buildQuyLedger(data) {
     if (r.paymentMethod === "ngan_hang") d.chiBank += r.amount; else d.chiCash += r.amount;
   });
   data.importRecords.filter((r) => r.paymentType === "tien_mat").forEach((r) => { const d = ensure(r.importDate); d.chiCash += r.totalAmount; });
+  // Thu cọc — độc lập với Doanh thu hoá đơn (không dùng để đối chiếu "Lệch"), nhưng vẫn là tiền
+  // thật vào quỹ nên cộng vào Tồn quỹ cuối ngày.
+  data.depositReceipts.forEach((r) => { const d = ensure(r.receiptDate); d.depositCash += r.cashAmount; d.depositBank += r.bankAmount; });
 
   const sorted = Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
   let runningCash = 0, runningBank = 0, hasAnchor = false;
@@ -3261,10 +3376,12 @@ function buildQuyLedger(data) {
     d.expectedOpeningBank = hasAnchor ? runningBank : null;
     const openingCash = d.openingCashEntered !== null ? d.openingCashEntered : runningCash;
     const openingBank = d.openingBankEntered !== null ? d.openingBankEntered : runningBank;
-    d.closingCash = openingCash + d.invoiceCash - d.chiCash;
-    d.closingBank = openingBank + d.invoiceBank - d.chiBank;
-    d.diffCash = d.cashierCash - d.invoiceCash;
-    d.diffBank = d.cashierBank - d.invoiceBank;
+    d.closingCash = openingCash + d.invoiceCash + d.depositCash - d.chiCash;
+    d.closingBank = openingBank + d.invoiceBank + d.depositBank - d.chiBank;
+    // Thu ngân báo cáo tổng tiền mặt/ngân hàng thực nhận trong ngày (gồm cả doanh thu bán hàng
+    // lẫn thu cọc) nên so khớp với invoice + deposit, không chỉ riêng invoice.
+    d.diffCash = d.cashierCash - (d.invoiceCash + d.depositCash);
+    d.diffBank = d.cashierBank - (d.invoiceBank + d.depositBank);
     runningCash = d.closingCash; runningBank = d.closingBank; hasAnchor = true;
   });
   return sorted; // tăng dần theo ngày
@@ -3314,6 +3431,15 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
   const totalThuNganCash = cashierInRange.reduce((s, r) => s + r.cashAmount, 0);
   const totalThuNganBank = cashierInRange.reduce((s, r) => s + r.bankAmount, 0);
 
+  // Thu cọc — độc lập với Doanh thu bán hàng theo hoá đơn (khách đặt cọc trước, không phải bán
+  // hàng thực tế trong ngày), hiển thị riêng để Quản lý theo dõi tách bạch, không gộp vào Doanh
+  // thu bán hàng hay Số dư quỹ ở trên — nhưng vẫn được cộng vào Tồn quỹ cuối ngày (bảng bên dưới)
+  // vì đây là tiền thật đã vào quỹ.
+  const depositInRange = data.depositReceipts.filter((r) => r.receiptDate >= from && r.receiptDate <= to);
+  const totalDeposit = depositInRange.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
+  const totalDepositCash = depositInRange.reduce((s, r) => s + r.cashAmount, 0);
+  const totalDepositBank = depositInRange.reduce((s, r) => s + r.bankAmount, 0);
+
   // So sánh Thu ngân (tiền mặt + ngân hàng) vs Doanh thu bán hàng theo hoá đơn (Bảng kê hoá đơn) —
   // dùng đúng số tiền thực thu để đối chiếu, không dùng số tính ngược từ Xuất kho.
   const diff = totalThuNgan - totalInvoiceRevenue;
@@ -3343,6 +3469,26 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
         <MetricCard label="Quỹ tiền mặt" value={fmtMoney(soDuTienMat)} icon={Wallet} accent={soDuTienMat >= 0 ? "teal" : "rose"} note={`Thu ${fmtMoney(totalInvoiceRevenueCash)} - Chi ${fmtMoney(chiExpenseCash)}`} />
         <MetricCard label="Quỹ ngân hàng" value={fmtMoney(soDuNganHang)} icon={Wallet} accent={soDuNganHang >= 0 ? "indigo" : "rose"} note={`Thu ${fmtMoney(totalInvoiceRevenueBank)} - Chi ${fmtMoney(chiExpenseBank)}`} />
       </div>
+
+      {/* Thu cọc — mục riêng, KHÔNG gộp vào Doanh thu bán hàng theo hoá đơn hay Số dư quỹ ở trên */}
+      <Card className="p-4 sm:p-5 mb-5">
+        <p className="font-semibold text-slate-800 text-sm mb-1">Thu cọc</p>
+        <p className="text-xs text-slate-400 mb-3">Khách đặt cọc trước (Thu ngân tự ghi nhận) — tách riêng, không tính vào Doanh thu bán hàng theo hoá đơn hay Số dư quỹ ở trên. Vẫn được cộng vào "Tồn quỹ cuối ngày" ở bảng đối chiếu bên dưới vì là tiền thật đã vào quỹ.</p>
+        <div className="grid grid-cols-3 gap-2">
+          <div className="bg-indigo-50 rounded-xl px-3 py-2">
+            <p className="text-xs text-indigo-600">Tiền mặt</p>
+            <p className="text-sm font-semibold text-indigo-800">{fmtMoney(totalDepositCash)}</p>
+          </div>
+          <div className="bg-indigo-50 rounded-xl px-3 py-2">
+            <p className="text-xs text-indigo-600">Ngân hàng</p>
+            <p className="text-sm font-semibold text-indigo-800">{fmtMoney(totalDepositBank)}</p>
+          </div>
+          <div className="bg-indigo-50 rounded-xl px-3 py-2">
+            <p className="text-xs text-indigo-600">Tổng thu cọc</p>
+            <p className="text-sm font-semibold text-indigo-800">{fmtMoney(totalDeposit)}</p>
+          </div>
+        </div>
+      </Card>
 
       <InvoiceRevenueImportForm onImport={onBulkImportInvoiceRevenue} />
 
@@ -3430,7 +3576,7 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
       <Card className="p-0 overflow-hidden mb-5">
         <div className="p-4 border-b border-slate-100">
           <p className="font-semibold text-slate-800 text-sm">Đối chiếu quỹ theo ngày — Tiền mặt</p>
-          <p className="text-xs text-slate-400 mt-0.5">Tồn cuối ngày = Tồn đầu ngày + Hoá đơn phát sinh trong ngày − Chi phí phát sinh trong ngày.</p>
+          <p className="text-xs text-slate-400 mt-0.5">Tồn cuối ngày = Tồn đầu ngày + Hoá đơn + Thu cọc phát sinh trong ngày − Chi phí phát sinh trong ngày.</p>
         </div>
         {dailyReport.length === 0 ? (
           <EmptyState icon={Wallet} text="Chưa có dữ liệu quỹ trong khoảng thời gian này." />
@@ -3442,6 +3588,7 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
                   <th className="text-left px-4 py-2 font-medium whitespace-nowrap">Ngày</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Tồn đầu ngày</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Hoá đơn</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Thu cọc</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Thu ngân</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Lệch</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Chi</th>
@@ -3457,6 +3604,7 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
                       {d.openingMismatchCash && <span className="block text-[10px] text-rose-500 whitespace-nowrap">lệch với dự kiến {fmtMoney(d.expectedOpeningCash ?? 0)}</span>}
                     </td>
                     <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.invoiceCash)}</td>
+                    <td className="px-3 py-2 text-right text-indigo-600 whitespace-nowrap">{fmtMoney(d.depositCash)}</td>
                     <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.cashierCash)}</td>
                     <td className={`px-3 py-2 text-right font-medium whitespace-nowrap ${d.diffCash === 0 ? "text-emerald-600" : d.diffCash > 0 ? "text-amber-600" : "text-rose-600"}`}>{d.diffCash === 0 ? "Khớp" : fmtMoney(d.diffCash)}</td>
                     <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{fmtMoney(d.chiCash)}</td>
@@ -3472,7 +3620,7 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
       <Card className="p-0 overflow-hidden mb-5">
         <div className="p-4 border-b border-slate-100">
           <p className="font-semibold text-slate-800 text-sm">Đối chiếu quỹ theo ngày — Ngân hàng</p>
-          <p className="text-xs text-slate-400 mt-0.5">Tồn cuối ngày = Tồn đầu ngày + Hoá đơn phát sinh trong ngày − Chi phí phát sinh trong ngày.</p>
+          <p className="text-xs text-slate-400 mt-0.5">Tồn cuối ngày = Tồn đầu ngày + Hoá đơn + Thu cọc phát sinh trong ngày − Chi phí phát sinh trong ngày.</p>
         </div>
         {dailyReport.length === 0 ? (
           <EmptyState icon={Wallet} text="Chưa có dữ liệu quỹ trong khoảng thời gian này." />
@@ -3484,6 +3632,7 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
                   <th className="text-left px-4 py-2 font-medium whitespace-nowrap">Ngày</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Tồn đầu ngày</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Hoá đơn</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Thu cọc</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Thu ngân</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Lệch</th>
                   <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Chi</th>
@@ -3499,6 +3648,7 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
                       {d.openingMismatchBank && <span className="block text-[10px] text-rose-500 whitespace-nowrap">lệch với dự kiến {fmtMoney(d.expectedOpeningBank ?? 0)}</span>}
                     </td>
                     <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.invoiceBank)}</td>
+                    <td className="px-3 py-2 text-right text-indigo-600 whitespace-nowrap">{fmtMoney(d.depositBank)}</td>
                     <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.cashierBank)}</td>
                     <td className={`px-3 py-2 text-right font-medium whitespace-nowrap ${d.diffBank === 0 ? "text-emerald-600" : d.diffBank > 0 ? "text-amber-600" : "text-rose-600"}`}>{d.diffBank === 0 ? "Khớp" : fmtMoney(d.diffBank)}</td>
                     <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{fmtMoney(d.chiBank)}</td>
@@ -4480,6 +4630,29 @@ export default function App() {
     showToast("Đã cập nhật phiếu chi");
   };
 
+  // Thu cọc — độc lập với Doanh thu bán hàng theo hoá đơn và Thu ngân tổng (không dùng để đối
+  // chiếu doanh thu bán hàng), do Thu ngân tự ghi nhận theo ngày khi khách đặt cọc trước.
+  const submitDepositReceipt = async ({ receiptDate, cashAmount, bankAmount, customerName, note }) => {
+    const { error } = await supabase.from("deposit_receipts").insert({
+      receipt_date: receiptDate || todayISO(), cash_amount: Number(cashAmount) || 0,
+      bank_amount: Number(bankAmount) || 0, customer_name: customerName || null,
+      note: note || null, created_by: currentUser.id,
+    });
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã ghi nhận phiếu thu cọc");
+  };
+
+  const updateDepositReceipt = async (id, { receiptDate, cashAmount, bankAmount, customerName, note }) => {
+    const { error } = await supabase.from("deposit_receipts").update({
+      receipt_date: receiptDate || todayISO(), cash_amount: Number(cashAmount) || 0,
+      bank_amount: Number(bankAmount) || 0, customer_name: customerName || null, note: note || null,
+    }).eq("id", id);
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã cập nhật phiếu thu cọc");
+  };
+
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
   // tính từ Xuất kho tự động (dish_sales). Upsert theo invoice_no để import lại không bị trùng.
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
@@ -4696,7 +4869,7 @@ export default function App() {
             {tab === "xuat" && !isThuNgan && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && !isThuNgan && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
             {tab === "quy" && canViewReports && !isThuNgan && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
-            {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} onUpdateCashierReceipt={updateCashierReceipt} onUpdateExpense={updateExpenseRecord} />}
+            {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} onUpdateCashierReceipt={updateCashierReceipt} onUpdateExpense={updateExpenseRecord} onSubmitDepositReceipt={submitDepositReceipt} onUpdateDepositReceipt={updateDepositReceipt} />}
             {tab === "mon_an" && !isThuNgan && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && !isThuNgan && (
               <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
