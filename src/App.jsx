@@ -3419,17 +3419,19 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
         )}
       </Card>
 
-      {/* Báo cáo đối chiếu quỹ theo từng ngày — để Quản lý rà soát ngay khi Thu ngân gửi số liệu hàng ngày */}
+      {/* Báo cáo đối chiếu quỹ theo từng ngày — để Quản lý rà soát ngay khi Thu ngân gửi số liệu hàng ngày.
+          Tách riêng 2 bảng Tiền mặt / Ngân hàng cho dễ đọc (trước đây gộp 1 bảng quá nhiều cột). */}
+      {dailyReport.some((d) => d.openingMismatchCash || d.openingMismatchBank) && (
+        <div className="mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-center gap-1">
+          <AlertTriangle size={13} className="shrink-0" /> Có ngày Tồn quỹ đầu ngày Thu ngân điền <b>không khớp</b> với số cuối ngày hôm trước App tự tính — xem cột "Tồn đầu ngày" ở bảng bên dưới (tô đỏ).
+        </div>
+      )}
+
       <Card className="p-0 overflow-hidden mb-5">
         <div className="p-4 border-b border-slate-100">
-          <p className="font-semibold text-slate-800 text-sm">Đối chiếu quỹ theo ngày</p>
-          <p className="text-xs text-slate-400 mt-0.5">So khớp Doanh thu hoá đơn (file import), Thu ngân báo cáo, Chi phí, và Tồn quỹ đầu ngày Thu ngân điền so với số cuối ngày hôm trước App tự tính.</p>
+          <p className="font-semibold text-slate-800 text-sm">Đối chiếu quỹ theo ngày — Tiền mặt</p>
+          <p className="text-xs text-slate-400 mt-0.5">Tồn cuối ngày = Tồn đầu ngày + Hoá đơn phát sinh trong ngày − Chi phí phát sinh trong ngày.</p>
         </div>
-        {dailyReport.some((d) => d.openingMismatchCash || d.openingMismatchBank) && (
-          <div className="m-4 mb-0 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-center gap-1">
-            <AlertTriangle size={13} className="shrink-0" /> Có ngày Tồn quỹ đầu ngày Thu ngân điền <b>không khớp</b> với số cuối ngày hôm trước App tự tính — xem cột "Tồn đầu ngày" bên dưới (tô đỏ).
-          </div>
-        )}
         {dailyReport.length === 0 ? (
           <EmptyState icon={Wallet} text="Chưa có dữ liệu quỹ trong khoảng thời gian này." />
         ) : (
@@ -3437,43 +3439,70 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-xs text-slate-500 border-b border-slate-100">
-                  <th className="text-left px-4 py-2 font-medium">Ngày</th>
-                  <th className="text-right px-3 py-2 font-medium">Tồn đầu ngày (TM/NH)</th>
-                  <th className="text-right px-3 py-2 font-medium">Hoá đơn - TM</th>
-                  <th className="text-right px-3 py-2 font-medium">Thu ngân - TM</th>
-                  <th className="text-right px-3 py-2 font-medium">Lệch TM</th>
-                  <th className="text-right px-3 py-2 font-medium">Hoá đơn - NH</th>
-                  <th className="text-right px-3 py-2 font-medium">Thu ngân - NH</th>
-                  <th className="text-right px-3 py-2 font-medium">Lệch NH</th>
-                  <th className="text-right px-3 py-2 font-medium">Chi TM</th>
-                  <th className="text-right px-3 py-2 font-medium">Chi NH</th>
-                  <th className="text-right px-3 py-2 font-medium">Tồn cuối ngày (TM/NH)</th>
+                  <th className="text-left px-4 py-2 font-medium whitespace-nowrap">Ngày</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Tồn đầu ngày</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Hoá đơn</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Thu ngân</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Lệch</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Chi</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Tồn cuối ngày</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
                 {dailyReport.map((d) => (
                   <tr key={d.date} className="hover:bg-slate-50/60">
                     <td className="px-4 py-2 text-slate-700 font-medium whitespace-nowrap">{fmtDate(d.date)}</td>
-                    <td className={`px-3 py-2 text-right whitespace-nowrap ${d.openingMismatchCash || d.openingMismatchBank ? "text-rose-600 font-medium" : "text-slate-500"}`}>
-                      {d.openingCashEntered === null && d.openingBankEntered === null ? (
-                        <span className="text-slate-300">chưa điền</span>
-                      ) : (
-                        <>{fmtMoney(d.openingCashEntered ?? 0)} / {fmtMoney(d.openingBankEntered ?? 0)}
-                          {(d.openingMismatchCash || d.openingMismatchBank) && (
-                            <span className="block text-[10px] text-rose-500">lệch với dự kiến {fmtMoney(d.expectedOpeningCash ?? 0)} / {fmtMoney(d.expectedOpeningBank ?? 0)}</span>
-                          )}
-                        </>
-                      )}
+                    <td className={`px-3 py-2 text-right whitespace-nowrap ${d.openingMismatchCash ? "text-rose-600 font-medium" : "text-slate-500"}`}>
+                      {d.openingCashEntered === null ? <span className="text-slate-300">chưa điền</span> : fmtMoney(d.openingCashEntered)}
+                      {d.openingMismatchCash && <span className="block text-[10px] text-rose-500 whitespace-nowrap">lệch với dự kiến {fmtMoney(d.expectedOpeningCash ?? 0)}</span>}
                     </td>
-                    <td className="px-3 py-2 text-right text-slate-600">{fmtMoney(d.invoiceCash)}</td>
-                    <td className="px-3 py-2 text-right text-slate-600">{fmtMoney(d.cashierCash)}</td>
-                    <td className={`px-3 py-2 text-right font-medium ${d.diffCash === 0 ? "text-emerald-600" : d.diffCash > 0 ? "text-amber-600" : "text-rose-600"}`}>{d.diffCash === 0 ? "Khớp" : fmtMoney(d.diffCash)}</td>
-                    <td className="px-3 py-2 text-right text-slate-600">{fmtMoney(d.invoiceBank)}</td>
-                    <td className="px-3 py-2 text-right text-slate-600">{fmtMoney(d.cashierBank)}</td>
-                    <td className={`px-3 py-2 text-right font-medium ${d.diffBank === 0 ? "text-emerald-600" : d.diffBank > 0 ? "text-amber-600" : "text-rose-600"}`}>{d.diffBank === 0 ? "Khớp" : fmtMoney(d.diffBank)}</td>
-                    <td className="px-3 py-2 text-right text-slate-500">{fmtMoney(d.chiCash)}</td>
-                    <td className="px-3 py-2 text-right text-slate-500">{fmtMoney(d.chiBank)}</td>
-                    <td className="px-3 py-2 text-right text-slate-700 font-medium whitespace-nowrap">{fmtMoney(d.closingCash)} / {fmtMoney(d.closingBank)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.invoiceCash)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.cashierCash)}</td>
+                    <td className={`px-3 py-2 text-right font-medium whitespace-nowrap ${d.diffCash === 0 ? "text-emerald-600" : d.diffCash > 0 ? "text-amber-600" : "text-rose-600"}`}>{d.diffCash === 0 ? "Khớp" : fmtMoney(d.diffCash)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{fmtMoney(d.chiCash)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700 font-medium whitespace-nowrap">{fmtMoney(d.closingCash)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      <Card className="p-0 overflow-hidden mb-5">
+        <div className="p-4 border-b border-slate-100">
+          <p className="font-semibold text-slate-800 text-sm">Đối chiếu quỹ theo ngày — Ngân hàng</p>
+          <p className="text-xs text-slate-400 mt-0.5">Tồn cuối ngày = Tồn đầu ngày + Hoá đơn phát sinh trong ngày − Chi phí phát sinh trong ngày.</p>
+        </div>
+        {dailyReport.length === 0 ? (
+          <EmptyState icon={Wallet} text="Chưa có dữ liệu quỹ trong khoảng thời gian này." />
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-xs text-slate-500 border-b border-slate-100">
+                  <th className="text-left px-4 py-2 font-medium whitespace-nowrap">Ngày</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Tồn đầu ngày</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Hoá đơn</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Thu ngân</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Lệch</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Chi</th>
+                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Tồn cuối ngày</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-50">
+                {dailyReport.map((d) => (
+                  <tr key={d.date} className="hover:bg-slate-50/60">
+                    <td className="px-4 py-2 text-slate-700 font-medium whitespace-nowrap">{fmtDate(d.date)}</td>
+                    <td className={`px-3 py-2 text-right whitespace-nowrap ${d.openingMismatchBank ? "text-rose-600 font-medium" : "text-slate-500"}`}>
+                      {d.openingBankEntered === null ? <span className="text-slate-300">chưa điền</span> : fmtMoney(d.openingBankEntered)}
+                      {d.openingMismatchBank && <span className="block text-[10px] text-rose-500 whitespace-nowrap">lệch với dự kiến {fmtMoney(d.expectedOpeningBank ?? 0)}</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.invoiceBank)}</td>
+                    <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.cashierBank)}</td>
+                    <td className={`px-3 py-2 text-right font-medium whitespace-nowrap ${d.diffBank === 0 ? "text-emerald-600" : d.diffBank > 0 ? "text-amber-600" : "text-rose-600"}`}>{d.diffBank === 0 ? "Khớp" : fmtMoney(d.diffBank)}</td>
+                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{fmtMoney(d.chiBank)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700 font-medium whitespace-nowrap">{fmtMoney(d.closingBank)}</td>
                   </tr>
                 ))}
               </tbody>
