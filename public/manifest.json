@@ -1,0 +1,16 @@
+{
+  "name": "P&L The Eros 143",
+  "short_name": "P&L Eros 143",
+  "description": "Nhập - Xuất - Tồn kho, Chi phí, Cost món ăn, Quỹ - P&L The Eros 143",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f0f9ff",
+  "theme_color": "#0284c7",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
