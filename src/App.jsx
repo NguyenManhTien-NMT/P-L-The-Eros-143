@@ -4626,8 +4626,10 @@ export default function App() {
       </aside>
 
       <div className="flex-1 min-w-0 pb-20 lg:pb-0">
-        {/* Header trên cùng — chỉ hiện khi chưa có sidebar (dưới breakpoint lg) */}
-        <div className="lg:hidden bg-white/90 backdrop-blur border-b border-slate-200 sticky top-0 z-30">
+        {/* Header trên cùng — chỉ hiện khi chưa có sidebar (dưới breakpoint lg).
+            pt thêm env(safe-area-inset-top) để không bị đồng hồ/pin điện thoại che mất
+            (do index.html dùng viewport-fit=cover cho PWA tràn full màn hình). */}
+        <div className="lg:hidden bg-white/90 backdrop-blur border-b border-slate-200 sticky top-0 z-30" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
           <div className="px-4 py-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center shrink-0 shadow-sm">
@@ -4679,7 +4681,7 @@ export default function App() {
       </div>
 
       {/* Thanh điều hướng cố định đáy màn hình, cuộn ngang — chỉ hiện dưới breakpoint lg */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 flex items-center gap-1 px-2 py-2 overflow-x-auto">
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 flex items-center gap-1 px-2 py-2 overflow-x-auto" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
         {navItems.map((n) => (
           <button key={n.key} onClick={() => setTab(n.key)} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-[11px] font-medium whitespace-nowrap shrink-0 transition ${tab === n.key ? "bg-sky-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100"}`}>
             <n.icon size={16} /> {n.label}
