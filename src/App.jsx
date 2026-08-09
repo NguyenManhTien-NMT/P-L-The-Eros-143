@@ -3041,7 +3041,7 @@ function InvoiceRevenueImportForm({ onImport }) {
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Import Doanh thu bán hàng theo hoá đơn</p>
-      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>, và nếu có thêm cột <b>Tiền mặt</b>/<b>Chuyển khoản</b> sẽ tự tách quỹ theo phương thức thanh toán. Import lại cùng số hoá đơn sẽ tự ghi đè, không bị trùng. Hoá đơn có ghi chú "đã huỷ" sẽ tự động bị loại bỏ, không tính vào doanh thu.</p>
+      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>, và nếu có thêm cột <b>Tiền mặt</b>/<b>Chuyển khoản</b> sẽ tự tách quỹ theo phương thức thanh toán. <b className="text-rose-600">Import file mới sẽ thay thế toàn bộ dữ liệu doanh thu cũ</b> (không cộng dồn) — luôn dùng file xuất đầy đủ cho cả khoảng thời gian cần theo dõi. Hoá đơn có ghi chú "đã huỷ" sẽ tự động bị loại bỏ, không tính vào doanh thu.</p>
       <div className="flex items-center gap-2 mb-3">
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
           <Upload size={15} /> {fileName || "Chọn file Excel..."}
@@ -3066,10 +3066,11 @@ function InvoiceRevenueImportForm({ onImport }) {
       {preview.length > 0 && (
         <>
           <p className="text-xs text-slate-500 mb-3">{preview.length} hoá đơn · Tổng doanh thu <span className="font-semibold text-sky-700">{fmtMoney(totalPreview)}</span></p>
-          <PrimaryButton onClick={submit} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Import {preview.length} hoá đơn</PrimaryButton>
+          <p className="text-xs text-rose-600 mb-3 flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> Toàn bộ dữ liệu doanh thu hoá đơn hiện có sẽ bị xoá và thay bằng {preview.length} hoá đơn trong file này.</p>
+          <PrimaryButton onClick={() => { if (window.confirm(`Xoá toàn bộ dữ liệu doanh thu hoá đơn hiện có và thay bằng ${preview.length} hoá đơn từ file mới?`)) submit(); }} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Thay thế bằng {preview.length} hoá đơn</PrimaryButton>
         </>
       )}
-      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã import thành công {done} hoá đơn.</p>}
+      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã thay thế thành công — hiện có {done} hoá đơn.</p>}
     </Card>
   );
 }
@@ -3118,6 +3119,9 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportI
   // dùng đúng số tiền thực thu để đối chiếu, không dùng số tính ngược từ Xuất kho.
   const diff = totalThuNgan - totalInvoiceRevenue;
   const diffPct = totalInvoiceRevenue > 0 ? (diff / totalInvoiceRevenue) * 100 : 0;
+  // Đối chiếu riêng theo từng phương thức: Tiền mặt file hoá đơn vs Tiền mặt Thu ngân, tương tự Ngân hàng.
+  const diffCash = totalThuNganCash - totalInvoiceRevenueCash;
+  const diffBank = totalThuNganBank - totalInvoiceRevenueBank;
 
   return (
     <div>
@@ -3164,6 +3168,41 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportI
             <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalInvoiceRevenue)}</p>
           </div>
         </div>
+
+        {/* Chi tiết theo từng phương thức: file import (Bảng kê hoá đơn) vs Thu ngân báo cáo */}
+        <div className="grid sm:grid-cols-2 gap-3 mb-3">
+          <div className="border border-slate-200 rounded-xl p-3">
+            <p className="text-xs font-medium text-slate-600 mb-2">Tiền mặt</p>
+            <div className="flex items-center justify-between text-sm mb-1">
+              <span className="text-slate-500">File hoá đơn</span>
+              <span className="font-semibold text-slate-700">{fmtMoney(totalInvoiceRevenueCash)}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm mb-1">
+              <span className="text-slate-500">Thu ngân báo cáo</span>
+              <span className="font-semibold text-slate-700">{fmtMoney(totalThuNganCash)}</span>
+            </div>
+            <div className={`flex items-center justify-between text-sm pt-1 border-t border-slate-100 ${diffCash === 0 ? "text-emerald-700" : diffCash > 0 ? "text-amber-700" : "text-rose-700"}`}>
+              <span>Chênh lệch</span>
+              <span className="font-semibold">{diffCash === 0 ? "Khớp" : `${diffCash > 0 ? "Thừa" : "Thiếu"} ${fmtMoney(Math.abs(diffCash))}`}</span>
+            </div>
+          </div>
+          <div className="border border-slate-200 rounded-xl p-3">
+            <p className="text-xs font-medium text-slate-600 mb-2">Ngân hàng</p>
+            <div className="flex items-center justify-between text-sm mb-1">
+              <span className="text-slate-500">File hoá đơn</span>
+              <span className="font-semibold text-slate-700">{fmtMoney(totalInvoiceRevenueBank)}</span>
+            </div>
+            <div className="flex items-center justify-between text-sm mb-1">
+              <span className="text-slate-500">Thu ngân báo cáo</span>
+              <span className="font-semibold text-slate-700">{fmtMoney(totalThuNganBank)}</span>
+            </div>
+            <div className={`flex items-center justify-between text-sm pt-1 border-t border-slate-100 ${diffBank === 0 ? "text-emerald-700" : diffBank > 0 ? "text-amber-700" : "text-rose-700"}`}>
+              <span>Chênh lệch</span>
+              <span className="font-semibold">{diffBank === 0 ? "Khớp" : `${diffBank > 0 ? "Thừa" : "Thiếu"} ${fmtMoney(Math.abs(diffBank))}`}</span>
+            </div>
+          </div>
+        </div>
+
         {totalInvoiceRevenue === 0 && totalThuNgan === 0 ? (
           <p className="text-xs text-slate-400">Chưa có đủ dữ liệu để đối chiếu trong khoảng thời gian này — cần import "Bảng kê hoá đơn" và/hoặc có phiếu Thu ngân.</p>
         ) : diff === 0 ? (
@@ -4148,16 +4187,22 @@ export default function App() {
 
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
   // tính từ Xuất kho tự động (dish_sales). Upsert theo invoice_no để import lại không bị trùng.
+  // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
+  // tính từ Xuất kho tự động (dish_sales). Mỗi lần import là THAY THẾ TOÀN BỘ dữ liệu cũ
+  // bằng file mới nhất (không upsert cộng dồn nữa) — vì file "Bảng kê hoá đơn" luôn xuất
+  // đầy đủ cho cả khoảng thời gian, import file mới coi như nguồn dữ liệu chuẩn duy nhất.
   const bulkImportInvoiceRevenue = async (rows) => {
     if (rows.length === 0) return;
+    const { error: delError } = await supabase.from("invoice_revenue").delete().not("id", "is", null);
+    if (delError) throw delError;
     const dbRows = rows.map((r) => ({
       invoice_no: r.invoiceNo, invoice_date: r.invoiceDate, amount: r.amount,
       cash_amount: r.cashAmount || 0, bank_amount: r.bankAmount || 0, created_by: currentUser.id,
     }));
-    const { error } = await supabase.from("invoice_revenue").upsert(dbRows, { onConflict: "invoice_no" });
+    const { error } = await supabase.from("invoice_revenue").insert(dbRows);
     if (error) throw error;
     await refreshAll();
-    showToast(`Đã import ${rows.length} hoá đơn doanh thu`);
+    showToast(`Đã thay thế toàn bộ dữ liệu doanh thu bằng ${rows.length} hoá đơn từ file mới`);
   };
 
   // ---------------- Cost món ăn ----------------
