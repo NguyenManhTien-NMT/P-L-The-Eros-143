@@ -8,3 +8,11 @@ ReactDOM.createRoot(document.getElementById("root")).render(
     <App />
   </React.StrictMode>
 );
+
+// Đăng ký service worker để trình duyệt nhận diện đây là PWA (điều kiện bắt buộc để
+// cài lên máy tính/điện thoại) — không ảnh hưởng gì nếu trình duyệt không hỗ trợ.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
