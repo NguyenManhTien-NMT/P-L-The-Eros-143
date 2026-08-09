@@ -2999,20 +2999,47 @@ function InvoiceRevenueImportForm({ onImport }) {
       const rawRows = await readExcelRaw(file);
       const headerIdx = detectHeaderRow(rawRows, ["Số hóa đơn", "Doanh thu"]);
       if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Số hóa đơn" và "Doanh thu") trong file.']); setPreview([]); return; }
-      const rawObjRows = rowsToObjects(rawRows, headerIdx);
+
+      // File "Bảng kê hoá đơn" có 2 dòng tiêu đề chồng nhau: dòng chính (Ngày/Số hoá đơn/Doanh thu...)
+      // và dòng phụ ngay bên dưới chứa các cột con của nhóm "Doanh thu" (Tổng/Tiền hàng trước thuế...)
+      // và nhóm "Khách hàng/đối tác thanh toán" (Tiền mặt/Chuyển khoản/Voucher/Khách nợ) — 2 cột
+      // Tiền mặt/Chuyển khoản CHỈ nằm ở dòng phụ này nên phải dò riêng, không có ở dòng tiêu đề chính.
+      const findCol = (headerRow, ...names) => {
+        const norm = (s) => stripDiacritics(String(s ?? "")).replace(/\s+/g, "");
+        for (const name of names) {
+          const target = norm(name);
+          const idx = (headerRow || []).findIndex((c) => norm(c) === target);
+          if (idx !== -1) return idx;
+        }
+        return -1;
+      };
+      const mainHeader = rawRows[headerIdx] || [];
+      const subHeader = rawRows[headerIdx + 1] || [];
+      const colNgay = findCol(mainHeader, "Ngày", "Ngay");
+      const colSoHoaDon = findCol(mainHeader, "Số hóa đơn", "So hoa don");
+      const colDoanhThu = findCol(mainHeader, "Doanh thu", "Doanh thu bán hàng");
+      const colGhiChu = findCol(mainHeader, "Ghi chú", "Ghi chu");
+      // Dòng phụ tồn tại nếu có chữ nhưng đúng cột "Số hoá đơn" lại rỗng (dòng phụ chỉ là tiêu đề cột con, không phải dữ liệu)
+      const hasSubHeader = subHeader.some((c) => String(c ?? "").trim() !== "") && (colSoHoaDon === -1 || String(subHeader[colSoHoaDon] ?? "").trim() === "");
+      const colTienMat = findCol(hasSubHeader ? subHeader : mainHeader, "Tiền mặt", "Tien mat");
+      const colChuyenKhoan = findCol(hasSubHeader ? subHeader : mainHeader, "Chuyển khoản", "Chuyen khoan");
+      const dataStartIdx = hasSubHeader ? headerIdx + 2 : headerIdx + 1;
+
       const valid = [];
       let cancelledCount = 0;
-      rawObjRows.forEach((row) => {
-        const invoiceNo = String(pickCol(row, "Số hóa đơn", "So hoa don") ?? "").trim();
-        const amount = Number(pickCol(row, "Doanh thu", "Doanh thu bán hàng")) || 0;
-        const cashAmount = Number(pickCol(row, "Tiền mặt", "Tien mat")) || 0;
-        const bankAmount = Number(pickCol(row, "Chuyển khoản", "Chuyen khoan")) || 0;
-        const invoiceDate = excelDateToISO(pickCol(row, "Ngày", "Ngay") ?? pickColContains(row, "ngay")) || todayISO();
-        const note = String(pickCol(row, "Ghi chú", "Ghi chu") ?? "").trim();
-        if (!invoiceNo) return;
-        if (stripDiacritics(note).includes("huy")) { cancelledCount += 1; return; } // bỏ hoá đơn đã huỷ
+      for (let i = dataStartIdx; i < rawRows.length; i++) {
+        const row = rawRows[i] || [];
+        if (row.every((c) => c === "" || c === undefined || c === null)) continue;
+        const invoiceNo = String((colSoHoaDon !== -1 ? row[colSoHoaDon] : "") ?? "").trim();
+        if (!invoiceNo) continue;
+        const amount = Number(colDoanhThu !== -1 ? row[colDoanhThu] : 0) || 0;
+        const cashAmount = Number(colTienMat !== -1 ? row[colTienMat] : 0) || 0;
+        const bankAmount = Number(colChuyenKhoan !== -1 ? row[colChuyenKhoan] : 0) || 0;
+        const invoiceDate = excelDateToISO(colNgay !== -1 ? row[colNgay] : "") || todayISO();
+        const note = String((colGhiChu !== -1 ? row[colGhiChu] : "") ?? "").trim();
+        if (stripDiacritics(note).includes("huy")) { cancelledCount += 1; continue; } // bỏ hoá đơn đã huỷ
         valid.push({ invoiceNo, invoiceDate, amount, cashAmount, bankAmount });
-      });
+      }
       setPreview(valid);
       setCancelled(cancelledCount);
       setErrors([]);
