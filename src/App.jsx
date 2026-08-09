@@ -2848,15 +2848,26 @@ function dailyReceiptsFromSales(dishSales, from, to, dishes) {
   return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
 }
 
-function PhieuChiForm({ onSubmit }) {
-  const [expenseDate, setExpenseDate] = useState(todayISO());
-  const [category, setCategory] = useState("van_hanh");
-  const [itemName, setItemName] = useState("");
-  const [amount, setAmount] = useState("");
-  const [note, setNote] = useState("");
-  const [paymentMethod, setPaymentMethod] = useState("tien_mat");
+function PhieuChiForm({ onSubmit, editRecord, onUpdate, onCancelEdit }) {
+  const isEditing = !!editRecord;
+  const [expenseDate, setExpenseDate] = useState(editRecord?.expenseDate || todayISO());
+  const [category, setCategory] = useState(editRecord?.category || "van_hanh");
+  const [itemName, setItemName] = useState(editRecord?.itemName || "");
+  const [amount, setAmount] = useState(editRecord ? String(editRecord.amount) : "");
+  const [note, setNote] = useState(editRecord?.note || "");
+  const [paymentMethod, setPaymentMethod] = useState(editRecord?.paymentMethod || "tien_mat");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    setExpenseDate(editRecord?.expenseDate || todayISO());
+    setCategory(editRecord?.category || "van_hanh");
+    setItemName(editRecord?.itemName || "");
+    setAmount(editRecord ? String(editRecord.amount) : "");
+    setNote(editRecord?.note || "");
+    setPaymentMethod(editRecord?.paymentMethod || "tien_mat");
+    setError("");
+  }, [editRecord?.id]);
 
   const chiCategories = EXPENSE_CATEGORIES.filter((c) => c.key !== "nvl"); // NVL đã ghi nhận riêng qua Nhập hàng
 
@@ -2865,8 +2876,13 @@ function PhieuChiForm({ onSubmit }) {
     if (!amount || Number(amount) <= 0) { setError("Vui lòng nhập số tiền hợp lệ."); return; }
     setError(""); setSaving(true);
     try {
-      await onSubmit({ category, expenseDate, paymentMethod, lines: [{ itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null }] });
-      setItemName(""); setAmount(""); setNote("");
+      if (isEditing) {
+        await onUpdate(editRecord.id, { category, expenseDate, paymentMethod, itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null });
+        onCancelEdit();
+      } else {
+        await onSubmit({ category, expenseDate, paymentMethod, lines: [{ itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null }] });
+        setItemName(""); setAmount(""); setNote("");
+      }
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
     } finally {
@@ -2876,7 +2892,10 @@ function PhieuChiForm({ onSubmit }) {
 
   return (
     <Card className="p-4 sm:p-5 mb-5">
-      <p className="font-semibold text-slate-800 text-sm mb-3">Tạo phiếu chi</p>
+      <div className="flex items-center justify-between mb-3">
+        <p className="font-semibold text-slate-800 text-sm">{isEditing ? "Sửa phiếu chi" : "Tạo phiếu chi"}</p>
+        {isEditing && <button type="button" onClick={onCancelEdit} className="text-xs text-slate-400 hover:text-rose-600 flex items-center gap-1"><X size={13} /> Huỷ sửa</button>}
+      </div>
       <div className="grid sm:grid-cols-2 gap-3 mb-3">
         <TextField label="Ngày chi" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
         <SelectField label="Loại chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
@@ -2891,21 +2910,32 @@ function PhieuChiForm({ onSubmit }) {
         <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />} Lưu phiếu chi</PrimaryButton>
-      <p className="text-xs text-slate-400 mt-2">Phiếu chi sau khi lưu sẽ tự động xuất hiện trong tab "Chi phí" đúng nhóm "{EXPENSE_CATEGORY_META[category]?.label}".</p>
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />} {isEditing ? "Cập nhật phiếu chi" : "Lưu phiếu chi"}</PrimaryButton>
+      {!isEditing && <p className="text-xs text-slate-400 mt-2">Phiếu chi sau khi lưu sẽ tự động xuất hiện trong tab "Chi phí" đúng nhóm "{EXPENSE_CATEGORY_META[category]?.label}".</p>}
     </Card>
   );
 }
 
-function CashierReceiptForm({ data, onSubmit }) {
-  const [receiptDate, setReceiptDate] = useState(todayISO());
-  const [cashAmount, setCashAmount] = useState("");
-  const [bankAmount, setBankAmount] = useState("");
-  const [openingCashAmount, setOpeningCashAmount] = useState("");
-  const [openingBankAmount, setOpeningBankAmount] = useState("");
-  const [note, setNote] = useState("");
+function CashierReceiptForm({ data, onSubmit, editRecord, onUpdate, onCancelEdit }) {
+  const isEditing = !!editRecord;
+  const [receiptDate, setReceiptDate] = useState(editRecord?.receiptDate || todayISO());
+  const [cashAmount, setCashAmount] = useState(editRecord ? String(editRecord.cashAmount) : "");
+  const [bankAmount, setBankAmount] = useState(editRecord ? String(editRecord.bankAmount) : "");
+  const [openingCashAmount, setOpeningCashAmount] = useState(editRecord?.openingCashAmount != null ? String(editRecord.openingCashAmount) : "");
+  const [openingBankAmount, setOpeningBankAmount] = useState(editRecord?.openingBankAmount != null ? String(editRecord.openingBankAmount) : "");
+  const [note, setNote] = useState(editRecord?.note || "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    setReceiptDate(editRecord?.receiptDate || todayISO());
+    setCashAmount(editRecord ? String(editRecord.cashAmount) : "");
+    setBankAmount(editRecord ? String(editRecord.bankAmount) : "");
+    setOpeningCashAmount(editRecord?.openingCashAmount != null ? String(editRecord.openingCashAmount) : "");
+    setOpeningBankAmount(editRecord?.openingBankAmount != null ? String(editRecord.openingBankAmount) : "");
+    setNote(editRecord?.note || "");
+    setError("");
+  }, [editRecord?.id]);
 
   const total = (Number(cashAmount) || 0) + (Number(bankAmount) || 0);
   const expected = useMemo(() => expectedOpeningBalance(data, receiptDate), [data, receiptDate]);
@@ -2916,8 +2946,13 @@ function CashierReceiptForm({ data, onSubmit }) {
     if (total <= 0) { setError("Vui lòng nhập ít nhất 1 trong 2 khoản: tiền mặt hoặc tiền ngân hàng."); return; }
     setError(""); setSaving(true);
     try {
-      await onSubmit({ receiptDate, cashAmount, bankAmount, openingCashAmount, openingBankAmount, note: note.trim() });
-      setCashAmount(""); setBankAmount(""); setOpeningCashAmount(""); setOpeningBankAmount(""); setNote("");
+      if (isEditing) {
+        await onUpdate(editRecord.id, { receiptDate, cashAmount, bankAmount, openingCashAmount, openingBankAmount, note: note.trim() });
+        onCancelEdit();
+      } else {
+        await onSubmit({ receiptDate, cashAmount, bankAmount, openingCashAmount, openingBankAmount, note: note.trim() });
+        setCashAmount(""); setBankAmount(""); setOpeningCashAmount(""); setOpeningBankAmount(""); setNote("");
+      }
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
     } finally {
@@ -2927,7 +2962,10 @@ function CashierReceiptForm({ data, onSubmit }) {
 
   return (
     <Card className="p-4 sm:p-5 mb-5">
-      <p className="font-semibold text-slate-800 text-sm mb-3">Ghi nhận Thu ngân</p>
+      <div className="flex items-center justify-between mb-3">
+        <p className="font-semibold text-slate-800 text-sm">{isEditing ? "Sửa phiếu thu" : "Ghi nhận Thu ngân"}</p>
+        {isEditing && <button type="button" onClick={onCancelEdit} className="text-xs text-slate-400 hover:text-rose-600 flex items-center gap-1"><X size={13} /> Huỷ sửa</button>}
+      </div>
       <div className="grid sm:grid-cols-2 gap-3 mb-1">
         <TextField label="Ngày thu" type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.target.value)} />
         <div />
@@ -2952,51 +2990,107 @@ function CashierReceiptForm({ data, onSubmit }) {
         <span className="font-semibold text-emerald-800">{fmtMoney(total)}</span>
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <TrendingUp size={15} />} Lưu phiếu thu</PrimaryButton>
-      <p className="text-xs text-slate-400 mt-2">Số liệu này độc lập với doanh thu tính từ báo cáo bán hàng — dùng để Quản lý đối chiếu quỹ thực tế.</p>
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <TrendingUp size={15} />} {isEditing ? "Cập nhật phiếu thu" : "Lưu phiếu thu"}</PrimaryButton>
+      {!isEditing && <p className="text-xs text-slate-400 mt-2">Số liệu này độc lập với doanh thu tính từ báo cáo bán hàng — dùng để Quản lý đối chiếu quỹ thực tế.</p>}
     </Card>
   );
 }
 
-function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierReceipt }) {
-  const myReceipts = data.cashierReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 15);
+function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierReceipt, onUpdateCashierReceipt, onUpdateExpense }) {
+  const [subTab, setSubTab] = useState("thu"); // "thu" | "chi"
+  const [editingReceiptId, setEditingReceiptId] = useState(null);
+  const [editingExpenseId, setEditingExpenseId] = useState(null);
+
+  const myReceipts = data.cashierReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 30);
+  const myExpenses = data.expenseRecords.filter((r) => r.createdBy === currentUser.id && r.category !== "nvl").slice(0, 30);
   const todayReceipts = data.cashierReceipts.filter((r) => r.receiptDate === todayISO());
   const todayTotal = todayReceipts.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
 
+  const editingReceipt = editingReceiptId ? myReceipts.find((r) => r.id === editingReceiptId) : null;
+  const editingExpense = editingExpenseId ? myExpenses.find((r) => r.id === editingExpenseId) : null;
+
   return (
     <div>
-      <SectionTitle icon={Wallet} title="Thu ngân" subtitle="Ghi nhận phiếu thu (tiền mặt/ngân hàng) và phiếu chi phát sinh trong ngày" />
+      <SectionTitle icon={Wallet} title="Thu ngân" subtitle="Lập phiếu thu (tiền mặt/ngân hàng) và phiếu chi phát sinh trong ngày" />
 
       <div className="grid grid-cols-2 gap-3 mb-5">
         <MetricCard label="Tổng thu hôm nay" value={fmtMoney(todayTotal)} icon={TrendingUp} accent="emerald" />
         <MetricCard label="Số phiếu thu hôm nay" value={fmtNumber(todayReceipts.length)} icon={Receipt} accent="teal" />
       </div>
 
-      <CashierReceiptForm data={data} onSubmit={onSubmitCashierReceipt} />
-      <PhieuChiForm onSubmit={onSubmitExpense} />
+      <div className="flex gap-2 mb-5 border-b border-slate-200">
+        <button type="button" onClick={() => setSubTab("thu")} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${subTab === "thu" ? "border-sky-600 text-sky-700" : "border-transparent text-slate-400 hover:text-slate-600"}`}>Lập phiếu thu</button>
+        <button type="button" onClick={() => setSubTab("chi")} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${subTab === "chi" ? "border-sky-600 text-sky-700" : "border-transparent text-slate-400 hover:text-slate-600"}`}>Lập phiếu chi</button>
+      </div>
 
-      <Card className="p-0 overflow-hidden">
-        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu thu gần đây (của bạn)</p></div>
-        {myReceipts.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có phiếu thu nào." /> : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Ngân hàng</th><th className="px-3 py-2 text-right">Tổng</th>
-              </tr></thead>
-              <tbody>
-                {myReceipts.map((r) => (
-                  <tr key={r.id} className="border-b border-slate-50 last:border-0">
-                    <td className="px-3 py-2 text-slate-500">{fmtDate(r.receiptDate)}</td>
-                    <td className="px-3 py-2 text-right">{fmtMoney(r.cashAmount)}</td>
-                    <td className="px-3 py-2 text-right">{fmtMoney(r.bankAmount)}</td>
-                    <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+      {subTab === "thu" && (
+        <>
+          <CashierReceiptForm
+            data={data} onSubmit={onSubmitCashierReceipt}
+            editRecord={editingReceipt} onUpdate={onUpdateCashierReceipt} onCancelEdit={() => setEditingReceiptId(null)}
+          />
+          <Card className="p-0 overflow-hidden">
+            <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử phiếu thu (của bạn)</p></div>
+            {myReceipts.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có phiếu thu nào." /> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                    <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Ngân hàng</th><th className="px-3 py-2 text-right">Tổng</th><th className="px-3 py-2"></th>
+                  </tr></thead>
+                  <tbody>
+                    {myReceipts.map((r) => (
+                      <tr key={r.id} className={`border-b border-slate-50 last:border-0 ${editingReceiptId === r.id ? "bg-sky-50" : ""}`}>
+                        <td className="px-3 py-2 text-slate-500">{fmtDate(r.receiptDate)}</td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(r.cashAmount)}</td>
+                        <td className="px-3 py-2 text-right">{fmtMoney(r.bankAmount)}</td>
+                        <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
+                        <td className="px-3 py-2 text-right">
+                          <button type="button" onClick={() => setEditingReceiptId(r.id)} className="text-xs text-sky-600 hover:text-sky-800 font-medium">Sửa</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
+
+      {subTab === "chi" && (
+        <>
+          <PhieuChiForm
+            onSubmit={onSubmitExpense}
+            editRecord={editingExpense} onUpdate={onUpdateExpense} onCancelEdit={() => setEditingExpenseId(null)}
+          />
+          <Card className="p-0 overflow-hidden">
+            <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử phiếu chi (của bạn)</p></div>
+            {myExpenses.length === 0 ? <EmptyState icon={TrendingDown} text="Chưa có phiếu chi nào." /> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                    <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2">PT thanh toán</th><th className="px-3 py-2 text-right">Số tiền</th><th className="px-3 py-2"></th>
+                  </tr></thead>
+                  <tbody>
+                    {myExpenses.map((r) => (
+                      <tr key={r.id} className={`border-b border-slate-50 last:border-0 ${editingExpenseId === r.id ? "bg-sky-50" : ""}`}>
+                        <td className="px-3 py-2 text-slate-500">{fmtDate(r.expenseDate)}</td>
+                        <td className="px-3 py-2">{r.itemName}</td>
+                        <td className="px-3 py-2 text-slate-500">{EXPENSE_CATEGORY_META[r.category]?.label || r.category}</td>
+                        <td className="px-3 py-2 text-slate-500">{r.paymentMethod === "ngan_hang" ? "Ngân hàng" : "Tiền mặt"}</td>
+                        <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
+                        <td className="px-3 py-2 text-right">
+                          <button type="button" onClick={() => setEditingExpenseId(r.id)} className="text-xs text-sky-600 hover:text-sky-800 font-medium">Sửa</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </>
+      )}
     </div>
   );
 }
@@ -4322,6 +4416,32 @@ export default function App() {
     showToast("Đã ghi nhận phiếu thu ngân");
   };
 
+  // Sửa phiếu thu ngân đã lập trước đó (chỉ Thu ngân sửa phiếu của chính mình, xem RLS ở Supabase).
+  const updateCashierReceipt = async (id, { receiptDate, cashAmount, bankAmount, openingCashAmount, openingBankAmount, note }) => {
+    const { error } = await supabase.from("cashier_receipts").update({
+      receipt_date: receiptDate || todayISO(), cash_amount: Number(cashAmount) || 0,
+      bank_amount: Number(bankAmount) || 0,
+      opening_cash_amount: openingCashAmount === "" || openingCashAmount === undefined ? null : Number(openingCashAmount),
+      opening_bank_amount: openingBankAmount === "" || openingBankAmount === undefined ? null : Number(openingBankAmount),
+      note: note || null,
+    }).eq("id", id);
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã cập nhật phiếu thu ngân");
+  };
+
+  // Sửa phiếu chi đã lập trước đó (chỉ áp dụng cho phiếu tạo qua "Tạo phiếu chi" — 1 dòng/phiếu).
+  const updateExpenseRecord = async (id, { category, expenseDate, paymentMethod, itemName, amount, note }) => {
+    const { error } = await supabase.from("expense_records").update({
+      category, item_name: itemName, amount: Number(amount) || 0,
+      payment_method: paymentMethod || "tien_mat",
+      expense_date: expenseDate || todayISO(), note: note || null,
+    }).eq("id", id);
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã cập nhật phiếu chi");
+  };
+
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
   // tính từ Xuất kho tự động (dish_sales). Upsert theo invoice_no để import lại không bị trùng.
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
@@ -4536,7 +4656,7 @@ export default function App() {
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
             {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
-            {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} />}
+            {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} onUpdateCashierReceipt={updateCashierReceipt} onUpdateExpense={updateExpenseRecord} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
               <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
