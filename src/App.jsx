@@ -3056,7 +3056,7 @@ function InvoiceRevenueImportForm({ onImport }) {
   );
 }
 
-function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportInvoiceRevenue }) {
+function QuyModule({ data, onBulkImportFromBills, onBulkImportInvoiceRevenue }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
 
@@ -3089,7 +3089,7 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportI
 
   return (
     <div>
-      <SectionTitle icon={Wallet} title="Quỹ" subtitle="Sổ quỹ thu-chi: Phiếu thu tự động theo doanh số bán hàng, Phiếu chi ghi tay theo ngày" />
+      <SectionTitle icon={Wallet} title="Quỹ" subtitle="Sổ quỹ thu-chi: Phiếu thu tự động theo doanh số bán hàng, xem lại Phiếu chi đã ghi nhận ở tab Chi phí" />
 
       <Card className="p-4 sm:p-5 mb-5">
         <div className="grid sm:grid-cols-2 gap-3">
@@ -3144,8 +3144,6 @@ function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportI
           </div>
         )}
       </Card>
-
-      <PhieuChiForm onSubmit={onSubmitExpense} />
 
       {onBulkImportFromBills && (
         <XuatExcelImportForm data={data} onImport={onBulkImportFromBills} />
@@ -4335,7 +4333,7 @@ export default function App() {
             {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} />}
-            {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
+            {tab === "quy" && canViewReports && <QuyModule data={data} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
             {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
