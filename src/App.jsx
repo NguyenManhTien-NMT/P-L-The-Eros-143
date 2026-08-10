@@ -277,9 +277,15 @@ function mapDeposit(r) {
     status: r.status, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
   };
 }
+function mapNotification(r) {
+  return {
+    id: r.id, message: r.message, type: r.type, targetRole: r.target_role,
+    isRead: r.is_read, createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at,
+  };
+}
 
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -295,8 +301,9 @@ async function fetchAll() {
     supabase.from("cashier_receipts").select("*").order("receipt_date", { ascending: false }),
     supabase.from("invoice_revenue").select("*").order("invoice_date", { ascending: false }),
     supabase.from("deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }),
+    supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(100),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -313,6 +320,7 @@ async function fetchAll() {
     cashierReceipts: (cashierRec.data || []).map(mapCashierReceipt),
     invoiceRevenue: (invRev.data || []).map(mapInvoiceRevenue),
     deposits: (dep.data || []).map(mapDeposit),
+    notifications: (noti.data || []).map(mapNotification),
   };
 }
 
@@ -3312,6 +3320,81 @@ function DepositModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
   );
 }
 
+function timeAgo(iso) {
+  if (!iso) return "";
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const mins = Math.floor(diffMs / 60000);
+  if (mins < 1) return "vừa xong";
+  if (mins < 60) return `${mins} phút trước`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours} giờ trước`;
+  const days = Math.floor(hours / 24);
+  return `${days} ngày trước`;
+}
+
+const NOTI_TYPE_ICON = { chi_phi: Receipt, thu_ngan: Wallet, coc: Coins };
+
+function NotificationBell({ notifications, onMarkRead, onMarkAllRead }) {
+  const [open, setOpen] = useState(false);
+  const unread = notifications.filter((n) => !n.isRead);
+  const rows = notifications.slice(0, 20);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="relative w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition shrink-0"
+        title="Thông báo"
+      >
+        <Bell size={14} className="text-slate-500" />
+        {unread.length > 0 && (
+          <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 rounded-full bg-rose-600 text-white text-[10px] font-semibold flex items-center justify-center">
+            {unread.length > 9 ? "9+" : unread.length}
+          </span>
+        )}
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 mt-2 w-80 max-w-[90vw] bg-white rounded-2xl shadow-xl border border-slate-100 z-50 overflow-hidden" style={{ animation: "fadeIn .15s ease-out" }}>
+            <div className="p-3 border-b border-slate-100 flex items-center justify-between">
+              <p className="text-sm font-semibold text-slate-800">Thông báo</p>
+              {unread.length > 0 && (
+                <button type="button" onClick={onMarkAllRead} className="text-xs text-sky-700 hover:underline">Đánh dấu đã đọc hết</button>
+              )}
+            </div>
+            <div className="max-h-96 overflow-y-auto divide-y divide-slate-50">
+              {rows.length === 0 ? (
+                <div className="p-6 text-center text-sm text-slate-400">Chưa có thông báo nào.</div>
+              ) : rows.map((n) => {
+                const Icon = NOTI_TYPE_ICON[n.type] || Bell;
+                return (
+                  <button
+                    key={n.id}
+                    type="button"
+                    onClick={() => !n.isRead && onMarkRead(n.id)}
+                    className={`w-full text-left px-3 py-2.5 flex items-start gap-2.5 hover:bg-slate-50 transition ${!n.isRead ? "bg-sky-50/60" : ""}`}
+                  >
+                    <div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 mt-0.5 ${!n.isRead ? "bg-sky-100 text-sky-700" : "bg-slate-100 text-slate-400"}`}>
+                      <Icon size={13} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className={`text-xs leading-snug ${!n.isRead ? "text-slate-800 font-medium" : "text-slate-500"}`}>{n.message}</p>
+                      <p className="text-[11px] text-slate-400 mt-0.5">{timeAgo(n.createdAt)}</p>
+                    </div>
+                    {!n.isRead && <span className="w-2 h-2 rounded-full bg-sky-600 shrink-0 mt-1.5" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function QuyModule({ data, onBulkImportFromBills, onBulkImportInvoiceRevenue }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
@@ -4312,7 +4395,7 @@ export default function App() {
   const [data, setData] = useState({
     employees: [], suppliers: [], revenueCodes: [], exportCodes: [], products: [],
     stockOpenings: [], importRecords: [], exportRecords: [], expenseRecords: [],
-    dishes: [], dishIngredients: [], deposits: [],
+    dishes: [], dishIngredients: [], deposits: [], notifications: [],
   });
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
@@ -4546,6 +4629,19 @@ export default function App() {
   };
 
   // ---------------- Chi phí (Vận hành / Marketing / Bảo trì & vật tư / Khác) ----------------
+  // Gửi thông báo đến tài khoản Báo cáo mỗi khi có cập nhật Thu/Chi (Thu ngân, Chi phí, Cọc).
+  // Không chặn luồng chính nếu lỗi (chỉ log ra console) — tránh làm hỏng thao tác chính của người dùng.
+  const pushNotification = async ({ message, type }) => {
+    try {
+      await supabase.from("notifications").insert({
+        message, type, target_role: "bao_cao",
+        created_by: currentUser.id, created_by_name: currentUser.name, is_read: false,
+      });
+    } catch (e) {
+      console.error("pushNotification lỗi:", e);
+    }
+  };
+
   const submitExpense = async ({ category, lines, expenseDate }) => {
     const rows = lines.map((l) => ({
       category, item_name: l.itemName,
@@ -4554,6 +4650,12 @@ export default function App() {
     }));
     const { error } = await supabase.from("expense_records").insert(rows);
     if (error) throw error;
+    const total = rows.reduce((s, r) => s + (r.amount || 0), 0);
+    const catLabel = EXPENSE_CATEGORY_META[category]?.label || category;
+    await pushNotification({
+      type: "chi_phi",
+      message: `${currentUser.name} vừa ghi nhận ${rows.length} khoản chi phí "${catLabel}" — tổng ${fmtMoney(total)}`,
+    });
     await refreshAll();
     showToast(`Đã ghi nhận ${rows.length} khoản chi phí`);
   };
@@ -4589,6 +4691,10 @@ export default function App() {
       bank_amount: Number(bankAmount) || 0, note: note || null, created_by: currentUser.id,
     });
     if (error) throw error;
+    await pushNotification({
+      type: "thu_ngan",
+      message: `${currentUser.name} vừa ghi nhận phiếu thu ngày ${fmtDate(receiptDate || todayISO())} — Tiền mặt ${fmtMoney(Number(cashAmount) || 0)}, Ngân hàng ${fmtMoney(Number(bankAmount) || 0)}`,
+    });
     await refreshAll();
     showToast("Đã ghi nhận phiếu thu ngân");
   };
@@ -4601,6 +4707,10 @@ export default function App() {
       deposit_date: depositDate || todayISO(), status: "dang_giu", note: note || null, created_by: currentUser.id,
     });
     if (error) throw error;
+    await pushNotification({
+      type: "coc",
+      message: `${currentUser.name} vừa ghi nhận ${direction === "thu" ? "thu cọc từ" : "chi cọc cho"} "${partyName.trim()}" — ${fmtMoney(Number(amount) || 0)}`,
+    });
     await refreshAll();
     showToast(direction === "thu" ? "Đã ghi nhận khoản thu cọc" : "Đã ghi nhận khoản chi cọc");
   };
@@ -4621,6 +4731,19 @@ export default function App() {
     if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
     await refreshAll();
     showToast("Đã xoá khoản cọc");
+  };
+
+  const markNotificationRead = async (id) => {
+    const { error } = await supabase.from("notifications").update({ is_read: true }).eq("id", id);
+    if (error) { console.error(error); return; }
+    await refreshAll();
+  };
+  const markAllNotificationsRead = async () => {
+    const unreadIds = data.notifications.filter((n) => !n.isRead).map((n) => n.id);
+    if (unreadIds.length === 0) return;
+    const { error } = await supabase.from("notifications").update({ is_read: true }).in("id", unreadIds);
+    if (error) { console.error(error); return; }
+    await refreshAll();
   };
 
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
@@ -4785,6 +4908,7 @@ export default function App() {
           <button onClick={() => setShowChangePassword(true)} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition shrink-0" title="Đổi mật khẩu">
             <Lock size={14} className="text-slate-500" />
           </button>
+          {canViewReports && <NotificationBell notifications={data.notifications} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} />}
           <button onClick={handleLogout} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition shrink-0" title="Đăng xuất">
             <LogOut size={14} className="text-slate-500" />
           </button>
@@ -4816,6 +4940,7 @@ export default function App() {
                 <button onClick={() => setShowChangePassword(true)} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition" title="Đổi mật khẩu">
                   <Lock size={14} className="text-slate-500" />
                 </button>
+                {canViewReports && <NotificationBell notifications={data.notifications} onMarkRead={markNotificationRead} onMarkAllRead={markAllNotificationsRead} />}
                 <button onClick={handleLogout} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition" title="Đăng xuất">
                   <LogOut size={14} className="text-slate-500" />
                 </button>
