@@ -3457,8 +3457,8 @@ function EditExpenseModal({ expense, onSave, onClose }) {
   );
 }
 
-function ExpenseList({ data, currentUser, onDelete, onUpdate }) {
-  const rows = data.expenseRecords.slice(0, 30);
+function ExpenseList({ data, currentUser, onDelete, onUpdate, filterCategory }) {
+  const rows = data.expenseRecords.filter((r) => !filterCategory || r.category === filterCategory).slice(0, 30);
   const isQuanLy = currentUser?.role === "quan_ly" || currentUser?.role === "bao_cao";
   const [deleting, setDeleting] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -3486,10 +3486,12 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate }) {
   return (
     <Card className="p-0 overflow-hidden">
       <div className="p-4 border-b border-slate-100">
-        <p className="font-semibold text-slate-800 text-sm">Chi phí ghi nhận gần đây</p>
+        <p className="font-semibold text-slate-800 text-sm">
+          {filterCategory ? `Chi phí nhóm "${EXPENSE_CATEGORY_META[filterCategory]?.label || filterCategory}"` : "Chi phí ghi nhận gần đây"}
+        </p>
         {isQuanLy && <p className="text-xs text-slate-400 mt-0.5">Có thể đổi nhanh "Loại chi phí" ngay tại đây nếu tự động phân nhóm bị sai.</p>}
       </div>
-      {rows.length === 0 ? <EmptyState icon={Receipt} text="Chưa có khoản chi phí nào." /> : (
+      {rows.length === 0 ? <EmptyState icon={Receipt} text="Chưa có khoản chi phí nào ở nhóm này." /> : (
         <div className="divide-y divide-slate-100">
           {rows.map((r) => (
             <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
@@ -3555,7 +3557,6 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate }) {
 // Bảng tổng hợp Chi phí: tổng theo từng loại (nvl gộp cả nhập kho Excel + phiếu chi lẻ) +
 // chi tiết theo từng khoản mục (gộp các dòng cùng tên, sắp xếp theo tổng tiền giảm dần).
 function ExpenseSummaryTable({ data }) {
-  const [showAllItems, setShowAllItems] = useState(false);
   const allExpense = data.expenseRecords;
 
   const totalsByCategory = EXPENSE_CATEGORIES.map((c) => {
@@ -3569,17 +3570,6 @@ function ExpenseSummaryTable({ data }) {
     return { key: c.key, label: c.label, total, count };
   });
   const grandTotal = totalsByCategory.reduce((s, c) => s + c.total, 0);
-
-  const itemMap = new Map();
-  allExpense.forEach((r) => {
-    const key = `${r.category}::${r.itemName.trim().toLowerCase()}`;
-    const cur = itemMap.get(key) || { itemName: r.itemName, category: r.category, total: 0, count: 0 };
-    cur.total += r.amount;
-    cur.count += 1;
-    itemMap.set(key, cur);
-  });
-  const itemRows = Array.from(itemMap.values()).sort((a, b) => b.total - a.total);
-  const visibleItemRows = showAllItems ? itemRows : itemRows.slice(0, 15);
 
   return (
     <Card className="p-0 overflow-hidden mb-5">
@@ -3615,28 +3605,6 @@ function ExpenseSummaryTable({ data }) {
           </tbody>
         </table>
       </div>
-
-      <div className="p-4 border-t border-b border-slate-100 flex items-center justify-between">
-        <p className="font-semibold text-slate-800 text-sm">Chi tiết theo khoản mục</p>
-        {itemRows.length > 15 && (
-          <button type="button" onClick={() => setShowAllItems((v) => !v)} className="text-xs text-sky-700 hover:underline">
-            {showAllItems ? "Thu gọn" : `Xem tất cả (${itemRows.length})`}
-          </button>
-        )}
-      </div>
-      {itemRows.length === 0 ? <EmptyState icon={Receipt} text="Chưa có khoản chi phí nào (ngoài NVL nhập kho)." /> : (
-        <div className="divide-y divide-slate-100">
-          {visibleItemRows.map((r, i) => (
-            <div key={i} className="px-4 py-2.5 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm text-slate-700 truncate">{r.itemName}</p>
-                <p className="text-xs text-slate-400">{EXPENSE_CATEGORY_META[r.category]?.label || r.category} · {r.count} lần</p>
-              </div>
-              <p className="text-sm font-medium text-slate-700 shrink-0">{fmtMoney(r.total)}</p>
-            </div>
-          ))}
-        </div>
-      )}
     </Card>
   );
 }
@@ -3694,7 +3662,7 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
         </div>
       )}
 
-      <ExpenseList data={data} currentUser={currentUser} onDelete={onDeleteExpense} onUpdate={onUpdateExpense} />
+      <ExpenseList data={data} currentUser={currentUser} onDelete={onDeleteExpense} onUpdate={onUpdateExpense} filterCategory={category} />
     </div>
   );
 }
