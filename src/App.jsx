@@ -2843,7 +2843,7 @@ function PhieuChiForm({ onSubmit }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const chiCategories = EXPENSE_CATEGORIES.filter((c) => c.key !== "nvl"); // NVL đã ghi nhận riêng qua Nhập hàng
+  const chiCategories = EXPENSE_CATEGORIES; // NVL cũng chọn được ở đây — dùng cho các khoản mua nguyên liệu lẻ (thịt/cá/tôm...) không qua phiếu nhập Excel
 
   const submit = async () => {
     if (!itemName.trim()) { setError("Vui lòng nhập tên khoản chi."); return; }
@@ -3437,7 +3437,7 @@ function EditExpenseModal({ expense, onSave, onClose }) {
         </div>
         <div className="space-y-3">
           <SelectField label="Nhóm chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
-            {EXPENSE_CATEGORIES.filter((c) => c.key !== "nvl").map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+            {EXPENSE_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
           </SelectField>
           <TextField label="Tên khoản chi" value={itemName} onChange={(e) => setItemName(e.target.value)} />
           <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
@@ -3462,6 +3462,7 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate }) {
   const isQuanLy = currentUser?.role === "quan_ly" || currentUser?.role === "bao_cao";
   const [deleting, setDeleting] = useState(null);
   const [editing, setEditing] = useState(null);
+  const [changingCategory, setChangingCategory] = useState(null);
 
   const handleDelete = async (id) => {
     if (!window.confirm("Xoá khoản chi phí này? Không thể hoàn tác.")) return;
@@ -3469,16 +3470,48 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate }) {
     try { await onDelete(id); } finally { setDeleting(null); }
   };
 
+  const handleCategoryChange = async (r, newCategory) => {
+    if (newCategory === r.category) return;
+    setChangingCategory(r.id);
+    try {
+      await onUpdate(r.id, {
+        category: newCategory, itemName: r.itemName, expenseDate: r.expenseDate,
+        amount: r.amount, quantity: r.quantity, unitPrice: r.unitPrice,
+      });
+    } finally {
+      setChangingCategory(null);
+    }
+  };
+
   return (
     <Card className="p-0 overflow-hidden">
-      <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Chi phí ghi nhận gần đây</p></div>
+      <div className="p-4 border-b border-slate-100">
+        <p className="font-semibold text-slate-800 text-sm">Chi phí ghi nhận gần đây</p>
+        {isQuanLy && <p className="text-xs text-slate-400 mt-0.5">Có thể đổi nhanh "Loại chi phí" ngay tại đây nếu tự động phân nhóm bị sai.</p>}
+      </div>
       {rows.length === 0 ? <EmptyState icon={Receipt} text="Chưa có khoản chi phí nào." /> : (
         <div className="divide-y divide-slate-100">
           {rows.map((r) => (
             <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
-              <div className="min-w-0">
+              <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-slate-800 truncate">{r.itemName}</p>
-                <p className="text-xs text-slate-400">{EXPENSE_CATEGORY_META[r.category]?.label || r.category} · {fmtDate(r.expenseDate)}</p>
+                <div className="flex items-center gap-2 mt-1">
+                  {isQuanLy ? (
+                    <select
+                      value={r.category}
+                      onChange={(e) => handleCategoryChange(r, e.target.value)}
+                      disabled={changingCategory === r.id}
+                      className="text-xs border border-slate-200 rounded-lg px-1.5 py-0.5 text-slate-600 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-sky-400 disabled:opacity-50"
+                      title="Đổi nhanh loại chi phí"
+                    >
+                      {EXPENSE_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+                    </select>
+                  ) : (
+                    <span className="text-xs text-slate-400">{EXPENSE_CATEGORY_META[r.category]?.label || r.category}</span>
+                  )}
+                  <p className="text-xs text-slate-400">· {fmtDate(r.expenseDate)}</p>
+                  {changingCategory === r.id && <Loader2 size={11} className="animate-spin text-slate-400" />}
+                </div>
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <p className="text-sm font-semibold text-slate-700">{fmtMoney(r.amount)}</p>
@@ -3525,7 +3558,10 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
 
   // Công nợ nguyên vật liệu: các phiếu nhập NVL có tình trạng thanh toán = Công nợ.
   const nvlRows = data.importRecords.slice(0, 30);
-  const nvlTotal = nvlRows.reduce((s, r) => s + r.totalAmount, 0);
+  // NVL ghi qua Phiếu chi (Thu ngân mua lẻ thịt/cá/tôm...), luôn coi là đã thanh toán (không có khái niệm công nợ ở Phiếu chi).
+  const nvlExpenseRows = data.expenseRecords.filter((r) => r.category === "nvl").slice(0, 30);
+  const nvlExpenseTotal = nvlExpenseRows.reduce((s, r) => s + r.amount, 0);
+  const nvlTotal = nvlRows.reduce((s, r) => s + r.totalAmount, 0) + nvlExpenseTotal;
   const nvlDebt = nvlRows.filter((r) => r.paymentType === "cong_no").reduce((s, r) => s + r.totalAmount, 0);
 
   return (
@@ -3540,11 +3576,11 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
       {category === "nvl" && (
         <>
           <div className="mb-4 flex items-center gap-2 text-sm text-sky-700 bg-sky-50 border border-sky-200 rounded-xl px-3 py-2">
-            <ArrowDownCircle size={15} /> Chi phí nguyên vật liệu được ghi nhận qua đúng màn "Nhập hàng" (dùng chung dữ liệu, không tách riêng để tránh trùng lặp) — nhập qua file Excel ở tab "Nhập hàng".
+            <ArrowDownCircle size={15} /> Chi phí nguyên vật liệu chủ yếu ghi nhận qua màn "Nhập hàng" (file Excel). Ngoài ra các khoản mua lẻ (VD Thu ngân mua thịt/cá/tôm ngoài chợ) có thể ghi qua "Phiếu chi" chọn nhóm NVL — số tiền sẽ tự cộng vào Tổng giá trị NVL bên dưới.
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-4">
             <div className="bg-slate-50 rounded-xl px-3 py-2">
-              <p className="text-xs text-slate-500">Tổng giá trị NVL (30 phiếu gần nhất)</p>
+              <p className="text-xs text-slate-500">Tổng giá trị NVL (nhập kho + phiếu chi)</p>
               <p className="text-sm font-semibold text-slate-700">{fmtMoney(nvlTotal)}</p>
             </div>
             <div className="bg-amber-50 rounded-xl px-3 py-2">
@@ -3563,7 +3599,7 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
       {(category === "van_hanh" || category === "marketing") && <PresetExpenseForm category={category} onSubmit={onSubmitExpense} />}
       {category === "khac" && <OtherExpenseForm onSubmit={onSubmitExpense} />}
 
-      {category !== "nvl" && <ExpenseList data={data} currentUser={currentUser} onDelete={onDeleteExpense} onUpdate={onUpdateExpense} />}
+      <ExpenseList data={data} currentUser={currentUser} onDelete={onDeleteExpense} onUpdate={onUpdateExpense} />
     </div>
   );
 }
