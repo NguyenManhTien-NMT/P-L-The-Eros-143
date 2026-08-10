@@ -2942,22 +2942,21 @@ function CashierReceiptForm({ onSubmit }) {
   );
 }
 
-function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierReceipt }) {
+function ThuModule({ data, currentUser, onSubmit }) {
   const myReceipts = data.cashierReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 15);
   const todayReceipts = data.cashierReceipts.filter((r) => r.receiptDate === todayISO());
   const todayTotal = todayReceipts.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
 
   return (
     <div>
-      <SectionTitle icon={Wallet} title="Thu ngân" subtitle="Ghi nhận phiếu thu (tiền mặt/ngân hàng) và phiếu chi phát sinh trong ngày" />
+      <SectionTitle icon={Wallet} title="Thu ngân" subtitle="Ghi nhận phiếu thu tiền mặt/ngân hàng trong ngày" />
 
       <div className="grid grid-cols-2 gap-3 mb-5">
         <MetricCard label="Tổng thu hôm nay" value={fmtMoney(todayTotal)} icon={TrendingUp} accent="emerald" />
         <MetricCard label="Số phiếu thu hôm nay" value={fmtNumber(todayReceipts.length)} icon={Receipt} accent="teal" />
       </div>
 
-      <CashierReceiptForm onSubmit={onSubmitCashierReceipt} />
-      <PhieuChiForm onSubmit={onSubmitExpense} />
+      <CashierReceiptForm onSubmit={onSubmit} />
 
       <Card className="p-0 overflow-hidden">
         <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu thu gần đây (của bạn)</p></div>
@@ -2974,6 +2973,41 @@ function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierRece
                     <td className="px-3 py-2 text-right">{fmtMoney(r.cashAmount)}</td>
                     <td className="px-3 py-2 text-right">{fmtMoney(r.bankAmount)}</td>
                     <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function ChiPhieuModule({ data, currentUser, onSubmit }) {
+  const myExpenses = data.expenseRecords.filter((r) => r.createdBy === currentUser.id).slice(0, 15);
+
+  return (
+    <div>
+      <SectionTitle icon={Receipt} title="Phiếu chi" subtitle="Ghi nhận phiếu chi phát sinh trong ngày" />
+
+      <PhieuChiForm onSubmit={onSubmit} />
+
+      <Card className="p-0 overflow-hidden">
+        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu chi gần đây (của bạn)</p></div>
+        {myExpenses.length === 0 ? <EmptyState icon={Receipt} text="Chưa có phiếu chi nào." /> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2 text-right">Số tiền</th>
+              </tr></thead>
+              <tbody>
+                {myExpenses.map((r) => (
+                  <tr key={r.id} className="border-b border-slate-50 last:border-0">
+                    <td className="px-3 py-2 text-slate-500">{fmtDate(r.expenseDate)}</td>
+                    <td className="px-3 py-2 text-slate-700">{r.itemName}</td>
+                    <td className="px-3 py-2 text-slate-500">{EXPENSE_CATEGORY_META[r.category]?.label || r.category}</td>
+                    <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -4429,7 +4463,7 @@ export default function App() {
   const handleLogin = (employee) => {
     setCurrentUser(employee);
     localStorage.setItem(SESSION_KEY, employee.id);
-    setTab(employee.role === "bao_cao" ? "lich_su_nhap" : employee.role === "thu_ngan" ? "thu_ngan" : "nhap");
+    setTab(employee.role === "bao_cao" ? "lich_su_nhap" : employee.role === "thu_ngan" ? "thu" : "nhap");
   };
   const handleLogout = () => {
     setCurrentUser(null);
@@ -4871,7 +4905,9 @@ export default function App() {
   ];
   // Nhóm 4: Thu ngân — chỉ có màn ghi phiếu thu (tiền mặt/ngân hàng) + phiếu chi phát sinh.
   const NAV_THU_NGAN = [
-    { key: "thu_ngan", label: "Thu ngân", icon: Wallet },
+    { key: "thu", label: "Thu ngân", icon: Wallet },
+    { key: "chi", label: "Phiếu chi", icon: Receipt },
+    { key: "coc", label: "Cọc", icon: Coins },
   ];
   const navItems = isQuanLy ? NAV_QUAN_LY : isBaoCao ? NAV_BAO_CAO : isThuNgan ? NAV_THU_NGAN : NAV_NHAN_VIEN;
 
@@ -4955,9 +4991,10 @@ export default function App() {
             {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
-            {tab === "coc" && canViewReports && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
+            {tab === "coc" && (canViewReports || isThuNgan) && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
             {tab === "quy" && canViewReports && <QuyModule data={data} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
-            {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} />}
+            {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} />}
+            {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
               <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
