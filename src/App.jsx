@@ -3552,6 +3552,95 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate }) {
   );
 }
 
+// Bảng tổng hợp Chi phí: tổng theo từng loại (nvl gộp cả nhập kho Excel + phiếu chi lẻ) +
+// chi tiết theo từng khoản mục (gộp các dòng cùng tên, sắp xếp theo tổng tiền giảm dần).
+function ExpenseSummaryTable({ data }) {
+  const [showAllItems, setShowAllItems] = useState(false);
+  const allExpense = data.expenseRecords;
+
+  const totalsByCategory = EXPENSE_CATEGORIES.map((c) => {
+    const rowsInCat = allExpense.filter((r) => r.category === c.key);
+    let total = rowsInCat.reduce((s, r) => s + r.amount, 0);
+    let count = rowsInCat.length;
+    if (c.key === "nvl") {
+      total += data.importRecords.reduce((s, r) => s + r.totalAmount, 0);
+      count += data.importRecords.length;
+    }
+    return { key: c.key, label: c.label, total, count };
+  });
+  const grandTotal = totalsByCategory.reduce((s, c) => s + c.total, 0);
+
+  const itemMap = new Map();
+  allExpense.forEach((r) => {
+    const key = `${r.category}::${r.itemName.trim().toLowerCase()}`;
+    const cur = itemMap.get(key) || { itemName: r.itemName, category: r.category, total: 0, count: 0 };
+    cur.total += r.amount;
+    cur.count += 1;
+    itemMap.set(key, cur);
+  });
+  const itemRows = Array.from(itemMap.values()).sort((a, b) => b.total - a.total);
+  const visibleItemRows = showAllItems ? itemRows : itemRows.slice(0, 15);
+
+  return (
+    <Card className="p-0 overflow-hidden mb-5">
+      <div className="p-4 border-b border-slate-100">
+        <p className="font-semibold text-slate-800 text-sm">Tổng hợp chi phí theo loại</p>
+        <p className="text-xs text-slate-400 mt-0.5">Toàn bộ dữ liệu (không giới hạn 30 dòng gần nhất)</p>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+              <th className="px-4 py-2">Loại chi phí</th>
+              <th className="px-3 py-2 text-right">Số khoản</th>
+              <th className="px-3 py-2 text-right">Tổng tiền</th>
+              <th className="px-4 py-2 text-right">Tỷ trọng</th>
+            </tr>
+          </thead>
+          <tbody>
+            {totalsByCategory.map((c) => (
+              <tr key={c.key} className="border-b border-slate-50 last:border-0">
+                <td className="px-4 py-2 text-slate-700">{c.label}</td>
+                <td className="px-3 py-2 text-right text-slate-500">{fmtNumber(c.count)}</td>
+                <td className="px-3 py-2 text-right font-medium text-slate-800">{fmtMoney(c.total)}</td>
+                <td className="px-4 py-2 text-right text-slate-500">{grandTotal > 0 ? `${((c.total / grandTotal) * 100).toFixed(1)}%` : "—"}</td>
+              </tr>
+            ))}
+            <tr className="bg-slate-50">
+              <td className="px-4 py-2 font-semibold text-slate-800">Tổng cộng</td>
+              <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmtNumber(totalsByCategory.reduce((s, c) => s + c.count, 0))}</td>
+              <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmtMoney(grandTotal)}</td>
+              <td className="px-4 py-2 text-right font-semibold text-slate-800">100%</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div className="p-4 border-t border-b border-slate-100 flex items-center justify-between">
+        <p className="font-semibold text-slate-800 text-sm">Chi tiết theo khoản mục</p>
+        {itemRows.length > 15 && (
+          <button type="button" onClick={() => setShowAllItems((v) => !v)} className="text-xs text-sky-700 hover:underline">
+            {showAllItems ? "Thu gọn" : `Xem tất cả (${itemRows.length})`}
+          </button>
+        )}
+      </div>
+      {itemRows.length === 0 ? <EmptyState icon={Receipt} text="Chưa có khoản chi phí nào (ngoài NVL nhập kho)." /> : (
+        <div className="divide-y divide-slate-100">
+          {visibleItemRows.map((r, i) => (
+            <div key={i} className="px-4 py-2.5 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-slate-700 truncate">{r.itemName}</p>
+                <p className="text-xs text-slate-400">{EXPENSE_CATEGORY_META[r.category]?.label || r.category} · {r.count} lần</p>
+              </div>
+              <p className="text-sm font-medium text-slate-700 shrink-0">{fmtMoney(r.total)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
 function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDeleteExpense, onUpdateExpense }) {
   const [category, setCategory] = useState("van_hanh");
   const meta = EXPENSE_CATEGORY_META[category];
@@ -3567,6 +3656,7 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
   return (
     <div>
       <SectionTitle icon={Receipt} title="Chi phí" subtitle="Ghi nhận toàn bộ chi phí phát sinh hàng tháng" />
+      <ExpenseSummaryTable data={data} />
       <Card className="p-4 sm:p-5 mb-5">
         <SelectField label="Loại chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
           {EXPENSE_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
@@ -3595,9 +3685,14 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
           <NhapHangList data={data} rows={nvlRows} />
         </>
       )}
-      {category === "bao_tri_vat_tu" && <BaoTriVatTuForm currentUser={currentUser} onSubmit={onSubmitExpense} />}
-      {(category === "van_hanh" || category === "marketing") && <PresetExpenseForm category={category} onSubmit={onSubmitExpense} />}
-      {category === "khac" && <OtherExpenseForm onSubmit={onSubmitExpense} />}
+      {category === "bao_tri_vat_tu" && currentUser?.role !== "bao_cao" && <BaoTriVatTuForm currentUser={currentUser} onSubmit={onSubmitExpense} />}
+      {(category === "van_hanh" || category === "marketing") && currentUser?.role !== "bao_cao" && <PresetExpenseForm category={category} onSubmit={onSubmitExpense} />}
+      {category === "khac" && currentUser?.role !== "bao_cao" && <OtherExpenseForm onSubmit={onSubmitExpense} />}
+      {currentUser?.role === "bao_cao" && category !== "nvl" && (
+        <div className="mb-4 flex items-center gap-2 text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+          <Receipt size={15} /> Tài khoản Báo cáo chỉ xem, đổi nhóm và sửa/xoá chi phí — không nhập khoản chi mới.
+        </div>
+      )}
 
       <ExpenseList data={data} currentUser={currentUser} onDelete={onDeleteExpense} onUpdate={onUpdateExpense} />
     </div>
