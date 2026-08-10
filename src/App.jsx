@@ -36,15 +36,6 @@ const CLASSIFICATION_META = {
   TP: { label: "Thành phẩm", color: "bg-purple-50 text-purple-700 border-purple-200" },
 };
 const SESSION_KEY = "kho_session_employee_id";
-// Tab mặc định theo vai trò — dùng chung cho cả lúc đăng nhập MỚI lẫn lúc App tự khôi phục
-// phiên đăng nhập đã lưu (localStorage) khi mở lại trang, để tránh lệch giữa sidebar (đã lọc
-// đúng theo role) và tab nội dung đang hiển thị (trước đây chỉ set đúng lúc login, quên set
-// lại khi khôi phục phiên — khiến ví dụ Thu ngân mở lại app vẫn thấy nội dung "Nhập hàng").
-function defaultTabForRole(role) {
-  if (role === "bao_cao") return "lich_su_nhap";
-  if (role === "thu_ngan") return "thu_ngan";
-  return "nhap";
-}
 
 // ---------------------------------------------------------------------------
 // HÀM TIỆN ÍCH
@@ -238,7 +229,7 @@ function mapExpenseRecord(r) {
     id: r.id, category: r.category, itemName: r.item_name,
     quantity: r.quantity === null ? null : Number(r.quantity),
     unitPrice: r.unit_price === null ? null : Number(r.unit_price),
-    amount: Number(r.amount) || 0, paymentMethod: r.payment_method || "tien_mat",
+    amount: Number(r.amount) || 0,
     expenseDate: r.expense_date, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
   };
 }
@@ -259,16 +250,12 @@ function mapDishSale(r) {
 function mapCashierReceipt(r) {
   return {
     id: r.id, receiptDate: r.receipt_date, cashAmount: Number(r.cash_amount) || 0,
-    bankAmount: Number(r.bank_amount) || 0,
-    openingCashAmount: r.opening_cash_amount === null || r.opening_cash_amount === undefined ? null : Number(r.opening_cash_amount),
-    openingBankAmount: r.opening_bank_amount === null || r.opening_bank_amount === undefined ? null : Number(r.opening_bank_amount),
-    note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
+    bankAmount: Number(r.bank_amount) || 0, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
   };
 }
 function mapInvoiceRevenue(r) {
   return {
     id: r.id, invoiceNo: r.invoice_no, invoiceDate: r.invoice_date, amount: Number(r.amount) || 0,
-    cashAmount: Number(r.cash_amount) || 0, bankAmount: Number(r.bank_amount) || 0,
     createdBy: r.created_by, createdAt: r.created_at,
   };
 }
@@ -281,16 +268,8 @@ function mapDishIngredient(i) {
   };
 }
 
-function mapDepositReceipt(r) {
-  return {
-    id: r.id, receiptDate: r.receipt_date, cashAmount: Number(r.cash_amount) || 0,
-    bankAmount: Number(r.bank_amount) || 0, customerName: r.customer_name || "",
-    note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
-  };
-}
-
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, depositRec] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -305,9 +284,8 @@ async function fetchAll() {
     supabase.from("dish_sales").select("*").order("sale_date", { ascending: false }),
     supabase.from("cashier_receipts").select("*").order("receipt_date", { ascending: false }),
     supabase.from("invoice_revenue").select("*").order("invoice_date", { ascending: false }),
-    supabase.from("deposit_receipts").select("*").order("receipt_date", { ascending: false }),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, depositRec].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -323,7 +301,6 @@ async function fetchAll() {
     dishSales: (dishSale.data || []).map(mapDishSale),
     cashierReceipts: (cashierRec.data || []).map(mapCashierReceipt),
     invoiceRevenue: (invRev.data || []).map(mapInvoiceRevenue),
-    depositReceipts: (depositRec.data || []).map(mapDepositReceipt),
   };
 }
 
@@ -435,7 +412,7 @@ function EmptyState({ icon: Icon, text }) {
     </div>
   );
 }
-function MetricCard({ label, value, icon: Icon, accent = "teal", note }) {
+function MetricCard({ label, value, icon: Icon, accent = "teal" }) {
   const a = {
     teal: { text: "text-sky-700", bg: "bg-sky-50", bar: "bg-sky-600" },
     amber: { text: "text-amber-700", bg: "bg-amber-50", bar: "bg-amber-600" },
@@ -452,7 +429,6 @@ function MetricCard({ label, value, icon: Icon, accent = "teal", note }) {
       <div className="min-w-0">
         <p className="text-xs text-slate-500 truncate">{label}</p>
         <p className="text-lg font-semibold text-slate-800 truncate tracking-tight">{value}</p>
-        {note && <p className="text-[11px] text-slate-400 truncate">{note}</p>}
       </div>
     </div>
   );
@@ -2846,47 +2822,26 @@ const EXPENSE_CATEGORY_META = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [
 // theo ngày, chọn đúng loại chi phí — khi lưu sẽ ghi thẳng vào expense_records nên
 // tự động xuất hiện trong "Chi phí" / báo cáo chi phí, không cần đồng bộ thủ công.
 // ---------------------------------------------------------------------------
-function dailyReceiptsFromSales(dishSales, from, to, dishes) {
+function dailyReceiptsFromSales(dishSales, from, to) {
   const filtered = dishSales.filter((s) => s.saleDate >= from && s.saleDate <= to);
-  // Doanh thu tính lại = SL bán × giá bán HIỆN TẠI trong Cost món ăn (data.dishes),
-  // không dùng total_amount đã lưu sẵn lúc xuất kho — để phản ánh đúng giá bán mới nhất
-  // ngay cả khi giá trong Cost món ăn đã thay đổi sau thời điểm xuất kho.
-  const dishMap = new Map((dishes || []).map((d) => [d.id, d]));
   const map = new Map();
   filtered.forEach((s) => {
-    const dish = dishMap.get(s.dishId);
-    const gia = dish && dish.sellingPrice != null ? dish.sellingPrice : s.unitPrice;
-    const cur = map.get(s.saleDate) || { date: s.saleDate, amount: 0, qty: 0, cost: 0 };
-    cur.amount += s.quantity * gia;
+    const cur = map.get(s.saleDate) || { date: s.saleDate, amount: 0, qty: 0 };
+    cur.amount += s.totalAmount;
     cur.qty += s.quantity;
-    // Giá vốn (cost_amount) đã snapshot đúng giá vốn NVL tại thời điểm xuất kho —
-    // không tính lại theo giá hiện tại như doanh thu, vì giá vốn từng lô hàng đã chốt xong.
-    cur.cost += s.costAmount;
     map.set(s.saleDate, cur);
   });
   return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
 }
 
-function PhieuChiForm({ onSubmit, editRecord, onUpdate, onCancelEdit }) {
-  const isEditing = !!editRecord;
-  const [expenseDate, setExpenseDate] = useState(editRecord?.expenseDate || todayISO());
-  const [category, setCategory] = useState(editRecord?.category || "van_hanh");
-  const [itemName, setItemName] = useState(editRecord?.itemName || "");
-  const [amount, setAmount] = useState(editRecord ? String(editRecord.amount) : "");
-  const [note, setNote] = useState(editRecord?.note || "");
-  const [paymentMethod, setPaymentMethod] = useState(editRecord?.paymentMethod || "tien_mat");
+function PhieuChiForm({ onSubmit }) {
+  const [expenseDate, setExpenseDate] = useState(todayISO());
+  const [category, setCategory] = useState("van_hanh");
+  const [itemName, setItemName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-
-  useEffect(() => {
-    setExpenseDate(editRecord?.expenseDate || todayISO());
-    setCategory(editRecord?.category || "van_hanh");
-    setItemName(editRecord?.itemName || "");
-    setAmount(editRecord ? String(editRecord.amount) : "");
-    setNote(editRecord?.note || "");
-    setPaymentMethod(editRecord?.paymentMethod || "tien_mat");
-    setError("");
-  }, [editRecord?.id]);
 
   const chiCategories = EXPENSE_CATEGORIES.filter((c) => c.key !== "nvl"); // NVL đã ghi nhận riêng qua Nhập hàng
 
@@ -2895,13 +2850,8 @@ function PhieuChiForm({ onSubmit, editRecord, onUpdate, onCancelEdit }) {
     if (!amount || Number(amount) <= 0) { setError("Vui lòng nhập số tiền hợp lệ."); return; }
     setError(""); setSaving(true);
     try {
-      if (isEditing) {
-        await onUpdate(editRecord.id, { category, expenseDate, paymentMethod, itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null });
-        onCancelEdit();
-      } else {
-        await onSubmit({ category, expenseDate, paymentMethod, lines: [{ itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null }] });
-        setItemName(""); setAmount(""); setNote("");
-      }
+      await onSubmit({ category, expenseDate, lines: [{ itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null }] });
+      setItemName(""); setAmount(""); setNote("");
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
     } finally {
@@ -2911,67 +2861,39 @@ function PhieuChiForm({ onSubmit, editRecord, onUpdate, onCancelEdit }) {
 
   return (
     <Card className="p-4 sm:p-5 mb-5">
-      <div className="flex items-center justify-between mb-3">
-        <p className="font-semibold text-slate-800 text-sm">{isEditing ? "Sửa phiếu chi" : "Tạo phiếu chi"}</p>
-        {isEditing && <button type="button" onClick={onCancelEdit} className="text-xs text-slate-400 hover:text-rose-600 flex items-center gap-1"><X size={13} /> Huỷ sửa</button>}
-      </div>
+      <p className="font-semibold text-slate-800 text-sm mb-3">Tạo phiếu chi</p>
       <div className="grid sm:grid-cols-2 gap-3 mb-3">
         <TextField label="Ngày chi" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
         <SelectField label="Loại chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
           {chiCategories.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
-        </SelectField>
-        <SelectField label="Phương thức thanh toán" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
-          <option value="tien_mat">Tiền mặt</option>
-          <option value="ngan_hang">Ngân hàng</option>
         </SelectField>
         <TextField label="Tên khoản chi" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="VD: Tiền điện tháng 8" />
         <MoneyField label="Số tiền" value={amount} onChange={setAmount} />
         <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />} {isEditing ? "Cập nhật phiếu chi" : "Lưu phiếu chi"}</PrimaryButton>
-      {!isEditing && <p className="text-xs text-slate-400 mt-2">Phiếu chi sau khi lưu sẽ tự động xuất hiện trong tab "Chi phí" đúng nhóm "{EXPENSE_CATEGORY_META[category]?.label}".</p>}
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />} Lưu phiếu chi</PrimaryButton>
+      <p className="text-xs text-slate-400 mt-2">Phiếu chi sau khi lưu sẽ tự động xuất hiện trong tab "Chi phí" đúng nhóm "{EXPENSE_CATEGORY_META[category]?.label}".</p>
     </Card>
   );
 }
 
-function CashierReceiptForm({ data, onSubmit, editRecord, onUpdate, onCancelEdit }) {
-  const isEditing = !!editRecord;
-  const [receiptDate, setReceiptDate] = useState(editRecord?.receiptDate || todayISO());
-  const [cashAmount, setCashAmount] = useState(editRecord ? String(editRecord.cashAmount) : "");
-  const [bankAmount, setBankAmount] = useState(editRecord ? String(editRecord.bankAmount) : "");
-  const [openingCashAmount, setOpeningCashAmount] = useState(editRecord?.openingCashAmount != null ? String(editRecord.openingCashAmount) : "");
-  const [openingBankAmount, setOpeningBankAmount] = useState(editRecord?.openingBankAmount != null ? String(editRecord.openingBankAmount) : "");
-  const [note, setNote] = useState(editRecord?.note || "");
+function CashierReceiptForm({ onSubmit }) {
+  const [receiptDate, setReceiptDate] = useState(todayISO());
+  const [cashAmount, setCashAmount] = useState("");
+  const [bankAmount, setBankAmount] = useState("");
+  const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    setReceiptDate(editRecord?.receiptDate || todayISO());
-    setCashAmount(editRecord ? String(editRecord.cashAmount) : "");
-    setBankAmount(editRecord ? String(editRecord.bankAmount) : "");
-    setOpeningCashAmount(editRecord?.openingCashAmount != null ? String(editRecord.openingCashAmount) : "");
-    setOpeningBankAmount(editRecord?.openingBankAmount != null ? String(editRecord.openingBankAmount) : "");
-    setNote(editRecord?.note || "");
-    setError("");
-  }, [editRecord?.id]);
-
   const total = (Number(cashAmount) || 0) + (Number(bankAmount) || 0);
-  const expected = useMemo(() => expectedOpeningBalance(data, receiptDate), [data, receiptDate]);
-  const mismatchCash = expected && openingCashAmount !== "" && Number(openingCashAmount) !== expected.cash;
-  const mismatchBank = expected && openingBankAmount !== "" && Number(openingBankAmount) !== expected.bank;
 
   const submit = async () => {
     if (total <= 0) { setError("Vui lòng nhập ít nhất 1 trong 2 khoản: tiền mặt hoặc tiền ngân hàng."); return; }
     setError(""); setSaving(true);
     try {
-      if (isEditing) {
-        await onUpdate(editRecord.id, { receiptDate, cashAmount, bankAmount, openingCashAmount, openingBankAmount, note: note.trim() });
-        onCancelEdit();
-      } else {
-        await onSubmit({ receiptDate, cashAmount, bankAmount, openingCashAmount, openingBankAmount, note: note.trim() });
-        setCashAmount(""); setBankAmount(""); setOpeningCashAmount(""); setOpeningBankAmount(""); setNote("");
-      }
+      await onSubmit({ receiptDate, cashAmount, bankAmount, note: note.trim() });
+      setCashAmount(""); setBankAmount(""); setNote("");
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
     } finally {
@@ -2981,25 +2903,10 @@ function CashierReceiptForm({ data, onSubmit, editRecord, onUpdate, onCancelEdit
 
   return (
     <Card className="p-4 sm:p-5 mb-5">
-      <div className="flex items-center justify-between mb-3">
-        <p className="font-semibold text-slate-800 text-sm">{isEditing ? "Sửa phiếu thu" : "Ghi nhận Thu ngân"}</p>
-        {isEditing && <button type="button" onClick={onCancelEdit} className="text-xs text-slate-400 hover:text-rose-600 flex items-center gap-1"><X size={13} /> Huỷ sửa</button>}
-      </div>
-      <div className="grid sm:grid-cols-2 gap-3 mb-1">
+      <p className="font-semibold text-slate-800 text-sm mb-3">Ghi nhận Thu ngân</p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
         <TextField label="Ngày thu" type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.target.value)} />
         <div />
-        <MoneyField label="Tồn quỹ đầu ngày - Tiền mặt" value={openingCashAmount} onChange={setOpeningCashAmount} />
-        <MoneyField label="Tồn quỹ đầu ngày - Ngân hàng" value={openingBankAmount} onChange={setOpeningBankAmount} />
-      </div>
-      {expected && (
-        <p className="text-xs text-slate-400 mb-3">Số App tự tính từ cuối ngày {fmtDate(expected.fromDate)}: Tiền mặt <b className="text-slate-500">{fmtMoney(expected.cash)}</b> · Ngân hàng <b className="text-slate-500">{fmtMoney(expected.bank)}</b></p>
-      )}
-      {(mismatchCash || mismatchBank) && (
-        <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-1">
-          <AlertTriangle size={12} className="shrink-0" /> Tồn quỹ đầu ngày bạn nhập lệch với số App tự tính từ hôm trước — vẫn lưu được, Quản lý sẽ thấy cảnh báo này để đối chiếu lại.
-        </div>
-      )}
-      <div className="grid sm:grid-cols-2 gap-3 mb-3">
         <MoneyField label="Thu tiền mặt" value={cashAmount} onChange={setCashAmount} />
         <MoneyField label="Thu tiền ngân hàng" value={bankAmount} onChange={setBankAmount} />
         <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
@@ -3009,209 +2916,51 @@ function CashierReceiptForm({ data, onSubmit, editRecord, onUpdate, onCancelEdit
         <span className="font-semibold text-emerald-800">{fmtMoney(total)}</span>
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <TrendingUp size={15} />} {isEditing ? "Cập nhật phiếu thu" : "Lưu phiếu thu"}</PrimaryButton>
-      {!isEditing && <p className="text-xs text-slate-400 mt-2">Số liệu này độc lập với doanh thu tính từ báo cáo bán hàng — dùng để Quản lý đối chiếu quỹ thực tế.</p>}
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <TrendingUp size={15} />} Lưu phiếu thu</PrimaryButton>
+      <p className="text-xs text-slate-400 mt-2">Số liệu này độc lập với doanh thu tính từ báo cáo bán hàng — dùng để Quản lý đối chiếu quỹ thực tế.</p>
     </Card>
   );
 }
 
-function DepositReceiptForm({ onSubmit, editRecord, onUpdate, onCancelEdit }) {
-  const isEditing = !!editRecord;
-  const [receiptDate, setReceiptDate] = useState(editRecord?.receiptDate || todayISO());
-  const [customerName, setCustomerName] = useState(editRecord?.customerName || "");
-  const [cashAmount, setCashAmount] = useState(editRecord ? String(editRecord.cashAmount) : "");
-  const [bankAmount, setBankAmount] = useState(editRecord ? String(editRecord.bankAmount) : "");
-  const [note, setNote] = useState(editRecord?.note || "");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    setReceiptDate(editRecord?.receiptDate || todayISO());
-    setCustomerName(editRecord?.customerName || "");
-    setCashAmount(editRecord ? String(editRecord.cashAmount) : "");
-    setBankAmount(editRecord ? String(editRecord.bankAmount) : "");
-    setNote(editRecord?.note || "");
-    setError("");
-  }, [editRecord?.id]);
-
-  const total = (Number(cashAmount) || 0) + (Number(bankAmount) || 0);
-
-  const submit = async () => {
-    if (total <= 0) { setError("Vui lòng nhập ít nhất 1 trong 2 khoản: tiền mặt hoặc tiền ngân hàng."); return; }
-    setError(""); setSaving(true);
-    try {
-      if (isEditing) {
-        await onUpdate(editRecord.id, { receiptDate, cashAmount, bankAmount, customerName: customerName.trim(), note: note.trim() });
-        onCancelEdit();
-      } else {
-        await onSubmit({ receiptDate, cashAmount, bankAmount, customerName: customerName.trim(), note: note.trim() });
-        setCashAmount(""); setBankAmount(""); setCustomerName(""); setNote("");
-      }
-    } catch (e) {
-      setError(e.message || "Không lưu được, vui lòng thử lại.");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Card className="p-4 sm:p-5 mb-5">
-      <div className="flex items-center justify-between mb-3">
-        <p className="font-semibold text-slate-800 text-sm">{isEditing ? "Sửa phiếu thu cọc" : "Lập phiếu thu cọc"}</p>
-        {isEditing && <button type="button" onClick={onCancelEdit} className="text-xs text-slate-400 hover:text-rose-600 flex items-center gap-1"><X size={13} /> Huỷ sửa</button>}
-      </div>
-      <div className="grid sm:grid-cols-2 gap-3 mb-3">
-        <TextField label="Ngày thu cọc" type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.target.value)} />
-        <TextField label="Khách hàng / Ghi chú đặt cọc" value={customerName} onChange={(e) => setCustomerName(e.target.value)} placeholder="VD: Anh Tuấn - đặt tiệc 20 khách 15/8" />
-        <MoneyField label="Thu cọc - Tiền mặt" value={cashAmount} onChange={setCashAmount} />
-        <MoneyField label="Thu cọc - Ngân hàng" value={bankAmount} onChange={setBankAmount} />
-        <TextField label="Ghi chú khác (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
-      </div>
-      <div className="bg-indigo-50 rounded-xl px-3 py-2 flex items-center justify-between text-sm mb-4">
-        <span className="text-indigo-700">Tổng thu cọc</span>
-        <span className="font-semibold text-indigo-800">{fmtMoney(total)}</span>
-      </div>
-      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />} {isEditing ? "Cập nhật phiếu thu cọc" : "Lưu phiếu thu cọc"}</PrimaryButton>
-      {!isEditing && <p className="text-xs text-slate-400 mt-2">Thu cọc độc lập với doanh thu bán hàng — không tính vào đối chiếu Doanh thu hoá đơn, nhưng vẫn cộng vào Tồn quỹ thực tế.</p>}
-    </Card>
-  );
-}
-
-function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierReceipt, onUpdateCashierReceipt, onUpdateExpense, onSubmitDepositReceipt, onUpdateDepositReceipt }) {
-  const [subTab, setSubTab] = useState("thu"); // "thu" | "coc" | "chi"
-  const [editingReceiptId, setEditingReceiptId] = useState(null);
-  const [editingExpenseId, setEditingExpenseId] = useState(null);
-  const [editingDepositId, setEditingDepositId] = useState(null);
-
-  const myReceipts = data.cashierReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 30);
-  const myExpenses = data.expenseRecords.filter((r) => r.createdBy === currentUser.id && r.category !== "nvl").slice(0, 30);
-  const myDeposits = data.depositReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 30);
+function ThuNganModule({ data, currentUser, onSubmitExpense, onSubmitCashierReceipt }) {
+  const myReceipts = data.cashierReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 15);
   const todayReceipts = data.cashierReceipts.filter((r) => r.receiptDate === todayISO());
   const todayTotal = todayReceipts.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
 
-  const editingReceipt = editingReceiptId ? myReceipts.find((r) => r.id === editingReceiptId) : null;
-  const editingExpense = editingExpenseId ? myExpenses.find((r) => r.id === editingExpenseId) : null;
-  const editingDeposit = editingDepositId ? myDeposits.find((r) => r.id === editingDepositId) : null;
-
   return (
     <div>
-      <SectionTitle icon={Wallet} title="Thu ngân" subtitle="Lập phiếu thu, phiếu thu cọc, và phiếu chi phát sinh trong ngày" />
+      <SectionTitle icon={Wallet} title="Thu ngân" subtitle="Ghi nhận phiếu thu (tiền mặt/ngân hàng) và phiếu chi phát sinh trong ngày" />
 
       <div className="grid grid-cols-2 gap-3 mb-5">
         <MetricCard label="Tổng thu hôm nay" value={fmtMoney(todayTotal)} icon={TrendingUp} accent="emerald" />
         <MetricCard label="Số phiếu thu hôm nay" value={fmtNumber(todayReceipts.length)} icon={Receipt} accent="teal" />
       </div>
 
-      <div className="flex gap-2 mb-5 border-b border-slate-200">
-        <button type="button" onClick={() => setSubTab("thu")} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${subTab === "thu" ? "border-sky-600 text-sky-700" : "border-transparent text-slate-400 hover:text-slate-600"}`}>Lập phiếu thu</button>
-        <button type="button" onClick={() => setSubTab("coc")} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${subTab === "coc" ? "border-sky-600 text-sky-700" : "border-transparent text-slate-400 hover:text-slate-600"}`}>Lập phiếu thu cọc</button>
-        <button type="button" onClick={() => setSubTab("chi")} className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${subTab === "chi" ? "border-sky-600 text-sky-700" : "border-transparent text-slate-400 hover:text-slate-600"}`}>Lập phiếu chi</button>
-      </div>
+      <CashierReceiptForm onSubmit={onSubmitCashierReceipt} />
+      <PhieuChiForm onSubmit={onSubmitExpense} />
 
-      {subTab === "thu" && (
-        <>
-          <CashierReceiptForm
-            data={data} onSubmit={onSubmitCashierReceipt}
-            editRecord={editingReceipt} onUpdate={onUpdateCashierReceipt} onCancelEdit={() => setEditingReceiptId(null)}
-          />
-          <Card className="p-0 overflow-hidden">
-            <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử phiếu thu (của bạn)</p></div>
-            {myReceipts.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có phiếu thu nào." /> : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                    <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Ngân hàng</th><th className="px-3 py-2 text-right">Tổng</th><th className="px-3 py-2"></th>
-                  </tr></thead>
-                  <tbody>
-                    {myReceipts.map((r) => (
-                      <tr key={r.id} className={`border-b border-slate-50 last:border-0 ${editingReceiptId === r.id ? "bg-sky-50" : ""}`}>
-                        <td className="px-3 py-2 text-slate-500">{fmtDate(r.receiptDate)}</td>
-                        <td className="px-3 py-2 text-right">{fmtMoney(r.cashAmount)}</td>
-                        <td className="px-3 py-2 text-right">{fmtMoney(r.bankAmount)}</td>
-                        <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
-                        <td className="px-3 py-2 text-right">
-                          <button type="button" onClick={() => setEditingReceiptId(r.id)} className="text-xs text-sky-600 hover:text-sky-800 font-medium">Sửa</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </>
-      )}
-
-      {subTab === "coc" && (
-        <>
-          <DepositReceiptForm
-            onSubmit={onSubmitDepositReceipt}
-            editRecord={editingDeposit} onUpdate={onUpdateDepositReceipt} onCancelEdit={() => setEditingDepositId(null)}
-          />
-          <Card className="p-0 overflow-hidden">
-            <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử phiếu thu cọc (của bạn)</p></div>
-            {myDeposits.length === 0 ? <EmptyState icon={Wallet} text="Chưa có phiếu thu cọc nào." /> : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                    <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khách hàng</th><th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Ngân hàng</th><th className="px-3 py-2 text-right">Tổng</th><th className="px-3 py-2"></th>
-                  </tr></thead>
-                  <tbody>
-                    {myDeposits.map((r) => (
-                      <tr key={r.id} className={`border-b border-slate-50 last:border-0 ${editingDepositId === r.id ? "bg-sky-50" : ""}`}>
-                        <td className="px-3 py-2 text-slate-500">{fmtDate(r.receiptDate)}</td>
-                        <td className="px-3 py-2">{r.customerName || <span className="text-slate-300">—</span>}</td>
-                        <td className="px-3 py-2 text-right">{fmtMoney(r.cashAmount)}</td>
-                        <td className="px-3 py-2 text-right">{fmtMoney(r.bankAmount)}</td>
-                        <td className="px-3 py-2 text-right font-medium text-indigo-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
-                        <td className="px-3 py-2 text-right">
-                          <button type="button" onClick={() => setEditingDepositId(r.id)} className="text-xs text-sky-600 hover:text-sky-800 font-medium">Sửa</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </>
-      )}
-
-      {subTab === "chi" && (
-        <>
-          <PhieuChiForm
-            onSubmit={onSubmitExpense}
-            editRecord={editingExpense} onUpdate={onUpdateExpense} onCancelEdit={() => setEditingExpenseId(null)}
-          />
-          <Card className="p-0 overflow-hidden">
-            <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử phiếu chi (của bạn)</p></div>
-            {myExpenses.length === 0 ? <EmptyState icon={TrendingDown} text="Chưa có phiếu chi nào." /> : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                    <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2">PT thanh toán</th><th className="px-3 py-2 text-right">Số tiền</th><th className="px-3 py-2"></th>
-                  </tr></thead>
-                  <tbody>
-                    {myExpenses.map((r) => (
-                      <tr key={r.id} className={`border-b border-slate-50 last:border-0 ${editingExpenseId === r.id ? "bg-sky-50" : ""}`}>
-                        <td className="px-3 py-2 text-slate-500">{fmtDate(r.expenseDate)}</td>
-                        <td className="px-3 py-2">{r.itemName}</td>
-                        <td className="px-3 py-2 text-slate-500">{EXPENSE_CATEGORY_META[r.category]?.label || r.category}</td>
-                        <td className="px-3 py-2 text-slate-500">{r.paymentMethod === "ngan_hang" ? "Ngân hàng" : "Tiền mặt"}</td>
-                        <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
-                        <td className="px-3 py-2 text-right">
-                          <button type="button" onClick={() => setEditingExpenseId(r.id)} className="text-xs text-sky-600 hover:text-sky-800 font-medium">Sửa</button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </>
-      )}
+      <Card className="p-0 overflow-hidden">
+        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu thu gần đây (của bạn)</p></div>
+        {myReceipts.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có phiếu thu nào." /> : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Ngân hàng</th><th className="px-3 py-2 text-right">Tổng</th>
+              </tr></thead>
+              <tbody>
+                {myReceipts.map((r) => (
+                  <tr key={r.id} className="border-b border-slate-50 last:border-0">
+                    <td className="px-3 py-2 text-slate-500">{fmtDate(r.receiptDate)}</td>
+                    <td className="px-3 py-2 text-right">{fmtMoney(r.cashAmount)}</td>
+                    <td className="px-3 py-2 text-right">{fmtMoney(r.bankAmount)}</td>
+                    <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
@@ -3234,47 +2983,18 @@ function InvoiceRevenueImportForm({ onImport }) {
       const rawRows = await readExcelRaw(file);
       const headerIdx = detectHeaderRow(rawRows, ["Số hóa đơn", "Doanh thu"]);
       if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Số hóa đơn" và "Doanh thu") trong file.']); setPreview([]); return; }
-
-      // File "Bảng kê hoá đơn" có 2 dòng tiêu đề chồng nhau: dòng chính (Ngày/Số hoá đơn/Doanh thu...)
-      // và dòng phụ ngay bên dưới chứa các cột con của nhóm "Doanh thu" (Tổng/Tiền hàng trước thuế...)
-      // và nhóm "Khách hàng/đối tác thanh toán" (Tiền mặt/Chuyển khoản/Voucher/Khách nợ) — 2 cột
-      // Tiền mặt/Chuyển khoản CHỈ nằm ở dòng phụ này nên phải dò riêng, không có ở dòng tiêu đề chính.
-      const findCol = (headerRow, ...names) => {
-        const norm = (s) => stripDiacritics(String(s ?? "")).replace(/\s+/g, "");
-        for (const name of names) {
-          const target = norm(name);
-          const idx = (headerRow || []).findIndex((c) => norm(c) === target);
-          if (idx !== -1) return idx;
-        }
-        return -1;
-      };
-      const mainHeader = rawRows[headerIdx] || [];
-      const subHeader = rawRows[headerIdx + 1] || [];
-      const colNgay = findCol(mainHeader, "Ngày", "Ngay");
-      const colSoHoaDon = findCol(mainHeader, "Số hóa đơn", "So hoa don");
-      const colDoanhThu = findCol(mainHeader, "Doanh thu", "Doanh thu bán hàng");
-      const colGhiChu = findCol(mainHeader, "Ghi chú", "Ghi chu");
-      // Dòng phụ tồn tại nếu có chữ nhưng đúng cột "Số hoá đơn" lại rỗng (dòng phụ chỉ là tiêu đề cột con, không phải dữ liệu)
-      const hasSubHeader = subHeader.some((c) => String(c ?? "").trim() !== "") && (colSoHoaDon === -1 || String(subHeader[colSoHoaDon] ?? "").trim() === "");
-      const colTienMat = findCol(hasSubHeader ? subHeader : mainHeader, "Tiền mặt", "Tien mat");
-      const colChuyenKhoan = findCol(hasSubHeader ? subHeader : mainHeader, "Chuyển khoản", "Chuyen khoan");
-      const dataStartIdx = hasSubHeader ? headerIdx + 2 : headerIdx + 1;
-
+      const rawObjRows = rowsToObjects(rawRows, headerIdx);
       const valid = [];
       let cancelledCount = 0;
-      for (let i = dataStartIdx; i < rawRows.length; i++) {
-        const row = rawRows[i] || [];
-        if (row.every((c) => c === "" || c === undefined || c === null)) continue;
-        const invoiceNo = String((colSoHoaDon !== -1 ? row[colSoHoaDon] : "") ?? "").trim();
-        if (!invoiceNo) continue;
-        const amount = Number(colDoanhThu !== -1 ? row[colDoanhThu] : 0) || 0;
-        const cashAmount = Number(colTienMat !== -1 ? row[colTienMat] : 0) || 0;
-        const bankAmount = Number(colChuyenKhoan !== -1 ? row[colChuyenKhoan] : 0) || 0;
-        const invoiceDate = excelDateToISO(colNgay !== -1 ? row[colNgay] : "") || todayISO();
-        const note = String((colGhiChu !== -1 ? row[colGhiChu] : "") ?? "").trim();
-        if (stripDiacritics(note).includes("huy")) { cancelledCount += 1; continue; } // bỏ hoá đơn đã huỷ
-        valid.push({ invoiceNo, invoiceDate, amount, cashAmount, bankAmount });
-      }
+      rawObjRows.forEach((row) => {
+        const invoiceNo = String(pickCol(row, "Số hóa đơn", "So hoa don") ?? "").trim();
+        const amount = Number(pickCol(row, "Doanh thu", "Doanh thu bán hàng")) || 0;
+        const invoiceDate = excelDateToISO(pickCol(row, "Ngày", "Ngay") ?? pickColContains(row, "ngay")) || todayISO();
+        const note = String(pickCol(row, "Ghi chú", "Ghi chu") ?? "").trim();
+        if (!invoiceNo) return;
+        if (stripDiacritics(note).includes("huy")) { cancelledCount += 1; return; } // bỏ hoá đơn đã huỷ
+        valid.push({ invoiceNo, invoiceDate, amount });
+      });
       setPreview(valid);
       setCancelled(cancelledCount);
       setErrors([]);
@@ -3299,12 +3019,11 @@ function InvoiceRevenueImportForm({ onImport }) {
   };
 
   const totalPreview = preview.reduce((s, r) => s + r.amount, 0);
-  const previewDates = Array.from(new Set(preview.map((r) => r.invoiceDate))).sort();
 
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Import Doanh thu bán hàng theo hoá đơn</p>
-      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>, và nếu có thêm cột <b>Tiền mặt</b>/<b>Chuyển khoản</b> sẽ tự tách quỹ theo phương thức thanh toán. Có thể xuất file cho <b>1 ngày</b> hoặc nhiều ngày/cả tháng đều được — import sẽ chỉ <b className="text-amber-700">thay thế đúng những ngày có trong file</b>, không ảnh hưởng dữ liệu các ngày khác. Hoá đơn có ghi chú "đã huỷ" sẽ tự động bị loại bỏ, không tính vào doanh thu.</p>
+      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>. Import lại cùng số hoá đơn sẽ tự ghi đè, không bị trùng. Hoá đơn có ghi chú "đã huỷ" sẽ tự động bị loại bỏ, không tính vào doanh thu.</p>
       <div className="flex items-center gap-2 mb-3">
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
           <Upload size={15} /> {fileName || "Chọn file Excel..."}
@@ -3328,102 +3047,34 @@ function InvoiceRevenueImportForm({ onImport }) {
       )}
       {preview.length > 0 && (
         <>
-          <p className="text-xs text-slate-500 mb-3">{preview.length} hoá đơn · Tổng doanh thu <span className="font-semibold text-sky-700">{fmtMoney(totalPreview)}</span> · {previewDates.length === 1 ? <>ngày <b>{fmtDate(previewDates[0])}</b></> : <>{previewDates.length} ngày (<b>{fmtDate(previewDates[0])}</b> → <b>{fmtDate(previewDates[previewDates.length - 1])}</b>)</>}</p>
-          <p className="text-xs text-amber-700 mb-3 flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> Dữ liệu doanh thu hoá đơn hiện có của {previewDates.length === 1 ? "ngày này" : `${previewDates.length} ngày này`} sẽ bị xoá và thay bằng dữ liệu trong file — các ngày khác không bị ảnh hưởng.</p>
-          <PrimaryButton onClick={() => { if (window.confirm(`Thay thế dữ liệu doanh thu hoá đơn của ${previewDates.length} ngày (${fmtDate(previewDates[0])} → ${fmtDate(previewDates[previewDates.length - 1])}) bằng ${preview.length} hoá đơn từ file mới?`)) submit(); }} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Cập nhật {preview.length} hoá đơn</PrimaryButton>
+          <p className="text-xs text-slate-500 mb-3">{preview.length} hoá đơn · Tổng doanh thu <span className="font-semibold text-sky-700">{fmtMoney(totalPreview)}</span></p>
+          <PrimaryButton onClick={submit} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Import {preview.length} hoá đơn</PrimaryButton>
         </>
       )}
-      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã cập nhật thành công {done} hoá đơn.</p>}
+      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã import thành công {done} hoá đơn.</p>}
     </Card>
   );
 }
 
-// Xây sổ quỹ đầy đủ theo TỪNG NGÀY có phát sinh, dùng toàn bộ lịch sử (không giới hạn theo
-// khoảng ngày đang xem trong bộ lọc) để tính đúng số dư luỹ kế. Tồn quỹ cuối ngày = Tồn quỹ đầu
-// ngày (Thu ngân tự điền, nếu có) hoặc số dư cuối ngày hôm trước App tự tính (nếu Thu ngân bỏ
-// trống) + Doanh thu hoá đơn trong ngày - Chi trong ngày. Nếu Thu ngân điền tồn đầu ngày mà KHÁC
-// với số App tự tính từ hôm trước, đánh dấu openingMismatch để cảnh báo.
-function buildQuyLedger(data) {
-  const map = new Map();
-  const ensure = (date) => {
-    if (!map.has(date)) map.set(date, {
-      date, invoiceCash: 0, invoiceBank: 0, cashierCash: 0, cashierBank: 0, chiCash: 0, chiBank: 0,
-      depositCash: 0, depositBank: 0, openingCashEntered: null, openingBankEntered: null,
-    });
-    return map.get(date);
-  };
-  data.invoiceRevenue.forEach((r) => { const d = ensure(r.invoiceDate); d.invoiceCash += r.cashAmount; d.invoiceBank += r.bankAmount; });
-  data.cashierReceipts.forEach((r) => {
-    const d = ensure(r.receiptDate); d.cashierCash += r.cashAmount; d.cashierBank += r.bankAmount;
-    if (r.openingCashAmount !== null) d.openingCashEntered = (d.openingCashEntered ?? 0) + r.openingCashAmount;
-    if (r.openingBankAmount !== null) d.openingBankEntered = (d.openingBankEntered ?? 0) + r.openingBankAmount;
-  });
-  data.expenseRecords.filter((r) => r.category !== "nvl").forEach((r) => {
-    const d = ensure(r.expenseDate);
-    if (r.paymentMethod === "ngan_hang") d.chiBank += r.amount; else d.chiCash += r.amount;
-  });
-  data.importRecords.filter((r) => r.paymentType === "tien_mat").forEach((r) => { const d = ensure(r.importDate); d.chiCash += r.totalAmount; });
-  // Thu cọc — độc lập với Doanh thu hoá đơn (không dùng để đối chiếu "Lệch"), nhưng vẫn là tiền
-  // thật vào quỹ nên cộng vào Tồn quỹ cuối ngày.
-  data.depositReceipts.forEach((r) => { const d = ensure(r.receiptDate); d.depositCash += r.cashAmount; d.depositBank += r.bankAmount; });
-
-  const sorted = Array.from(map.values()).sort((a, b) => a.date.localeCompare(b.date));
-  let runningCash = 0, runningBank = 0, hasAnchor = false;
-  sorted.forEach((d) => {
-    d.openingMismatchCash = d.openingCashEntered !== null && hasAnchor && d.openingCashEntered !== runningCash;
-    d.openingMismatchBank = d.openingBankEntered !== null && hasAnchor && d.openingBankEntered !== runningBank;
-    d.expectedOpeningCash = hasAnchor ? runningCash : null;
-    d.expectedOpeningBank = hasAnchor ? runningBank : null;
-    const openingCash = d.openingCashEntered !== null ? d.openingCashEntered : runningCash;
-    const openingBank = d.openingBankEntered !== null ? d.openingBankEntered : runningBank;
-    d.closingCash = openingCash + d.invoiceCash + d.depositCash - d.chiCash;
-    d.closingBank = openingBank + d.invoiceBank + d.depositBank - d.chiBank;
-    // Thu ngân báo cáo tổng tiền mặt/ngân hàng thực nhận trong ngày (gồm cả doanh thu bán hàng
-    // lẫn thu cọc) nên so khớp với invoice + deposit, không chỉ riêng invoice.
-    d.diffCash = d.cashierCash - (d.invoiceCash + d.depositCash);
-    d.diffBank = d.cashierBank - (d.invoiceBank + d.depositBank);
-    runningCash = d.closingCash; runningBank = d.closingBank; hasAnchor = true;
-  });
-  return sorted; // tăng dần theo ngày
-}
-// Tồn quỹ cuối ngày App tự tính, tính đến hết ngày trước "date" — dùng làm số gợi ý/đối chiếu
-// cho "Tồn quỹ đầu ngày" Thu ngân điền vào ngày "date".
-function expectedOpeningBalance(data, date) {
-  const ledger = buildQuyLedger(data).filter((d) => d.date < date);
-  if (ledger.length === 0) return null;
-  const last = ledger[ledger.length - 1];
-  return { cash: last.closingCash, bank: last.closingBank, fromDate: last.date };
-}
-// Báo cáo đối chiếu Quỹ theo từng ngày trong khoảng from-to (lọc từ sổ quỹ đầy đủ ở trên) —
-// để Quản lý rà soát ngay khi Thu ngân gửi số liệu, không phải đợi cuối kỳ.
-function dailyQuyReport(data, from, to) {
-  return buildQuyLedger(data).filter((d) => d.date >= from && d.date <= to).sort((a, b) => b.date.localeCompare(a.date));
-}
-
-function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
+function QuyModule({ data, onSubmitExpense, onBulkImportFromBills, onBulkImportInvoiceRevenue }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
 
-  // Doanh thu bán hàng theo hoá đơn — import trực tiếp từ file "Bảng kê hoá đơn" POS.
+  const receipts = dailyReceiptsFromSales(data.dishSales, from, to);
+  const totalThu = receipts.reduce((s, r) => s + r.amount, 0);
+
+  // Doanh thu bán hàng theo hoá đơn — import trực tiếp từ file "Bảng kê hoá đơn" POS,
+  // độc lập với totalThu (vốn tính từ dish_sales/"Xuất kho tự động từ báo cáo doanh thu").
   const invoiceRevenueInRange = data.invoiceRevenue.filter((r) => r.invoiceDate >= from && r.invoiceDate <= to);
   const totalInvoiceRevenue = invoiceRevenueInRange.reduce((s, r) => s + r.amount, 0);
-  const totalInvoiceRevenueCash = invoiceRevenueInRange.reduce((s, r) => s + r.cashAmount, 0);
-  const totalInvoiceRevenueBank = invoiceRevenueInRange.reduce((s, r) => s + r.bankAmount, 0);
 
   // Phiếu chi = toàn bộ expense_records (trừ nhóm nvl — NVL tính riêng vì có công nợ, chưa chắc đã chi tiền)
   // + phần NVL đã trả bằng tiền mặt thực tế (payment_type = tien_mat) để sổ quỹ phản ánh đúng dòng tiền thật.
-  // Mỗi khoản chi được đánh dấu Tiền mặt/Ngân hàng (payment_method) để tách quỹ theo đúng phương thức.
   const chiExpense = data.expenseRecords.filter((r) => r.category !== "nvl" && r.expenseDate >= from && r.expenseDate <= to);
   const chiNvlTienMat = data.importRecords.filter((r) => r.paymentType === "tien_mat" && r.importDate >= from && r.importDate <= to);
-  const chiExpenseCash = chiExpense.filter((r) => r.paymentMethod !== "ngan_hang").reduce((s, r) => s + r.amount, 0)
-    + chiNvlTienMat.reduce((s, r) => s + r.totalAmount, 0);
-  const chiExpenseBank = chiExpense.filter((r) => r.paymentMethod === "ngan_hang").reduce((s, r) => s + r.amount, 0);
-  const totalChi = chiExpenseCash + chiExpenseBank;
+  const totalChi = chiExpense.reduce((s, r) => s + r.amount, 0) + chiNvlTienMat.reduce((s, r) => s + r.totalAmount, 0);
 
-  // Số dư quỹ = Tổng Doanh thu bán hàng (theo hoá đơn) - Tổng Chi, tách riêng theo Quỹ tiền mặt / Quỹ ngân hàng.
-  const soDu = totalInvoiceRevenue - totalChi;
-  const soDuTienMat = totalInvoiceRevenueCash - chiExpenseCash;
-  const soDuNganHang = totalInvoiceRevenueBank - chiExpenseBank;
+  const soDu = totalThu - totalChi;
 
   // Thu ngân đã thu (Thu tiền mặt + Thu tiền ngân hàng) — độc lập với "Phiếu thu" tính từ báo cáo bán hàng.
   const cashierInRange = data.cashierReceipts.filter((r) => r.receiptDate >= from && r.receiptDate <= to);
@@ -3431,23 +3082,10 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
   const totalThuNganCash = cashierInRange.reduce((s, r) => s + r.cashAmount, 0);
   const totalThuNganBank = cashierInRange.reduce((s, r) => s + r.bankAmount, 0);
 
-  // Thu cọc — độc lập với Doanh thu bán hàng theo hoá đơn (khách đặt cọc trước, không phải bán
-  // hàng thực tế trong ngày), hiển thị riêng để Quản lý theo dõi tách bạch, không gộp vào Doanh
-  // thu bán hàng hay Số dư quỹ ở trên — nhưng vẫn được cộng vào Tồn quỹ cuối ngày (bảng bên dưới)
-  // vì đây là tiền thật đã vào quỹ.
-  const depositInRange = data.depositReceipts.filter((r) => r.receiptDate >= from && r.receiptDate <= to);
-  const totalDeposit = depositInRange.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
-  const totalDepositCash = depositInRange.reduce((s, r) => s + r.cashAmount, 0);
-  const totalDepositBank = depositInRange.reduce((s, r) => s + r.bankAmount, 0);
-
   // So sánh Thu ngân (tiền mặt + ngân hàng) vs Doanh thu bán hàng theo hoá đơn (Bảng kê hoá đơn) —
   // dùng đúng số tiền thực thu để đối chiếu, không dùng số tính ngược từ Xuất kho.
   const diff = totalThuNgan - totalInvoiceRevenue;
   const diffPct = totalInvoiceRevenue > 0 ? (diff / totalInvoiceRevenue) * 100 : 0;
-  // Đối chiếu riêng theo từng phương thức: Tiền mặt file hoá đơn vs Tiền mặt Thu ngân, tương tự Ngân hàng.
-  const diffCash = totalThuNganCash - totalInvoiceRevenueCash;
-  const diffBank = totalThuNganBank - totalInvoiceRevenueBank;
-  const dailyReport = dailyQuyReport(data, from, to);
 
   return (
     <div>
@@ -3460,35 +3098,12 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
         <MetricCard label="Doanh thu bán hàng theo hoá đơn" value={fmtMoney(totalInvoiceRevenue)} icon={FileText} accent="indigo" />
+        <MetricCard label="Doanh thu từ phiếu xuất kho" value={fmtMoney(totalThu)} icon={TrendingUp} accent="emerald" />
         <MetricCard label="Tổng chi" value={fmtMoney(totalChi)} icon={TrendingDown} accent="rose" />
-        <MetricCard label="Số dư quỹ" value={fmtMoney(soDu)} icon={Wallet} accent={soDu >= 0 ? "teal" : "rose"} note="Doanh thu hoá đơn - Tổng chi" />
+        <MetricCard label="Số dư quỹ" value={fmtMoney(soDu)} icon={Wallet} accent={soDu >= 0 ? "teal" : "rose"} />
       </div>
-      <div className="grid grid-cols-2 gap-3 mb-5">
-        <MetricCard label="Quỹ tiền mặt" value={fmtMoney(soDuTienMat)} icon={Wallet} accent={soDuTienMat >= 0 ? "teal" : "rose"} note={`Thu ${fmtMoney(totalInvoiceRevenueCash)} - Chi ${fmtMoney(chiExpenseCash)}`} />
-        <MetricCard label="Quỹ ngân hàng" value={fmtMoney(soDuNganHang)} icon={Wallet} accent={soDuNganHang >= 0 ? "indigo" : "rose"} note={`Thu ${fmtMoney(totalInvoiceRevenueBank)} - Chi ${fmtMoney(chiExpenseBank)}`} />
-      </div>
-
-      {/* Thu cọc — mục riêng, KHÔNG gộp vào Doanh thu bán hàng theo hoá đơn hay Số dư quỹ ở trên */}
-      <Card className="p-4 sm:p-5 mb-5">
-        <p className="font-semibold text-slate-800 text-sm mb-1">Thu cọc</p>
-        <p className="text-xs text-slate-400 mb-3">Khách đặt cọc trước (Thu ngân tự ghi nhận) — tách riêng, không tính vào Doanh thu bán hàng theo hoá đơn hay Số dư quỹ ở trên. Vẫn được cộng vào "Tồn quỹ cuối ngày" ở bảng đối chiếu bên dưới vì là tiền thật đã vào quỹ.</p>
-        <div className="grid grid-cols-3 gap-2">
-          <div className="bg-indigo-50 rounded-xl px-3 py-2">
-            <p className="text-xs text-indigo-600">Tiền mặt</p>
-            <p className="text-sm font-semibold text-indigo-800">{fmtMoney(totalDepositCash)}</p>
-          </div>
-          <div className="bg-indigo-50 rounded-xl px-3 py-2">
-            <p className="text-xs text-indigo-600">Ngân hàng</p>
-            <p className="text-sm font-semibold text-indigo-800">{fmtMoney(totalDepositBank)}</p>
-          </div>
-          <div className="bg-indigo-50 rounded-xl px-3 py-2">
-            <p className="text-xs text-indigo-600">Tổng thu cọc</p>
-            <p className="text-sm font-semibold text-indigo-800">{fmtMoney(totalDeposit)}</p>
-          </div>
-        </div>
-      </Card>
 
       <InvoiceRevenueImportForm onImport={onBulkImportInvoiceRevenue} />
 
@@ -3513,41 +3128,6 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
             <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalInvoiceRevenue)}</p>
           </div>
         </div>
-
-        {/* Chi tiết theo từng phương thức: file import (Bảng kê hoá đơn) vs Thu ngân báo cáo */}
-        <div className="grid sm:grid-cols-2 gap-3 mb-3">
-          <div className="border border-slate-200 rounded-xl p-3">
-            <p className="text-xs font-medium text-slate-600 mb-2">Tiền mặt</p>
-            <div className="flex items-center justify-between text-sm mb-1">
-              <span className="text-slate-500">File hoá đơn</span>
-              <span className="font-semibold text-slate-700">{fmtMoney(totalInvoiceRevenueCash)}</span>
-            </div>
-            <div className="flex items-center justify-between text-sm mb-1">
-              <span className="text-slate-500">Thu ngân báo cáo</span>
-              <span className="font-semibold text-slate-700">{fmtMoney(totalThuNganCash)}</span>
-            </div>
-            <div className={`flex items-center justify-between text-sm pt-1 border-t border-slate-100 ${diffCash === 0 ? "text-emerald-700" : diffCash > 0 ? "text-amber-700" : "text-rose-700"}`}>
-              <span>Chênh lệch</span>
-              <span className="font-semibold">{diffCash === 0 ? "Khớp" : `${diffCash > 0 ? "Thừa" : "Thiếu"} ${fmtMoney(Math.abs(diffCash))}`}</span>
-            </div>
-          </div>
-          <div className="border border-slate-200 rounded-xl p-3">
-            <p className="text-xs font-medium text-slate-600 mb-2">Ngân hàng</p>
-            <div className="flex items-center justify-between text-sm mb-1">
-              <span className="text-slate-500">File hoá đơn</span>
-              <span className="font-semibold text-slate-700">{fmtMoney(totalInvoiceRevenueBank)}</span>
-            </div>
-            <div className="flex items-center justify-between text-sm mb-1">
-              <span className="text-slate-500">Thu ngân báo cáo</span>
-              <span className="font-semibold text-slate-700">{fmtMoney(totalThuNganBank)}</span>
-            </div>
-            <div className={`flex items-center justify-between text-sm pt-1 border-t border-slate-100 ${diffBank === 0 ? "text-emerald-700" : diffBank > 0 ? "text-amber-700" : "text-rose-700"}`}>
-              <span>Chênh lệch</span>
-              <span className="font-semibold">{diffBank === 0 ? "Khớp" : `${diffBank > 0 ? "Thừa" : "Thiếu"} ${fmtMoney(Math.abs(diffBank))}`}</span>
-            </div>
-          </div>
-        </div>
-
         {totalInvoiceRevenue === 0 && totalThuNgan === 0 ? (
           <p className="text-xs text-slate-400">Chưa có đủ dữ liệu để đối chiếu trong khoảng thời gian này — cần import "Bảng kê hoá đơn" và/hoặc có phiếu Thu ngân.</p>
         ) : diff === 0 ? (
@@ -3565,127 +3145,61 @@ function QuyModule({ data, onSubmitExpense, onBulkImportInvoiceRevenue }) {
         )}
       </Card>
 
-      {/* Báo cáo đối chiếu quỹ theo từng ngày — để Quản lý rà soát ngay khi Thu ngân gửi số liệu hàng ngày.
-          Tách riêng 2 bảng Tiền mặt / Ngân hàng cho dễ đọc (trước đây gộp 1 bảng quá nhiều cột). */}
-      {dailyReport.some((d) => d.openingMismatchCash || d.openingMismatchBank) && (
-        <div className="mb-3 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-xl p-3 flex items-center gap-1">
-          <AlertTriangle size={13} className="shrink-0" /> Có ngày Tồn quỹ đầu ngày Thu ngân điền <b>không khớp</b> với số cuối ngày hôm trước App tự tính — xem cột "Tồn đầu ngày" ở bảng bên dưới (tô đỏ).
-        </div>
+      <PhieuChiForm onSubmit={onSubmitExpense} />
+
+      {onBulkImportFromBills && (
+        <XuatExcelImportForm data={data} onImport={onBulkImportFromBills} />
       )}
 
-      <Card className="p-0 overflow-hidden mb-5">
-        <div className="p-4 border-b border-slate-100">
-          <p className="font-semibold text-slate-800 text-sm">Đối chiếu quỹ theo ngày — Tiền mặt</p>
-          <p className="text-xs text-slate-400 mt-0.5">Tồn cuối ngày = Tồn đầu ngày + Hoá đơn + Thu cọc phát sinh trong ngày − Chi phí phát sinh trong ngày.</p>
-        </div>
-        {dailyReport.length === 0 ? (
-          <EmptyState icon={Wallet} text="Chưa có dữ liệu quỹ trong khoảng thời gian này." />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-slate-500 border-b border-slate-100">
-                  <th className="text-left px-4 py-2 font-medium whitespace-nowrap">Ngày</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Tồn đầu ngày</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Hoá đơn</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Thu cọc</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Thu ngân</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Lệch</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Chi</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Tồn cuối ngày</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {dailyReport.map((d) => (
-                  <tr key={d.date} className="hover:bg-slate-50/60">
-                    <td className="px-4 py-2 text-slate-700 font-medium whitespace-nowrap">{fmtDate(d.date)}</td>
-                    <td className={`px-3 py-2 text-right whitespace-nowrap ${d.openingMismatchCash ? "text-rose-600 font-medium" : "text-slate-500"}`}>
-                      {d.openingCashEntered === null ? <span className="text-slate-300">chưa điền</span> : fmtMoney(d.openingCashEntered)}
-                      {d.openingMismatchCash && <span className="block text-[10px] text-rose-500 whitespace-nowrap">lệch với dự kiến {fmtMoney(d.expectedOpeningCash ?? 0)}</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.invoiceCash)}</td>
-                    <td className="px-3 py-2 text-right text-indigo-600 whitespace-nowrap">{fmtMoney(d.depositCash)}</td>
-                    <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.cashierCash)}</td>
-                    <td className={`px-3 py-2 text-right font-medium whitespace-nowrap ${d.diffCash === 0 ? "text-emerald-600" : d.diffCash > 0 ? "text-amber-600" : "text-rose-600"}`}>{d.diffCash === 0 ? "Khớp" : fmtMoney(d.diffCash)}</td>
-                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{fmtMoney(d.chiCash)}</td>
-                    <td className="px-3 py-2 text-right text-slate-700 font-medium whitespace-nowrap">{fmtMoney(d.closingCash)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      <Card className="p-0 overflow-hidden mb-5">
-        <div className="p-4 border-b border-slate-100">
-          <p className="font-semibold text-slate-800 text-sm">Đối chiếu quỹ theo ngày — Ngân hàng</p>
-          <p className="text-xs text-slate-400 mt-0.5">Tồn cuối ngày = Tồn đầu ngày + Hoá đơn + Thu cọc phát sinh trong ngày − Chi phí phát sinh trong ngày.</p>
-        </div>
-        {dailyReport.length === 0 ? (
-          <EmptyState icon={Wallet} text="Chưa có dữ liệu quỹ trong khoảng thời gian này." />
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-slate-500 border-b border-slate-100">
-                  <th className="text-left px-4 py-2 font-medium whitespace-nowrap">Ngày</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Tồn đầu ngày</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Hoá đơn</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Thu cọc</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Thu ngân</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Lệch</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Chi</th>
-                  <th className="text-right px-3 py-2 font-medium whitespace-nowrap">Tồn cuối ngày</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {dailyReport.map((d) => (
-                  <tr key={d.date} className="hover:bg-slate-50/60">
-                    <td className="px-4 py-2 text-slate-700 font-medium whitespace-nowrap">{fmtDate(d.date)}</td>
-                    <td className={`px-3 py-2 text-right whitespace-nowrap ${d.openingMismatchBank ? "text-rose-600 font-medium" : "text-slate-500"}`}>
-                      {d.openingBankEntered === null ? <span className="text-slate-300">chưa điền</span> : fmtMoney(d.openingBankEntered)}
-                      {d.openingMismatchBank && <span className="block text-[10px] text-rose-500 whitespace-nowrap">lệch với dự kiến {fmtMoney(d.expectedOpeningBank ?? 0)}</span>}
-                    </td>
-                    <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.invoiceBank)}</td>
-                    <td className="px-3 py-2 text-right text-indigo-600 whitespace-nowrap">{fmtMoney(d.depositBank)}</td>
-                    <td className="px-3 py-2 text-right text-slate-600 whitespace-nowrap">{fmtMoney(d.cashierBank)}</td>
-                    <td className={`px-3 py-2 text-right font-medium whitespace-nowrap ${d.diffBank === 0 ? "text-emerald-600" : d.diffBank > 0 ? "text-amber-600" : "text-rose-600"}`}>{d.diffBank === 0 ? "Khớp" : fmtMoney(d.diffBank)}</td>
-                    <td className="px-3 py-2 text-right text-slate-500 whitespace-nowrap">{fmtMoney(d.chiBank)}</td>
-                    <td className="px-3 py-2 text-right text-slate-700 font-medium whitespace-nowrap">{fmtMoney(d.closingBank)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      <Card className="p-0 overflow-hidden">
-        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu chi gần đây</p></div>
-        {chiExpense.length === 0 && chiNvlTienMat.length === 0 ? <EmptyState icon={TrendingDown} text="Chưa có khoản chi nào trong khoảng này." /> : (
-          <div className="overflow-x-auto max-h-96 overflow-y-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2 text-right">Số tiền</th>
-              </tr></thead>
-              <tbody>
-                {[...chiExpense.map((r) => ({ date: r.expenseDate, name: r.itemName, group: EXPENSE_CATEGORY_META[r.category]?.label || r.category, amount: r.amount })),
-                  ...chiNvlTienMat.map((r) => ({ date: r.importDate, name: "NVL (tiền mặt)", group: "Nguyên vật liệu", amount: r.totalAmount }))]
-                  .sort((a, b) => b.date.localeCompare(a.date))
-                  .map((r, i) => (
-                    <tr key={i} className="border-b border-slate-50 last:border-0">
-                      <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
-                      <td className="px-3 py-2">{r.name}</td>
-                      <td className="px-3 py-2 text-slate-500">{r.group}</td>
-                      <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
+      <div className="grid lg:grid-cols-2 gap-5">
+        <Card className="p-0 overflow-hidden">
+          <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu thu (tự động từ báo cáo doanh thu)</p></div>
+          {receipts.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có dữ liệu bán hàng trong khoảng này." /> : (
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                  <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Số món bán</th><th className="px-3 py-2 text-right">Số tiền thu</th>
+                </tr></thead>
+                <tbody>
+                  {receipts.map((r) => (
+                    <tr key={r.date} className="border-b border-slate-50 last:border-0">
+                      <td className="px-3 py-2 font-medium text-slate-700">{fmtDate(r.date)}</td>
+                      <td className="px-3 py-2 text-right text-slate-500">{fmtNumber(r.qty)}</td>
+                      <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.amount)}</td>
                     </tr>
                   ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+
+        <Card className="p-0 overflow-hidden">
+          <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu chi gần đây</p></div>
+          {chiExpense.length === 0 && chiNvlTienMat.length === 0 ? <EmptyState icon={TrendingDown} text="Chưa có khoản chi nào trong khoảng này." /> : (
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                  <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2 text-right">Số tiền</th>
+                </tr></thead>
+                <tbody>
+                  {[...chiExpense.map((r) => ({ date: r.expenseDate, name: r.itemName, group: EXPENSE_CATEGORY_META[r.category]?.label || r.category, amount: r.amount })),
+                    ...chiNvlTienMat.map((r) => ({ date: r.importDate, name: "NVL (tiền mặt)", group: "Nguyên vật liệu", amount: r.totalAmount }))]
+                    .sort((a, b) => b.date.localeCompare(a.date))
+                    .map((r, i) => (
+                      <tr key={i} className="border-b border-slate-50 last:border-0">
+                        <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
+                        <td className="px-3 py-2">{r.name}</td>
+                        <td className="px-3 py-2 text-slate-500">{r.group}</td>
+                        <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
     </div>
   );
 }
@@ -3782,7 +3296,6 @@ function PresetExpenseForm({ category, onSubmit }) {
   const meta = EXPENSE_CATEGORY_META[category];
   const [amounts, setAmounts] = useState(() => Object.fromEntries(meta.presetItems.map((n) => [n, ""])));
   const [expenseDate, setExpenseDate] = useState(todayISO());
-  const [paymentMethod, setPaymentMethod] = useState("tien_mat");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -3794,7 +3307,7 @@ function PresetExpenseForm({ category, onSubmit }) {
     setError(""); setSaving(true);
     try {
       await onSubmit({
-        category, expenseDate, paymentMethod,
+        category, expenseDate,
         lines: filled.map((n) => ({ itemName: n, amount: Number(amounts[n]) })),
       });
       setAmounts(Object.fromEntries(meta.presetItems.map((n) => [n, ""])));
@@ -3810,10 +3323,6 @@ function PresetExpenseForm({ category, onSubmit }) {
       <p className="font-semibold text-slate-800 text-sm mb-3">{meta.label}</p>
       <div className="grid sm:grid-cols-2 gap-3 mb-4">
         <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
-        <SelectField label="Phương thức thanh toán" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
-          <option value="tien_mat">Tiền mặt</option>
-          <option value="ngan_hang">Ngân hàng</option>
-        </SelectField>
       </div>
       <div className="space-y-2 mb-4">
         {meta.presetItems.map((n) => (
@@ -3838,7 +3347,6 @@ function PresetExpenseForm({ category, onSubmit }) {
 function OtherExpenseForm({ onSubmit }) {
   const [lines, setLines] = useState([{ key: Math.random().toString(36).slice(2), itemName: "", amount: "" }]);
   const [expenseDate, setExpenseDate] = useState(todayISO());
-  const [paymentMethod, setPaymentMethod] = useState("tien_mat");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -3854,7 +3362,7 @@ function OtherExpenseForm({ onSubmit }) {
     setError(""); setSaving(true);
     try {
       await onSubmit({
-        category: "khac", expenseDate, paymentMethod,
+        category: "khac", expenseDate,
         lines: validLines.map((l) => ({ itemName: l.itemName.trim(), amount: Number(l.amount) })),
       });
       setLines([{ key: Math.random().toString(36).slice(2), itemName: "", amount: "" }]);
@@ -3870,10 +3378,6 @@ function OtherExpenseForm({ onSubmit }) {
       <p className="font-semibold text-slate-800 text-sm mb-3">Chi phí khác</p>
       <div className="grid sm:grid-cols-2 gap-3 mb-4">
         <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
-        <SelectField label="Phương thức thanh toán" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
-          <option value="tien_mat">Tiền mặt</option>
-          <option value="ngan_hang">Ngân hàng</option>
-        </SelectField>
       </div>
       <div className="space-y-2 mb-4">
         {lines.map((l) => (
@@ -3895,8 +3399,17 @@ function OtherExpenseForm({ onSubmit }) {
   );
 }
 
-function ExpenseList({ data }) {
+function ExpenseList({ data, currentUser, onDelete }) {
   const rows = data.expenseRecords.slice(0, 30);
+  const isQuanLy = currentUser?.role === "quan_ly";
+  const [deleting, setDeleting] = useState(null);
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Xoá khoản chi phí này? Không thể hoàn tác.")) return;
+    setDeleting(id);
+    try { await onDelete(id); } finally { setDeleting(null); }
+  };
+
   return (
     <Card className="p-0 overflow-hidden">
       <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Chi phí ghi nhận gần đây</p></div>
@@ -3908,7 +3421,20 @@ function ExpenseList({ data }) {
                 <p className="text-sm font-medium text-slate-800 truncate">{r.itemName}</p>
                 <p className="text-xs text-slate-400">{EXPENSE_CATEGORY_META[r.category]?.label || r.category} · {fmtDate(r.expenseDate)}</p>
               </div>
-              <p className="text-sm font-semibold text-slate-700 shrink-0">{fmtMoney(r.amount)}</p>
+              <div className="flex items-center gap-2 shrink-0">
+                <p className="text-sm font-semibold text-slate-700">{fmtMoney(r.amount)}</p>
+                {isQuanLy && (
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(r.id)}
+                    disabled={deleting === r.id}
+                    className="text-slate-400 hover:text-rose-600 p-1"
+                    title="Xoá khoản chi phí này"
+                  >
+                    {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
@@ -3917,7 +3443,7 @@ function ExpenseList({ data }) {
   );
 }
 
-function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport }) {
+function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDeleteExpense }) {
   const [category, setCategory] = useState("van_hanh");
   const meta = EXPENSE_CATEGORY_META[category];
 
@@ -3929,9 +3455,6 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport }) {
   return (
     <div>
       <SectionTitle icon={Receipt} title="Chi phí" subtitle="Ghi nhận toàn bộ chi phí phát sinh hàng tháng" />
-
-      <PhieuChiForm onSubmit={onSubmitExpense} />
-
       <Card className="p-4 sm:p-5 mb-5">
         <SelectField label="Loại chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
           {EXPENSE_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
@@ -3964,7 +3487,7 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport }) {
       {(category === "van_hanh" || category === "marketing") && <PresetExpenseForm category={category} onSubmit={onSubmitExpense} />}
       {category === "khac" && <OtherExpenseForm onSubmit={onSubmitExpense} />}
 
-      {category !== "nvl" && <ExpenseList data={data} />}
+      {category !== "nvl" && <ExpenseList data={data} currentUser={currentUser} onDelete={onDeleteExpense} />}
     </div>
   );
 }
@@ -4358,7 +3881,7 @@ export default function App() {
       if (savedId) {
         const fresh = await fetchAll();
         const found = fresh.employees.find((e) => e.id === savedId);
-        if (found) { setCurrentUser(found); setTab(defaultTabForRole(found.role)); }
+        if (found) setCurrentUser(found);
         else localStorage.removeItem(SESSION_KEY);
       }
       setLoading(false);
@@ -4374,7 +3897,7 @@ export default function App() {
   const handleLogin = (employee) => {
     setCurrentUser(employee);
     localStorage.setItem(SESSION_KEY, employee.id);
-    setTab(defaultTabForRole(employee.role));
+    setTab(employee.role === "bao_cao" ? "lich_su_nhap" : employee.role === "thu_ngan" ? "thu_ngan" : "nhap");
   };
   const handleLogout = () => {
     setCurrentUser(null);
@@ -4574,11 +4097,10 @@ export default function App() {
   };
 
   // ---------------- Chi phí (Vận hành / Marketing / Bảo trì & vật tư / Khác) ----------------
-  const submitExpense = async ({ category, lines, expenseDate, paymentMethod }) => {
+  const submitExpense = async ({ category, lines, expenseDate }) => {
     const rows = lines.map((l) => ({
       category, item_name: l.itemName,
       quantity: l.quantity ?? null, unit_price: l.unitPrice ?? null, amount: l.amount,
-      payment_method: paymentMethod || "tien_mat",
       expense_date: expenseDate || todayISO(), note: l.note || null, created_by: currentUser.id,
     }));
     const { error } = await supabase.from("expense_records").insert(rows);
@@ -4587,91 +4109,38 @@ export default function App() {
     showToast(`Đã ghi nhận ${rows.length} khoản chi phí`);
   };
 
+  // Xoá 1 khoản chi phí — chỉ dành cho tài khoản Quản lý (kiểm soát ở giao diện ExpenseList).
+  const deleteExpenseRecord = async (id) => {
+    const { data: deletedRows, error } = await supabase.from("expense_records").delete().eq("id", id).select("id");
+    if (error) throw error;
+    if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
+    await refreshAll();
+    showToast("Đã xoá khoản chi phí");
+  };
+
   // Thu ngân — ghi nhận Thu tiền mặt / Thu tiền ngân hàng theo ngày (độc lập với doanh thu
   // tính từ báo cáo bán hàng/dish_sales) — dùng để đối chiếu quỹ thực tế trong tab Quỹ.
-  // Kèm "Tồn quỹ đầu ngày" (Tiền mặt/Ngân hàng) Thu ngân tự đếm/kiểm đầu ca, để đối chiếu với
-  // số quỹ tồn cuối ngày hôm trước App tự tính (tồn cuối ngày trước = tồn đầu ngày đó + Thu - Chi).
-  const submitCashierReceipt = async ({ receiptDate, cashAmount, bankAmount, openingCashAmount, openingBankAmount, note }) => {
+  const submitCashierReceipt = async ({ receiptDate, cashAmount, bankAmount, note }) => {
     const { error } = await supabase.from("cashier_receipts").insert({
       receipt_date: receiptDate || todayISO(), cash_amount: Number(cashAmount) || 0,
-      bank_amount: Number(bankAmount) || 0,
-      opening_cash_amount: openingCashAmount === "" || openingCashAmount === undefined ? null : Number(openingCashAmount),
-      opening_bank_amount: openingBankAmount === "" || openingBankAmount === undefined ? null : Number(openingBankAmount),
-      note: note || null, created_by: currentUser.id,
+      bank_amount: Number(bankAmount) || 0, note: note || null, created_by: currentUser.id,
     });
     if (error) throw error;
     await refreshAll();
     showToast("Đã ghi nhận phiếu thu ngân");
   };
 
-  // Sửa phiếu thu ngân đã lập trước đó (chỉ Thu ngân sửa phiếu của chính mình, xem RLS ở Supabase).
-  const updateCashierReceipt = async (id, { receiptDate, cashAmount, bankAmount, openingCashAmount, openingBankAmount, note }) => {
-    const { error } = await supabase.from("cashier_receipts").update({
-      receipt_date: receiptDate || todayISO(), cash_amount: Number(cashAmount) || 0,
-      bank_amount: Number(bankAmount) || 0,
-      opening_cash_amount: openingCashAmount === "" || openingCashAmount === undefined ? null : Number(openingCashAmount),
-      opening_bank_amount: openingBankAmount === "" || openingBankAmount === undefined ? null : Number(openingBankAmount),
-      note: note || null,
-    }).eq("id", id);
-    if (error) throw error;
-    await refreshAll();
-    showToast("Đã cập nhật phiếu thu ngân");
-  };
-
-  // Sửa phiếu chi đã lập trước đó (chỉ áp dụng cho phiếu tạo qua "Tạo phiếu chi" — 1 dòng/phiếu).
-  const updateExpenseRecord = async (id, { category, expenseDate, paymentMethod, itemName, amount, note }) => {
-    const { error } = await supabase.from("expense_records").update({
-      category, item_name: itemName, amount: Number(amount) || 0,
-      payment_method: paymentMethod || "tien_mat",
-      expense_date: expenseDate || todayISO(), note: note || null,
-    }).eq("id", id);
-    if (error) throw error;
-    await refreshAll();
-    showToast("Đã cập nhật phiếu chi");
-  };
-
-  // Thu cọc — độc lập với Doanh thu bán hàng theo hoá đơn và Thu ngân tổng (không dùng để đối
-  // chiếu doanh thu bán hàng), do Thu ngân tự ghi nhận theo ngày khi khách đặt cọc trước.
-  const submitDepositReceipt = async ({ receiptDate, cashAmount, bankAmount, customerName, note }) => {
-    const { error } = await supabase.from("deposit_receipts").insert({
-      receipt_date: receiptDate || todayISO(), cash_amount: Number(cashAmount) || 0,
-      bank_amount: Number(bankAmount) || 0, customer_name: customerName || null,
-      note: note || null, created_by: currentUser.id,
-    });
-    if (error) throw error;
-    await refreshAll();
-    showToast("Đã ghi nhận phiếu thu cọc");
-  };
-
-  const updateDepositReceipt = async (id, { receiptDate, cashAmount, bankAmount, customerName, note }) => {
-    const { error } = await supabase.from("deposit_receipts").update({
-      receipt_date: receiptDate || todayISO(), cash_amount: Number(cashAmount) || 0,
-      bank_amount: Number(bankAmount) || 0, customer_name: customerName || null, note: note || null,
-    }).eq("id", id);
-    if (error) throw error;
-    await refreshAll();
-    showToast("Đã cập nhật phiếu thu cọc");
-  };
-
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
   // tính từ Xuất kho tự động (dish_sales). Upsert theo invoice_no để import lại không bị trùng.
-  // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
-  // tính từ Xuất kho tự động (dish_sales). Chỉ THAY THẾ đúng những NGÀY có mặt trong file mới
-  // (xoá dữ liệu cũ của các ngày đó rồi nạp lại) — giữ nguyên dữ liệu các ngày khác, để hỗ trợ
-  // import theo ngày riêng lẻ (Thu ngân gửi từng ngày) lẫn import file gộp nhiều ngày/cả tháng.
   const bulkImportInvoiceRevenue = async (rows) => {
     if (rows.length === 0) return;
-    const dates = Array.from(new Set(rows.map((r) => r.invoiceDate)));
-    const { error: delError } = await supabase.from("invoice_revenue").delete().in("invoice_date", dates);
-    if (delError) throw delError;
     const dbRows = rows.map((r) => ({
-      invoice_no: r.invoiceNo, invoice_date: r.invoiceDate, amount: r.amount,
-      cash_amount: r.cashAmount || 0, bank_amount: r.bankAmount || 0, created_by: currentUser.id,
+      invoice_no: r.invoiceNo, invoice_date: r.invoiceDate, amount: r.amount, created_by: currentUser.id,
     }));
-    const { error } = await supabase.from("invoice_revenue").insert(dbRows);
+    const { error } = await supabase.from("invoice_revenue").upsert(dbRows, { onConflict: "invoice_no" });
     if (error) throw error;
     await refreshAll();
-    showToast(`Đã cập nhật doanh thu cho ${dates.length} ngày (${rows.length} hoá đơn)`);
+    showToast(`Đã import ${rows.length} hoá đơn doanh thu`);
   };
 
   // ---------------- Cost món ăn ----------------
@@ -4828,10 +4297,8 @@ export default function App() {
       </aside>
 
       <div className="flex-1 min-w-0 pb-20 lg:pb-0">
-        {/* Header trên cùng — chỉ hiện khi chưa có sidebar (dưới breakpoint lg).
-            pt thêm env(safe-area-inset-top) để không bị đồng hồ/pin điện thoại che mất
-            (do index.html dùng viewport-fit=cover cho PWA tràn full màn hình). */}
-        <div className="lg:hidden bg-white/90 backdrop-blur border-b border-slate-200 sticky top-0 z-30" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
+        {/* Header trên cùng — chỉ hiện khi chưa có sidebar (dưới breakpoint lg) */}
+        <div className="lg:hidden bg-white/90 backdrop-blur border-b border-slate-200 sticky top-0 z-30">
           <div className="px-4 py-3 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-sky-700 to-sky-900 text-white flex items-center justify-center shrink-0 shadow-sm">
@@ -4864,26 +4331,26 @@ export default function App() {
 
         <div className="max-w-6xl mx-auto px-4 py-6">
           <TabErrorBoundary resetKey={tab}>
-            {tab === "nhap" && !isBaoCao && !isThuNgan && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
-            {tab === "lich_su_nhap" && !isThuNgan && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
-            {tab === "xuat" && !isThuNgan && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
-            {tab === "chi_phi" && !isThuNgan && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} />}
-            {tab === "quy" && canViewReports && !isThuNgan && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
-            {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} onUpdateCashierReceipt={updateCashierReceipt} onUpdateExpense={updateExpenseRecord} onSubmitDepositReceipt={submitDepositReceipt} onUpdateDepositReceipt={updateDepositReceipt} />}
-            {tab === "mon_an" && !isThuNgan && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
-            {tab === "danh_muc" && !isBaoCao && !isThuNgan && (
+            {tab === "nhap" && !isBaoCao && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
+            {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
+            {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
+            {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} />}
+            {tab === "quy" && canViewReports && <QuyModule data={data} onSubmitExpense={submitExpense} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
+            {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} />}
+            {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
+            {tab === "danh_muc" && !isBaoCao && (
               <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
             )}
-            {tab === "bao_cao_nhap" && canViewReports && !isThuNgan && <BaoCaoNhapModule data={data} />}
-            {tab === "bao_cao_xuat" && canViewReports && !isThuNgan && <BaoCaoXuatModule data={data} />}
-            {tab === "ton_kho" && !isBaoCao && !isThuNgan && <TonKhoModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
+            {tab === "bao_cao_nhap" && canViewReports && <BaoCaoNhapModule data={data} />}
+            {tab === "bao_cao_xuat" && canViewReports && <BaoCaoXuatModule data={data} />}
+            {tab === "ton_kho" && !isBaoCao && <TonKhoModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
             {tab === "tai_khoan" && isQuanLy && <TaiKhoanModule currentUser={currentUser} employees={data.employees} onAddEmployee={addEmployee} />}
           </TabErrorBoundary>
         </div>
       </div>
 
       {/* Thanh điều hướng cố định đáy màn hình, cuộn ngang — chỉ hiện dưới breakpoint lg */}
-      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 flex items-center gap-1 px-2 py-2 overflow-x-auto" style={{ paddingBottom: "calc(0.5rem + env(safe-area-inset-bottom, 0px))" }}>
+      <nav className="lg:hidden fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-slate-200 flex items-center gap-1 px-2 py-2 overflow-x-auto">
         {navItems.map((n) => (
           <button key={n.key} onClick={() => setTab(n.key)} className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl text-[11px] font-medium whitespace-nowrap shrink-0 transition ${tab === n.key ? "bg-sky-800 text-white shadow-sm" : "text-slate-500 hover:bg-slate-100"}`}>
             <n.icon size={16} /> {n.label}
