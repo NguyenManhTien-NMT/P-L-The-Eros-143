@@ -3457,8 +3457,11 @@ function EditExpenseModal({ expense, onSave, onClose }) {
   );
 }
 
-function ExpenseList({ data, currentUser, onDelete, onUpdate, filterCategory }) {
-  const rows = data.expenseRecords.filter((r) => !filterCategory || r.category === filterCategory).slice(0, 30);
+function ExpenseList({ data, currentUser, onDelete, onUpdate, filterCategory, from, to }) {
+  const rows = data.expenseRecords
+    .filter((r) => !filterCategory || r.category === filterCategory)
+    .filter((r) => (!from || r.expenseDate >= from) && (!to || r.expenseDate <= to))
+    .slice(0, 30);
   const isQuanLy = currentUser?.role === "quan_ly" || currentUser?.role === "bao_cao";
   const [deleting, setDeleting] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -3556,16 +3559,17 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate, filterCategory }) 
 
 // Bảng tổng hợp Chi phí: tổng theo từng loại (nvl gộp cả nhập kho Excel + phiếu chi lẻ) +
 // chi tiết theo từng khoản mục (gộp các dòng cùng tên, sắp xếp theo tổng tiền giảm dần).
-function ExpenseSummaryTable({ data }) {
-  const allExpense = data.expenseRecords;
+function ExpenseSummaryTable({ data, from, to }) {
+  const allExpense = data.expenseRecords.filter((r) => (!from || r.expenseDate >= from) && (!to || r.expenseDate <= to));
+  const importInRange = data.importRecords.filter((r) => (!from || r.importDate >= from) && (!to || r.importDate <= to));
 
   const totalsByCategory = EXPENSE_CATEGORIES.map((c) => {
     const rowsInCat = allExpense.filter((r) => r.category === c.key);
     let total = rowsInCat.reduce((s, r) => s + r.amount, 0);
     let count = rowsInCat.length;
     if (c.key === "nvl") {
-      total += data.importRecords.reduce((s, r) => s + r.totalAmount, 0);
-      count += data.importRecords.length;
+      total += importInRange.reduce((s, r) => s + r.totalAmount, 0);
+      count += importInRange.length;
     }
     return { key: c.key, label: c.label, total, count };
   });
@@ -3575,7 +3579,7 @@ function ExpenseSummaryTable({ data }) {
     <Card className="p-0 overflow-hidden mb-5">
       <div className="p-4 border-b border-slate-100">
         <p className="font-semibold text-slate-800 text-sm">Tổng hợp chi phí theo loại</p>
-        <p className="text-xs text-slate-400 mt-0.5">Toàn bộ dữ liệu (không giới hạn 30 dòng gần nhất)</p>
+        <p className="text-xs text-slate-400 mt-0.5">{from || to ? `Từ ${from ? fmtDate(from) : "…"} đến ${to ? fmtDate(to) : "…"}` : "Toàn bộ dữ liệu"}</p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -3611,12 +3615,14 @@ function ExpenseSummaryTable({ data }) {
 
 function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDeleteExpense, onUpdateExpense }) {
   const [category, setCategory] = useState("van_hanh");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
   const meta = EXPENSE_CATEGORY_META[category];
 
   // Công nợ nguyên vật liệu: các phiếu nhập NVL có tình trạng thanh toán = Công nợ.
-  const nvlRows = data.importRecords.slice(0, 30);
+  const nvlRows = data.importRecords.filter((r) => (!from || r.importDate >= from) && (!to || r.importDate <= to)).slice(0, 30);
   // NVL ghi qua Phiếu chi (Thu ngân mua lẻ thịt/cá/tôm...), luôn coi là đã thanh toán (không có khái niệm công nợ ở Phiếu chi).
-  const nvlExpenseRows = data.expenseRecords.filter((r) => r.category === "nvl").slice(0, 30);
+  const nvlExpenseRows = data.expenseRecords.filter((r) => r.category === "nvl" && (!from || r.expenseDate >= from) && (!to || r.expenseDate <= to)).slice(0, 30);
   const nvlExpenseTotal = nvlExpenseRows.reduce((s, r) => s + r.amount, 0);
   const nvlTotal = nvlRows.reduce((s, r) => s + r.totalAmount, 0) + nvlExpenseTotal;
   const nvlDebt = nvlRows.filter((r) => r.paymentType === "cong_no").reduce((s, r) => s + r.totalAmount, 0);
@@ -3624,7 +3630,19 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
   return (
     <div>
       <SectionTitle icon={Receipt} title="Chi phí" subtitle="Ghi nhận toàn bộ chi phí phát sinh hàng tháng" />
-      <ExpenseSummaryTable data={data} />
+      <Card className="p-4 sm:p-5 mb-5">
+        <p className="text-xs font-medium text-slate-500 mb-2">Lọc theo ngày (áp dụng cho bảng tổng hợp và danh sách chi phí bên dưới)</p>
+        <div className="grid grid-cols-2 gap-3">
+          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </div>
+        {(from || to) && (
+          <button type="button" onClick={() => { setFrom(""); setTo(""); }} className="text-xs text-sky-700 hover:underline mt-2">
+            Bỏ lọc ngày
+          </button>
+        )}
+      </Card>
+      <ExpenseSummaryTable data={data} from={from} to={to} />
       <Card className="p-4 sm:p-5 mb-5">
         <SelectField label="Loại chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
           {EXPENSE_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
@@ -3650,7 +3668,7 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
               <p className="text-sm font-semibold text-emerald-800">{fmtMoney(nvlTotal - nvlDebt)}</p>
             </div>
           </div>
-          <NhapHangList data={data} rows={nvlRows} />
+          {nvlRows.length > 0 && <NhapHangList data={data} rows={nvlRows} />}
         </>
       )}
       {category === "bao_tri_vat_tu" && currentUser?.role !== "bao_cao" && <BaoTriVatTuForm currentUser={currentUser} onSubmit={onSubmitExpense} />}
@@ -3662,7 +3680,7 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
         </div>
       )}
 
-      <ExpenseList data={data} currentUser={currentUser} onDelete={onDeleteExpense} onUpdate={onUpdateExpense} filterCategory={category} />
+      <ExpenseList data={data} currentUser={currentUser} onDelete={onDeleteExpense} onUpdate={onUpdateExpense} filterCategory={category} from={from} to={to} />
     </div>
   );
 }
