@@ -5,7 +5,7 @@ import {
   Package, Truck, ClipboardList, BarChart3, Bell, LogOut, CheckCircle2, XCircle,
   Plus, Search, ChevronRight, Inbox, Warehouse, TrendingUp, TrendingDown, Wallet,
   AlertTriangle, Clock, Loader2, Lock, User, X, Pencil, Trash2, Download, Upload, Users,
-  ShieldCheck, ArrowDownCircle, ArrowUpCircle, Boxes, Receipt, FileText, ChevronDown, ArrowUpDown, Filter,
+  ShieldCheck, ArrowDownCircle, ArrowUpCircle, Boxes, Receipt, FileText, ChevronDown, ArrowUpDown, Filter, Coins,
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell,
@@ -267,9 +267,19 @@ function mapDishIngredient(i) {
     sortOrder: i.sort_order || 0, createdAt: i.created_at,
   };
 }
+// Cọc — thu cọc (nhận cọc từ khách) hoặc chi cọc (ứng cọc cho NCC/đối tác), theo dõi
+// riêng khỏi Chi phí vì không phải chi phí thực tế phát sinh, mà là dòng tiền tạm giữ
+// đang chờ đối trừ/hoàn trả.
+function mapDeposit(r) {
+  return {
+    id: r.id, direction: r.direction, partyName: r.party_name,
+    amount: Number(r.amount) || 0, depositDate: r.deposit_date,
+    status: r.status, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
 
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -284,8 +294,9 @@ async function fetchAll() {
     supabase.from("dish_sales").select("*").order("sale_date", { ascending: false }),
     supabase.from("cashier_receipts").select("*").order("receipt_date", { ascending: false }),
     supabase.from("invoice_revenue").select("*").order("invoice_date", { ascending: false }),
+    supabase.from("deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -301,6 +312,7 @@ async function fetchAll() {
     dishSales: (dishSale.data || []).map(mapDishSale),
     cashierReceipts: (cashierRec.data || []).map(mapCashierReceipt),
     invoiceRevenue: (invRev.data || []).map(mapInvoiceRevenue),
+    deposits: (dep.data || []).map(mapDeposit),
   };
 }
 
@@ -3056,6 +3068,250 @@ function InvoiceRevenueImportForm({ onImport }) {
   );
 }
 
+const DEPOSIT_STATUS_META = {
+  dang_giu: { label: "Đang giữ", color: "bg-amber-50 text-amber-700 border-amber-200" },
+  da_doi_tru: { label: "Đã đối trừ", color: "bg-sky-50 text-sky-700 border-sky-200" },
+  da_hoan_tra: { label: "Đã hoàn trả", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+};
+const DEPOSIT_STATUSES = Object.keys(DEPOSIT_STATUS_META);
+
+function DepositForm({ onSubmit }) {
+  const [direction, setDirection] = useState("thu");
+  const [partyName, setPartyName] = useState("");
+  const [amount, setAmount] = useState("");
+  const [depositDate, setDepositDate] = useState(todayISO());
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    if (!partyName.trim()) { setError(direction === "thu" ? "Vui lòng nhập tên khách hàng." : "Vui lòng nhập tên NCC/đối tác."); return; }
+    if (!amount || Number(amount) <= 0) { setError("Vui lòng nhập số tiền hợp lệ."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSubmit({ direction, partyName, amount: Number(amount), depositDate, note: note.trim() });
+      setPartyName(""); setAmount(""); setNote("");
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-3">Ghi nhận cọc</p>
+      <div className="grid sm:grid-cols-2 gap-3 mb-3">
+        <SelectField label="Loại" value={direction} onChange={(e) => setDirection(e.target.value)}>
+          <option value="thu">Thu cọc (nhận cọc từ khách)</option>
+          <option value="chi">Chi cọc (ứng cọc cho NCC/đối tác)</option>
+        </SelectField>
+        <TextField label="Ngày" type="date" value={depositDate} onChange={(e) => setDepositDate(e.target.value)} />
+        <TextField label={direction === "thu" ? "Tên khách hàng" : "Tên NCC/đối tác"} value={partyName} onChange={(e) => setPartyName(e.target.value)} placeholder={direction === "thu" ? "VD: Anh Tuấn - đặt bàn 20/8" : "VD: NCC hải sản An Phát"} />
+        <MoneyField label="Số tiền" value={amount} onChange={setAmount} />
+        <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
+      </div>
+      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Coins size={15} />} Lưu khoản cọc</PrimaryButton>
+    </Card>
+  );
+}
+
+function DepositList({ data, currentUser, from, to, onDelete, onUpdate }) {
+  const isQuanLy = currentUser?.role === "quan_ly" || currentUser?.role === "bao_cao";
+  const [direction, setDirection] = useState("all");
+  const [deleting, setDeleting] = useState(null);
+  const [editing, setEditing] = useState(null);
+  const [changingStatus, setChangingStatus] = useState(null);
+
+  const rows = data.deposits
+    .filter((r) => direction === "all" || r.direction === direction)
+    .filter((r) => (!from || r.depositDate >= from) && (!to || r.depositDate <= to));
+
+  const totalThu = data.deposits.filter((r) => r.direction === "thu" && (!from || r.depositDate >= from) && (!to || r.depositDate <= to)).reduce((s, r) => s + r.amount, 0);
+  const totalChi = data.deposits.filter((r) => r.direction === "chi" && (!from || r.depositDate >= from) && (!to || r.depositDate <= to)).reduce((s, r) => s + r.amount, 0);
+  const dangGiuThu = data.deposits.filter((r) => r.direction === "thu" && r.status === "dang_giu").reduce((s, r) => s + r.amount, 0);
+  const dangGiuChi = data.deposits.filter((r) => r.direction === "chi" && r.status === "dang_giu").reduce((s, r) => s + r.amount, 0);
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Xoá khoản cọc này? Không thể hoàn tác.")) return;
+    setDeleting(id);
+    try { await onDelete(id); } finally { setDeleting(null); }
+  };
+  const handleStatusChange = async (r, newStatus) => {
+    if (newStatus === r.status) return;
+    setChangingStatus(r.id);
+    try { await onUpdate(r.id, { direction: r.direction, partyName: r.partyName, amount: r.amount, depositDate: r.depositDate, status: newStatus, note: r.note }); }
+    finally { setChangingStatus(null); }
+  };
+
+  return (
+    <>
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+        <div className="bg-emerald-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-emerald-700">Tổng thu cọc</p>
+          <p className="text-sm font-semibold text-emerald-800">{fmtMoney(totalThu)}</p>
+        </div>
+        <div className="bg-rose-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-rose-700">Tổng chi cọc</p>
+          <p className="text-sm font-semibold text-rose-800">{fmtMoney(totalChi)}</p>
+        </div>
+        <div className="bg-amber-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-amber-700">Đang giữ (thu cọc)</p>
+          <p className="text-sm font-semibold text-amber-800">{fmtMoney(dangGiuThu)}</p>
+        </div>
+        <div className="bg-amber-50 rounded-xl px-3 py-2">
+          <p className="text-xs text-amber-700">Đang giữ (chi cọc)</p>
+          <p className="text-sm font-semibold text-amber-800">{fmtMoney(dangGiuChi)}</p>
+        </div>
+      </div>
+
+      <Card className="p-0 overflow-hidden">
+        <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2">
+          <p className="font-semibold text-slate-800 text-sm">Danh sách cọc</p>
+          <div className="flex gap-1">
+            {[{ key: "all", label: "Tất cả" }, { key: "thu", label: "Thu cọc" }, { key: "chi", label: "Chi cọc" }].map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setDirection(t.key)}
+                className={`text-xs px-2.5 py-1 rounded-lg border ${direction === t.key ? "bg-sky-700 text-white border-sky-700" : "text-slate-500 border-slate-200 hover:bg-slate-50"}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {rows.length === 0 ? <EmptyState icon={Coins} text="Chưa có khoản cọc nào." /> : (
+          <div className="divide-y divide-slate-100">
+            {rows.map((r) => (
+              <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-800 truncate">
+                    {r.partyName} <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded-full border ${r.direction === "thu" ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-rose-50 text-rose-700 border-rose-200"}`}>{r.direction === "thu" ? "Thu cọc" : "Chi cọc"}</span>
+                  </p>
+                  <div className="flex items-center gap-2 mt-1 flex-wrap">
+                    {isQuanLy ? (
+                      <select
+                        value={r.status}
+                        onChange={(e) => handleStatusChange(r, e.target.value)}
+                        disabled={changingStatus === r.id}
+                        className="text-xs border border-slate-200 rounded-lg px-1.5 py-0.5 text-slate-600 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-sky-400 disabled:opacity-50"
+                      >
+                        {DEPOSIT_STATUSES.map((s) => <option key={s} value={s}>{DEPOSIT_STATUS_META[s].label}</option>)}
+                      </select>
+                    ) : (
+                      <span className={`text-xs px-1.5 py-0.5 rounded-lg border ${DEPOSIT_STATUS_META[r.status]?.color}`}>{DEPOSIT_STATUS_META[r.status]?.label || r.status}</span>
+                    )}
+                    <p className="text-xs text-slate-400">· {fmtDate(r.depositDate)}</p>
+                    {r.note && <p className="text-xs text-slate-400 truncate">· {r.note}</p>}
+                    {changingStatus === r.id && <Loader2 size={11} className="animate-spin text-slate-400" />}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <p className={`text-sm font-semibold ${r.direction === "thu" ? "text-emerald-700" : "text-rose-700"}`}>{fmtMoney(r.amount)}</p>
+                  {isQuanLy && (
+                    <>
+                      <button type="button" onClick={() => setEditing(r)} className="text-slate-400 hover:text-sky-700 p-1" title="Sửa khoản cọc này"><Pencil size={14} /></button>
+                      <button type="button" onClick={() => handleDelete(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1" title="Xoá khoản cọc này">
+                        {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                      </button>
+                    </>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
+      {editing && (
+        <EditDepositModal
+          deposit={editing}
+          onSave={async (id, patch) => { await onUpdate(id, patch); }}
+          onClose={() => setEditing(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function EditDepositModal({ deposit, onSave, onClose }) {
+  const [direction, setDirection] = useState(deposit.direction);
+  const [partyName, setPartyName] = useState(deposit.partyName);
+  const [amount, setAmount] = useState(String(deposit.amount ?? ""));
+  const [depositDate, setDepositDate] = useState(deposit.depositDate);
+  const [status, setStatus] = useState(deposit.status);
+  const [note, setNote] = useState(deposit.note || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    if (!partyName.trim()) { setError("Vui lòng nhập tên."); return; }
+    if (!(Number(amount) > 0)) { setError("Vui lòng nhập số tiền hợp lệ."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSave(deposit.id, { direction, partyName: partyName.trim(), amount: Number(amount), depositDate, status, note: note.trim() });
+      onClose();
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5">
+        <div className="flex items-center justify-between mb-4">
+          <p className="font-semibold text-slate-800 flex items-center gap-2"><Pencil size={17} className="text-sky-700" /> Sửa khoản cọc</p>
+          <button onClick={onClose}><X size={18} className="text-slate-400" /></button>
+        </div>
+        <div className="space-y-3">
+          <SelectField label="Loại" value={direction} onChange={(e) => setDirection(e.target.value)}>
+            <option value="thu">Thu cọc</option>
+            <option value="chi">Chi cọc</option>
+          </SelectField>
+          <TextField label="Tên khách/NCC" value={partyName} onChange={(e) => setPartyName(e.target.value)} />
+          <TextField label="Ngày" type="date" value={depositDate} onChange={(e) => setDepositDate(e.target.value)} />
+          <SelectField label="Trạng thái" value={status} onChange={(e) => setStatus(e.target.value)}>
+            {DEPOSIT_STATUSES.map((s) => <option key={s} value={s}>{DEPOSIT_STATUS_META[s].label}</option>)}
+          </SelectField>
+          <MoneyField label="Số tiền" value={amount} onChange={setAmount} />
+          <TextField label="Ghi chú" value={note} onChange={(e) => setNote(e.target.value)} />
+          {error && <p className="text-sm text-rose-600 flex items-center gap-1.5"><AlertTriangle size={14} /> {error}</p>}
+          <div className="flex gap-2">
+            <PrimaryButton type="button" onClick={submit} disabled={saving}>{saving ? "Đang lưu..." : "Lưu thay đổi"}</PrimaryButton>
+            <GhostButton type="button" onClick={onClose}>Huỷ</GhostButton>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function DepositModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+
+  return (
+    <div>
+      <SectionTitle icon={Coins} title="Cọc" subtitle="Theo dõi thu cọc (nhận từ khách) và chi cọc (ứng cho NCC/đối tác), tách riêng khỏi Chi phí" />
+      <Card className="p-4 sm:p-5 mb-5">
+        <p className="text-xs font-medium text-slate-500 mb-2">Lọc theo ngày</p>
+        <div className="grid grid-cols-2 gap-3">
+          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </div>
+        {(from || to) && (
+          <button type="button" onClick={() => { setFrom(""); setTo(""); }} className="text-xs text-sky-700 hover:underline mt-2">Bỏ lọc ngày</button>
+        )}
+      </Card>
+      {currentUser?.role !== "bao_cao" && <DepositForm onSubmit={onSubmit} />}
+      <DepositList data={data} currentUser={currentUser} from={from} to={to} onDelete={onDelete} onUpdate={onUpdate} />
+    </div>
+  );
+}
+
 function QuyModule({ data, onBulkImportFromBills, onBulkImportInvoiceRevenue }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
@@ -4056,7 +4312,7 @@ export default function App() {
   const [data, setData] = useState({
     employees: [], suppliers: [], revenueCodes: [], exportCodes: [], products: [],
     stockOpenings: [], importRecords: [], exportRecords: [], expenseRecords: [],
-    dishes: [], dishIngredients: [],
+    dishes: [], dishIngredients: [], deposits: [],
   });
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
@@ -4337,6 +4593,36 @@ export default function App() {
     showToast("Đã ghi nhận phiếu thu ngân");
   };
 
+  // Cọc — thu cọc (nhận cọc từ khách) / chi cọc (ứng cọc cho NCC, đối tác). Tách riêng khỏi
+  // Chi phí vì đây là dòng tiền tạm giữ, chờ đối trừ hoặc hoàn trả, không phải chi phí thực.
+  const submitDeposit = async ({ direction, partyName, amount, depositDate, note }) => {
+    const { error } = await supabase.from("deposits").insert({
+      direction, party_name: partyName.trim(), amount: Number(amount) || 0,
+      deposit_date: depositDate || todayISO(), status: "dang_giu", note: note || null, created_by: currentUser.id,
+    });
+    if (error) throw error;
+    await refreshAll();
+    showToast(direction === "thu" ? "Đã ghi nhận khoản thu cọc" : "Đã ghi nhận khoản chi cọc");
+  };
+  const updateDeposit = async (id, { direction, partyName, amount, depositDate, status, note }) => {
+    const { data: updatedRows, error } = await supabase
+      .from("deposits")
+      .update({ direction, party_name: partyName, amount, deposit_date: depositDate, status, note: note || null })
+      .eq("id", id)
+      .select("id");
+    if (error) throw error;
+    if ((updatedRows || []).length === 0) throw new Error("Không sửa được — có thể bị chặn quyền (RLS) trên Supabase.");
+    await refreshAll();
+    showToast("Đã cập nhật khoản cọc");
+  };
+  const deleteDeposit = async (id) => {
+    const { data: deletedRows, error } = await supabase.from("deposits").delete().eq("id", id).select("id");
+    if (error) throw error;
+    if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
+    await refreshAll();
+    showToast("Đã xoá khoản cọc");
+  };
+
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
   // tính từ Xuất kho tự động (dish_sales). Upsert theo invoice_no để import lại không bị trùng.
   const bulkImportInvoiceRevenue = async (rows) => {
@@ -4440,6 +4726,7 @@ export default function App() {
     { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
     { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
+    { key: "coc", label: "Cọc", icon: Coins },
     { key: "quy", label: "Quỹ", icon: Wallet },
     { key: "mon_an", label: "Cost món ăn", icon: Package },
     { key: "danh_muc", label: "Danh mục", icon: Boxes },
@@ -4453,6 +4740,7 @@ export default function App() {
     { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
     { key: "xuat", label: "Lịch sử xuất hàng", icon: ArrowUpCircle },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
+    { key: "coc", label: "Cọc", icon: Coins },
     { key: "quy", label: "Quỹ", icon: Wallet },
     { key: "mon_an", label: "Cost món ăn", icon: Package },
     { key: "bao_cao_nhap", label: "Báo cáo nhập", icon: BarChart3 },
@@ -4542,6 +4830,7 @@ export default function App() {
             {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
+            {tab === "coc" && canViewReports && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
             {tab === "quy" && canViewReports && <QuyModule data={data} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
             {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
