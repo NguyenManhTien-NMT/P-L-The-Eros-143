@@ -3397,10 +3397,71 @@ function OtherExpenseForm({ onSubmit }) {
   );
 }
 
-function ExpenseList({ data, currentUser, onDelete }) {
+// Sửa 1 khoản chi phí — dùng chung cho mọi nhóm chi phí (kể cả khoản do
+// Thu ngân gửi lên, vì tất cả đều nằm chung bảng expense_records).
+function EditExpenseModal({ expense, onSave, onClose }) {
+  const [category, setCategory] = useState(expense.category);
+  const [itemName, setItemName] = useState(expense.itemName);
+  const [expenseDate, setExpenseDate] = useState(expense.expenseDate);
+  const [amount, setAmount] = useState(String(expense.amount ?? ""));
+  const [quantity, setQuantity] = useState(expense.quantity === null || expense.quantity === undefined ? "" : String(expense.quantity));
+  const [unitPrice, setUnitPrice] = useState(expense.unitPrice === null || expense.unitPrice === undefined ? "" : String(expense.unitPrice));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    if (!itemName.trim()) { setError("Vui lòng nhập tên khoản chi."); return; }
+    if (!(Number(amount) > 0)) { setError("Vui lòng nhập số tiền hợp lệ."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSave(expense.id, {
+        category, itemName: itemName.trim(), expenseDate,
+        amount: Number(amount),
+        quantity: quantity === "" ? null : Number(quantity),
+        unitPrice: unitPrice === "" ? null : Number(unitPrice),
+      });
+      onClose();
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5">
+        <div className="flex items-center justify-between mb-4">
+          <p className="font-semibold text-slate-800 flex items-center gap-2"><Pencil size={17} className="text-sky-700" /> Sửa khoản chi phí</p>
+          <button onClick={onClose}><X size={18} className="text-slate-400" /></button>
+        </div>
+        <div className="space-y-3">
+          <SelectField label="Nhóm chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
+            {EXPENSE_CATEGORIES.filter((c) => c.key !== "nvl").map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </SelectField>
+          <TextField label="Tên khoản chi" value={itemName} onChange={(e) => setItemName(e.target.value)} />
+          <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+          <div className="grid grid-cols-2 gap-3">
+            <MoneyField label="Số lượng (nếu có)" value={quantity} onChange={setQuantity} />
+            <MoneyField label="Đơn giá (nếu có)" value={unitPrice} onChange={setUnitPrice} />
+          </div>
+          <MoneyField label="Số tiền" value={amount} onChange={setAmount} />
+          {error && <p className="text-sm text-rose-600 flex items-center gap-1.5"><AlertTriangle size={14} /> {error}</p>}
+          <div className="flex gap-2">
+            <PrimaryButton type="button" onClick={submit} disabled={saving}>{saving ? "Đang lưu..." : "Lưu thay đổi"}</PrimaryButton>
+            <GhostButton type="button" onClick={onClose}>Huỷ</GhostButton>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExpenseList({ data, currentUser, onDelete, onUpdate }) {
   const rows = data.expenseRecords.slice(0, 30);
   const isQuanLy = currentUser?.role === "quan_ly";
   const [deleting, setDeleting] = useState(null);
+  const [editing, setEditing] = useState(null);
 
   const handleDelete = async (id) => {
     if (!window.confirm("Xoá khoản chi phí này? Không thể hoàn tác.")) return;
@@ -3422,26 +3483,43 @@ function ExpenseList({ data, currentUser, onDelete }) {
               <div className="flex items-center gap-2 shrink-0">
                 <p className="text-sm font-semibold text-slate-700">{fmtMoney(r.amount)}</p>
                 {isQuanLy && (
-                  <button
-                    type="button"
-                    onClick={() => handleDelete(r.id)}
-                    disabled={deleting === r.id}
-                    className="text-slate-400 hover:text-rose-600 p-1"
-                    title="Xoá khoản chi phí này"
-                  >
-                    {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setEditing(r)}
+                      className="text-slate-400 hover:text-sky-700 p-1"
+                      title="Sửa khoản chi phí này"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(r.id)}
+                      disabled={deleting === r.id}
+                      className="text-slate-400 hover:text-rose-600 p-1"
+                      title="Xoá khoản chi phí này"
+                    >
+                      {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                    </button>
+                  </>
                 )}
               </div>
             </div>
           ))}
         </div>
       )}
+      {editing && (
+        <EditExpenseModal
+          expense={editing}
+          onSave={async (id, patch) => { await onUpdate(id, patch); }}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </Card>
   );
 }
 
-function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDeleteExpense }) {
+function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDeleteExpense, onUpdateExpense }) {
   const [category, setCategory] = useState("van_hanh");
   const meta = EXPENSE_CATEGORY_META[category];
 
@@ -3485,7 +3563,7 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
       {(category === "van_hanh" || category === "marketing") && <PresetExpenseForm category={category} onSubmit={onSubmitExpense} />}
       {category === "khac" && <OtherExpenseForm onSubmit={onSubmitExpense} />}
 
-      {category !== "nvl" && <ExpenseList data={data} currentUser={currentUser} onDelete={onDeleteExpense} />}
+      {category !== "nvl" && <ExpenseList data={data} currentUser={currentUser} onDelete={onDeleteExpense} onUpdate={onUpdateExpense} />}
     </div>
   );
 }
@@ -4116,6 +4194,20 @@ export default function App() {
     showToast("Đã xoá khoản chi phí");
   };
 
+  // Sửa 1 khoản chi phí — áp dụng cho mọi khoản chi trong bảng expense_records, kể
+  // cả khoản do tài khoản Thu ngân gửi lên (dùng chung 1 bảng, không phân biệt người tạo).
+  const updateExpenseRecord = async (id, { category, itemName, expenseDate, amount, quantity, unitPrice }) => {
+    const { data: updatedRows, error } = await supabase
+      .from("expense_records")
+      .update({ category, item_name: itemName, expense_date: expenseDate, amount, quantity, unit_price: unitPrice })
+      .eq("id", id)
+      .select("id");
+    if (error) throw error;
+    if ((updatedRows || []).length === 0) throw new Error("Không sửa được — có thể bị chặn quyền (RLS) trên Supabase.");
+    await refreshAll();
+    showToast("Đã cập nhật khoản chi phí");
+  };
+
   // Thu ngân — ghi nhận Thu tiền mặt / Thu tiền ngân hàng theo ngày (độc lập với doanh thu
   // tính từ báo cáo bán hàng/dish_sales) — dùng để đối chiếu quỹ thực tế trong tab Quỹ.
   const submitCashierReceipt = async ({ receiptDate, cashAmount, bankAmount, note }) => {
@@ -4332,7 +4424,7 @@ export default function App() {
             {tab === "nhap" && !isBaoCao && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
             {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
-            {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} />}
+            {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
             {tab === "quy" && canViewReports && <QuyModule data={data} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
             {tab === "thu_ngan" && isThuNgan && <ThuNganModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitCashierReceipt={submitCashierReceipt} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
