@@ -3459,7 +3459,7 @@ function EditExpenseModal({ expense, onSave, onClose }) {
 
 function ExpenseList({ data, currentUser, onDelete, onUpdate }) {
   const rows = data.expenseRecords.slice(0, 30);
-  const isQuanLy = currentUser?.role === "quan_ly";
+  const isQuanLy = currentUser?.role === "quan_ly" || currentUser?.role === "bao_cao";
   const [deleting, setDeleting] = useState(null);
   const [editing, setEditing] = useState(null);
 
