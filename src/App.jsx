@@ -274,6 +274,7 @@ function mapDeposit(r) {
   return {
     id: r.id, direction: r.direction, partyName: r.party_name,
     amount: Number(r.amount) || 0, depositDate: r.deposit_date,
+    paymentMethod: r.payment_method || "tien_mat",
     status: r.status, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
   };
 }
@@ -3110,6 +3111,10 @@ function InvoiceRevenueImportForm({ onImport }) {
   );
 }
 
+const DEPOSIT_PAYMENT_METHOD_META = {
+  tien_mat: { label: "Tiền mặt", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  ngan_hang: { label: "Ngân hàng", color: "bg-sky-50 text-sky-700 border-sky-200" },
+};
 const DEPOSIT_STATUS_META = {
   dang_giu: { label: "Đang giữ", color: "bg-amber-50 text-amber-700 border-amber-200" },
   da_doi_tru: { label: "Đã đối trừ", color: "bg-sky-50 text-sky-700 border-sky-200" },
@@ -3121,6 +3126,7 @@ function DepositForm({ onSubmit }) {
   const [direction, setDirection] = useState("thu");
   const [partyName, setPartyName] = useState("");
   const [amount, setAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("tien_mat");
   const [depositDate, setDepositDate] = useState(todayISO());
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
@@ -3131,7 +3137,7 @@ function DepositForm({ onSubmit }) {
     if (!amount || Number(amount) <= 0) { setError("Vui lòng nhập số tiền hợp lệ."); return; }
     setError(""); setSaving(true);
     try {
-      await onSubmit({ direction, partyName, amount: Number(amount), depositDate, note: note.trim() });
+      await onSubmit({ direction, partyName, amount: Number(amount), paymentMethod, depositDate, note: note.trim() });
       setPartyName(""); setAmount(""); setNote("");
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
@@ -3151,6 +3157,10 @@ function DepositForm({ onSubmit }) {
         <TextField label="Ngày" type="date" value={depositDate} onChange={(e) => setDepositDate(e.target.value)} />
         <TextField label={direction === "thu" ? "Tên khách hàng" : "Tên NCC/đối tác"} value={partyName} onChange={(e) => setPartyName(e.target.value)} placeholder={direction === "thu" ? "VD: Anh Tuấn - đặt bàn 20/8" : "VD: NCC hải sản An Phát"} />
         <MoneyField label="Số tiền" value={amount} onChange={setAmount} />
+        <SelectField label="Hình thức" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+          <option value="tien_mat">Tiền mặt</option>
+          <option value="ngan_hang">Ngân hàng</option>
+        </SelectField>
         <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
@@ -3183,7 +3193,7 @@ function DepositList({ data, currentUser, from, to, onDelete, onUpdate }) {
   const handleStatusChange = async (r, newStatus) => {
     if (newStatus === r.status) return;
     setChangingStatus(r.id);
-    try { await onUpdate(r.id, { direction: r.direction, partyName: r.partyName, amount: r.amount, depositDate: r.depositDate, status: newStatus, note: r.note }); }
+    try { await onUpdate(r.id, { direction: r.direction, partyName: r.partyName, amount: r.amount, paymentMethod: r.paymentMethod, depositDate: r.depositDate, status: newStatus, note: r.note }); }
     finally { setChangingStatus(null); }
   };
 
@@ -3246,6 +3256,7 @@ function DepositList({ data, currentUser, from, to, onDelete, onUpdate }) {
                       <span className={`text-xs px-1.5 py-0.5 rounded-lg border ${DEPOSIT_STATUS_META[r.status]?.color}`}>{DEPOSIT_STATUS_META[r.status]?.label || r.status}</span>
                     )}
                     <p className="text-xs text-slate-400">· {fmtDate(r.depositDate)}</p>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-lg border ${DEPOSIT_PAYMENT_METHOD_META[r.paymentMethod]?.color}`}>{DEPOSIT_PAYMENT_METHOD_META[r.paymentMethod]?.label || r.paymentMethod}</span>
                     {r.note && <p className="text-xs text-slate-400 truncate">· {r.note}</p>}
                     {changingStatus === r.id && <Loader2 size={11} className="animate-spin text-slate-400" />}
                   </div>
@@ -3281,6 +3292,7 @@ function EditDepositModal({ deposit, onSave, onClose }) {
   const [direction, setDirection] = useState(deposit.direction);
   const [partyName, setPartyName] = useState(deposit.partyName);
   const [amount, setAmount] = useState(String(deposit.amount ?? ""));
+  const [paymentMethod, setPaymentMethod] = useState(deposit.paymentMethod || "tien_mat");
   const [depositDate, setDepositDate] = useState(deposit.depositDate);
   const [status, setStatus] = useState(deposit.status);
   const [note, setNote] = useState(deposit.note || "");
@@ -3292,7 +3304,7 @@ function EditDepositModal({ deposit, onSave, onClose }) {
     if (!(Number(amount) > 0)) { setError("Vui lòng nhập số tiền hợp lệ."); return; }
     setError(""); setSaving(true);
     try {
-      await onSave(deposit.id, { direction, partyName: partyName.trim(), amount: Number(amount), depositDate, status, note: note.trim() });
+      await onSave(deposit.id, { direction, partyName: partyName.trim(), amount: Number(amount), paymentMethod, depositDate, status, note: note.trim() });
       onClose();
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
@@ -3319,6 +3331,10 @@ function EditDepositModal({ deposit, onSave, onClose }) {
             {DEPOSIT_STATUSES.map((s) => <option key={s} value={s}>{DEPOSIT_STATUS_META[s].label}</option>)}
           </SelectField>
           <MoneyField label="Số tiền" value={amount} onChange={setAmount} />
+          <SelectField label="Hình thức" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+            <option value="tien_mat">Tiền mặt</option>
+            <option value="ngan_hang">Ngân hàng</option>
+          </SelectField>
           <TextField label="Ghi chú" value={note} onChange={(e) => setNote(e.target.value)} />
           {error && <p className="text-sm text-rose-600 flex items-center gap-1.5"><AlertTriangle size={14} /> {error}</p>}
           <div className="flex gap-2">
@@ -4735,9 +4751,10 @@ export default function App() {
 
   // Cọc — thu cọc (nhận cọc từ khách) / chi cọc (ứng cọc cho NCC, đối tác). Tách riêng khỏi
   // Chi phí vì đây là dòng tiền tạm giữ, chờ đối trừ hoặc hoàn trả, không phải chi phí thực.
-  const submitDeposit = async ({ direction, partyName, amount, depositDate, note }) => {
+  const submitDeposit = async ({ direction, partyName, amount, paymentMethod, depositDate, note }) => {
     const { error } = await supabase.from("deposits").insert({
       direction, party_name: partyName.trim(), amount: Number(amount) || 0,
+      payment_method: paymentMethod || "tien_mat",
       deposit_date: depositDate || todayISO(), status: "dang_giu", note: note || null, created_by: currentUser.id,
     });
     if (error) throw error;
@@ -4748,10 +4765,10 @@ export default function App() {
     await refreshAll();
     showToast(direction === "thu" ? "Đã ghi nhận khoản thu cọc" : "Đã ghi nhận khoản chi cọc");
   };
-  const updateDeposit = async (id, { direction, partyName, amount, depositDate, status, note }) => {
+  const updateDeposit = async (id, { direction, partyName, amount, paymentMethod, depositDate, status, note }) => {
     const { data: updatedRows, error } = await supabase
       .from("deposits")
-      .update({ direction, party_name: partyName, amount, deposit_date: depositDate, status, note: note || null })
+      .update({ direction, party_name: partyName, amount, payment_method: paymentMethod || "tien_mat", deposit_date: depositDate, status, note: note || null })
       .eq("id", id)
       .select("id");
     if (error) throw error;
