@@ -60,6 +60,20 @@ function daysAgoISO(n) {
   d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
 }
+// Liệt kê danh sách ngày (yyyy-mm-dd) từ "from" đến "to", tăng dần. Giới hạn 62 ngày để tránh render quá nặng.
+function enumerateDatesISO(from, to) {
+  if (!from || !to) return [];
+  const start = new Date(from + "T00:00:00");
+  const end = new Date(to + "T00:00:00");
+  if (isNaN(start) || isNaN(end) || start > end) return [];
+  const dates = [];
+  const cur = new Date(start);
+  while (cur <= end && dates.length < 62) {
+    dates.push(cur.toISOString().slice(0, 10));
+    cur.setDate(cur.getDate() + 1);
+  }
+  return dates;
+}
 function stripDiacritics(str) {
   return (str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
 }
@@ -285,9 +299,15 @@ function mapNotification(r) {
     isRead: r.is_read, createdBy: r.created_by, createdByName: r.created_by_name, createdAt: r.created_at,
   };
 }
+function mapFundDailyBalance(r) {
+  return {
+    date: r.balance_date, openingBalance: Number(r.opening_balance) || 0,
+    note: r.note || "", updatedBy: r.updated_by, updatedAt: r.updated_at,
+  };
+}
 
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -304,8 +324,9 @@ async function fetchAll() {
     supabase.from("invoice_revenue").select("*").order("invoice_date", { ascending: false }),
     supabase.from("deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }),
     supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(100),
+    supabase.from("fund_daily_balance").select("*").order("balance_date", { ascending: false }),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -323,6 +344,7 @@ async function fetchAll() {
     invoiceRevenue: (invRev.data || []).map(mapInvoiceRevenue),
     deposits: (dep.data || []).map(mapDeposit),
     notifications: (noti.data || []).map(mapNotification),
+    fundDailyBalances: (fundBal.data || []).map(mapFundDailyBalance),
   };
 }
 
@@ -2848,6 +2870,21 @@ const EXPENSE_PAYMENT_METHOD_META = {
 // theo ngày, chọn đúng loại chi phí — khi lưu sẽ ghi thẳng vào expense_records nên
 // tự động xuất hiện trong "Chi phí" / báo cáo chi phí, không cần đồng bộ thủ công.
 // ---------------------------------------------------------------------------
+// Sổ quỹ tiền mặt theo ngày: Tồn đầu ngày (ghi đè tay nếu có trong overridesMap, không thì lấy
+// Tồn cuối của ngày liền trước trong danh sách) + Thu tiền mặt (Thu ngân) - Chi tiền mặt (Chi phí) = Tồn cuối.
+function buildCashLedger(dates, cashierReceipts, expenseRecords, overridesMap) {
+  let prevClosing = null;
+  return dates.map((d) => {
+    const thu = cashierReceipts.filter((r) => r.receiptDate === d).reduce((s, r) => s + r.cashAmount, 0);
+    const chi = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "tien_mat").reduce((s, r) => s + r.amount, 0);
+    const hasOverride = Object.prototype.hasOwnProperty.call(overridesMap, d);
+    const opening = hasOverride ? overridesMap[d] : (prevClosing !== null ? prevClosing : 0);
+    const closing = opening + thu - chi;
+    prevClosing = closing;
+    return { date: d, opening, thu, chi, closing, hasOverride };
+  });
+}
+
 function dailyReceiptsFromSales(dishSales, from, to) {
   const filtered = dishSales.filter((s) => s.saleDate >= from && s.saleDate <= to);
   const map = new Map();
@@ -3594,11 +3631,148 @@ function NotificationBell({ notifications, onMarkRead, onMarkAllRead }) {
   );
 }
 
-function QuyModule({ data, onBulkImportFromBills, onBulkImportInvoiceRevenue }) {
+// Sổ quỹ tiền mặt theo ngày — Tồn đầu ngày tự nhảy từ Tồn cuối ngày liền trước, sửa được từng ngày
+// (lưu vào fund_daily_balance); khi sửa 1 ngày, các ngày sau đó trong bảng tự tính lại theo.
+function CashLedgerTable({ ledger, onSaveOpening }) {
+  const [editingDate, setEditingDate] = useState(null);
+  const [draftValue, setDraftValue] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const startEdit = (row) => { setEditingDate(row.date); setDraftValue(String(row.opening)); };
+  const cancelEdit = () => { setEditingDate(null); setDraftValue(""); };
+  const save = async (date) => {
+    setSaving(true);
+    try {
+      await onSaveOpening(date, Number(draftValue) || 0);
+      setEditingDate(null);
+      setDraftValue("");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card className="p-0 overflow-hidden mb-5">
+      <div className="p-4 border-b border-slate-100">
+        <p className="font-semibold text-slate-800 text-sm">Sổ quỹ tiền mặt theo ngày</p>
+        <p className="text-xs text-slate-400 mt-0.5">Tồn đầu ngày tự động lấy Tồn cuối của ngày liền trước — bấm vào số để sửa tay (vd sau khi kiểm đếm thực tế), các ngày sau đó sẽ tự tính lại theo.</p>
+      </div>
+      {ledger.length === 0 ? <EmptyState icon={Wallet} text="Chọn khoảng ngày để xem sổ quỹ." /> : (
+        <div className="overflow-x-auto max-h-96 overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+              <th className="px-3 py-2">Ngày</th>
+              <th className="px-3 py-2 text-right">Tồn đầu ngày</th>
+              <th className="px-3 py-2 text-right">Thu tiền mặt</th>
+              <th className="px-3 py-2 text-right">Chi tiền mặt</th>
+              <th className="px-3 py-2 text-right">Tồn cuối ngày</th>
+            </tr></thead>
+            <tbody>
+              {ledger.map((row) => (
+                <tr key={row.date} className="border-b border-slate-50 last:border-0">
+                  <td className="px-3 py-2 text-slate-500">{fmtDate(row.date)}</td>
+                  <td className="px-3 py-2 text-right">
+                    {editingDate === row.date ? (
+                      <div className="flex items-center justify-end gap-1">
+                        <MoneyField value={draftValue} onChange={setDraftValue} className="w-32 !py-1" />
+                        <button type="button" onClick={() => save(row.date)} disabled={saving} className="text-emerald-600 hover:text-emerald-700 p-1">
+                          {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                        </button>
+                        <button type="button" onClick={cancelEdit} className="text-slate-400 hover:text-rose-600 p-1"><X size={14} /></button>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => startEdit(row)} className="inline-flex items-center gap-1 font-medium text-slate-700 hover:text-sky-700" title="Bấm để sửa tay">
+                        {fmtMoney(row.opening)}
+                        {row.hasOverride ? <span className="text-[10px] px-1 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">đã sửa</span> : <Pencil size={11} className="text-slate-300" />}
+                      </button>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right text-emerald-700">{fmtMoney(row.thu)}</td>
+                  <td className="px-3 py-2 text-right text-rose-700">{fmtMoney(row.chi)}</td>
+                  <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmtMoney(row.closing)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// Đối chiếu theo ngày — so sánh Thu ngân báo cáo (tiền mặt+ngân hàng) với Doanh thu theo
+// hoá đơn Excel cho TỪNG NGÀY, cảnh báo ngay dòng nào bị lệch để dễ truy đúng ngày phát sinh.
+function buildDailyReconciliation(dates, cashierReceipts, invoiceRevenue) {
+  return dates.map((d) => {
+    const thuNgan = cashierReceipts.filter((r) => r.receiptDate === d).reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
+    const hoaDon = invoiceRevenue.filter((r) => r.invoiceDate === d).reduce((s, r) => s + r.amount, 0);
+    const diff = thuNgan - hoaDon;
+    return { date: d, thuNgan, hoaDon, diff };
+  });
+}
+
+function DailyReconciliationTable({ rows }) {
+  const mismatchCount = rows.filter((r) => r.diff !== 0 && (r.thuNgan > 0 || r.hoaDon > 0)).length;
+
+  return (
+    <Card className="p-0 overflow-hidden mb-5">
+      <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <p className="font-semibold text-slate-800 text-sm">Đối chiếu theo ngày</p>
+          <p className="text-xs text-slate-400 mt-0.5">So sánh Thu ngân báo cáo với Doanh thu theo hoá đơn Excel cho từng ngày — dòng nào lệch sẽ tô đỏ/vàng để dễ tra.</p>
+        </div>
+        {mismatchCount > 0 && (
+          <span className="text-xs px-2 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-medium flex items-center gap-1">
+            <AlertTriangle size={13} /> {mismatchCount} ngày lệch số liệu
+          </span>
+        )}
+      </div>
+      {rows.length === 0 ? <EmptyState icon={AlertTriangle} text="Chọn khoảng ngày để đối chiếu." /> : (
+        <div className="overflow-x-auto max-h-96 overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+              <th className="px-3 py-2">Ngày</th>
+              <th className="px-3 py-2 text-right">Thu ngân báo cáo</th>
+              <th className="px-3 py-2 text-right">Doanh thu hoá đơn</th>
+              <th className="px-3 py-2 text-right">Chênh lệch</th>
+              <th className="px-3 py-2"></th>
+            </tr></thead>
+            <tbody>
+              {rows.map((r) => {
+                const noData = r.thuNgan === 0 && r.hoaDon === 0;
+                const rowClass = noData ? "" : r.diff === 0 ? "" : r.diff > 0 ? "bg-amber-50/60" : "bg-rose-50/60";
+                return (
+                  <tr key={r.date} className={`border-b border-slate-50 last:border-0 ${rowClass}`}>
+                    <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.thuNgan)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.hoaDon)}</td>
+                    <td className={`px-3 py-2 text-right font-semibold ${r.diff === 0 ? "text-slate-400" : r.diff > 0 ? "text-amber-700" : "text-rose-700"}`}>
+                      {r.diff > 0 ? "+" : ""}{fmtMoney(r.diff)}
+                    </td>
+                    <td className="px-3 py-2">
+                      {noData ? null : r.diff === 0 ? (
+                        <CheckCircle2 size={14} className="text-emerald-500" />
+                      ) : (
+                        <span className="inline-flex items-center gap-1 text-xs">
+                          <AlertTriangle size={13} className={r.diff > 0 ? "text-amber-600" : "text-rose-600"} />
+                          {r.diff > 0 ? "Thừa" : "Thiếu"}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function QuyModule({ data, currentUser, onBulkImportFromBills, onBulkImportInvoiceRevenue, onUpsertOpeningBalance }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
-  const [openingBalance, setOpeningBalance] = useState("");
-  const openingBalanceNum = Number(openingBalance) || 0;
 
   const receipts = dailyReceiptsFromSales(data.dishSales, from, to);
   const totalThu = receipts.reduce((s, r) => s + r.amount, 0);
@@ -3621,6 +3795,14 @@ function QuyModule({ data, onBulkImportFromBills, onBulkImportInvoiceRevenue }) 
   const totalThuNgan = cashierInRange.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
   const totalThuNganCash = cashierInRange.reduce((s, r) => s + r.cashAmount, 0);
   const totalThuNganBank = cashierInRange.reduce((s, r) => s + r.bankAmount, 0);
+
+  // Sổ quỹ tiền mặt theo ngày: Tồn đầu ngày tự động = Tồn cuối ngày liền trước, có thể ghi đè tay
+  // (lưu vào bảng fund_daily_balance) — dùng để đối chiếu tồn quỹ thực tế bên dưới.
+  const ledgerDates = enumerateDatesISO(from, to);
+  const overridesMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, b.openingBalance]));
+  const cashLedger = buildCashLedger(ledgerDates, data.cashierReceipts, data.expenseRecords, overridesMap);
+  const openingBalanceNum = cashLedger.length > 0 ? cashLedger[0].opening : 0;
+  const dailyReconciliation = buildDailyReconciliation(ledgerDates, data.cashierReceipts, data.invoiceRevenue);
 
   // So sánh Thu ngân (tiền mặt + ngân hàng) vs Doanh thu bán hàng theo hoá đơn (Bảng kê hoá đơn) —
   // dùng đúng số tiền thực thu để đối chiếu, không dùng số tính ngược từ Xuất kho.
@@ -3647,13 +3829,14 @@ function QuyModule({ data, onBulkImportFromBills, onBulkImportInvoiceRevenue }) 
 
       <InvoiceRevenueImportForm onImport={onBulkImportInvoiceRevenue} />
 
+      <CashLedgerTable ledger={cashLedger} onSaveOpening={onUpsertOpeningBalance} />
+
+      <DailyReconciliationTable rows={dailyReconciliation} />
+
       {/* So sánh Thu ngân (tiền mặt+ngân hàng) đã thu vs Doanh thu bán hàng theo hoá đơn — cảnh báo lệch quỹ */}
       <Card className="p-4 sm:p-5 mb-5">
         <p className="font-semibold text-slate-800 text-sm mb-3">Đối chiếu tồn quỹ</p>
-        <p className="text-xs text-slate-400 mb-3">Nhập số dư tồn quỹ trước đó (kiểm đếm thực tế) để so sánh: (Tồn quỹ trước + Doanh thu theo hoá đơn Excel) so với (Tồn quỹ trước + Doanh thu Thu ngân báo cáo).</p>
-        <div className="mb-3 max-w-xs">
-          <MoneyField label="Số dư tồn quỹ ngày trước (nhập tay)" value={openingBalance} onChange={setOpeningBalance} />
-        </div>
+        <p className="text-xs text-slate-400 mb-3">Tồn quỹ đầu ngày ({fmtDate(from)}) lấy từ bảng "Sổ quỹ tiền mặt theo ngày" ở trên — sửa ở đó nếu cần. So sánh: (Tồn đầu ngày + Doanh thu theo hoá đơn Excel) so với (Tồn đầu ngày + Doanh thu Thu ngân báo cáo).</p>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
           <div className="bg-slate-50 rounded-xl px-3 py-2">
             <p className="text-xs text-slate-500">Thu ngân - Tiền mặt</p>
@@ -3675,11 +3858,11 @@ function QuyModule({ data, onBulkImportFromBills, onBulkImportInvoiceRevenue }) 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
           <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2">
             <p className="text-xs text-indigo-700">Tồn quỹ dự kiến — theo hoá đơn Excel</p>
-            <p className="text-sm font-semibold text-indigo-800">Tồn trước {fmtMoney(openingBalanceNum)} + Doanh thu {fmtMoney(totalInvoiceRevenue)} = <span className="text-base">{fmtMoney(openingBalanceNum + totalInvoiceRevenue)}</span></p>
+            <p className="text-sm font-semibold text-indigo-800">Tồn đầu ngày {fmtMoney(openingBalanceNum)} + Doanh thu {fmtMoney(totalInvoiceRevenue)} = <span className="text-base">{fmtMoney(openingBalanceNum + totalInvoiceRevenue)}</span></p>
           </div>
           <div className="bg-teal-50 border border-teal-100 rounded-xl px-3 py-2">
             <p className="text-xs text-teal-700">Tồn quỹ theo Thu ngân báo cáo</p>
-            <p className="text-sm font-semibold text-teal-800">Tồn trước {fmtMoney(openingBalanceNum)} + Thu ngân {fmtMoney(totalThuNgan)} = <span className="text-base">{fmtMoney(openingBalanceNum + totalThuNgan)}</span></p>
+            <p className="text-sm font-semibold text-teal-800">Tồn đầu ngày {fmtMoney(openingBalanceNum)} + Thu ngân {fmtMoney(totalThuNgan)} = <span className="text-base">{fmtMoney(openingBalanceNum + totalThuNgan)}</span></p>
           </div>
         </div>
         {totalInvoiceRevenue === 0 && totalThuNgan === 0 ? (
@@ -4648,7 +4831,7 @@ export default function App() {
   const [data, setData] = useState({
     employees: [], suppliers: [], revenueCodes: [], exportCodes: [], products: [],
     stockOpenings: [], importRecords: [], exportRecords: [], expenseRecords: [],
-    dishes: [], dishIngredients: [], deposits: [], notifications: [],
+    dishes: [], dishIngredients: [], deposits: [], notifications: [], fundDailyBalances: [],
   });
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
@@ -5006,6 +5189,17 @@ export default function App() {
     showToast("Đã xoá khoản cọc");
   };
 
+  // Tồn quỹ tiền mặt đầu ngày — lưu theo từng ngày, mặc định ngày sau tự lấy tồn cuối
+  // ngày trước (tính ở QuyModule), nhưng có thể ghi đè tay bất kỳ ngày nào (kiểm đếm thực tế).
+  const upsertFundOpeningBalance = async (date, amount) => {
+    const { error } = await supabase
+      .from("fund_daily_balance")
+      .upsert({ balance_date: date, opening_balance: Number(amount) || 0, updated_by: currentUser.id }, { onConflict: "balance_date" });
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã cập nhật tồn quỹ đầu ngày");
+  };
+
   const markNotificationRead = async (id) => {
     const { error } = await supabase.from("notifications").update({ is_read: true }).eq("id", id);
     if (error) { console.error(error); return; }
@@ -5231,7 +5425,7 @@ export default function App() {
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
             {tab === "coc" && (canViewReports || isThuNgan) && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
-            {tab === "quy" && canViewReports && <QuyModule data={data} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
+            {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} />}
             {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} onUpdate={updateCashierReceipt} onDelete={deleteCashierReceipt} />}
             {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
