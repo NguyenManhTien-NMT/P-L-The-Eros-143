@@ -2988,7 +2988,12 @@ function EditCashierReceiptModal({ receipt, onSave, onClose }) {
 }
 
 function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
-  const myReceipts = data.cashierReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 15);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const myReceipts = data.cashierReceipts
+    .filter((r) => r.createdBy === currentUser.id)
+    .filter((r) => (!from || r.receiptDate >= from) && (!to || r.receiptDate <= to))
+    .slice(0, 50);
   const todayReceipts = data.cashierReceipts.filter((r) => r.receiptDate === todayISO());
   const todayTotal = todayReceipts.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
   const [editing, setEditing] = useState(null);
@@ -3011,8 +3016,19 @@ function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
 
       <CashierReceiptForm onSubmit={onSubmit} />
 
+      <Card className="p-4 sm:p-5 mb-5">
+        <p className="text-xs font-medium text-slate-500 mb-2">Lọc theo ngày</p>
+        <div className="grid grid-cols-2 gap-3">
+          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </div>
+        {(from || to) && (
+          <button type="button" onClick={() => { setFrom(""); setTo(""); }} className="text-xs text-sky-700 hover:underline mt-2">Bỏ lọc ngày</button>
+        )}
+      </Card>
+
       <Card className="p-0 overflow-hidden">
-        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu thu gần đây (của bạn)</p></div>
+        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu thu {(from || to) ? "" : "gần đây "}(của bạn)</p></div>
         {myReceipts.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có phiếu thu nào." /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -3053,7 +3069,14 @@ function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
 }
 
 function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
-  const myExpenses = data.expenseRecords.filter((r) => r.createdBy === currentUser.id).slice(0, 15);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [category, setCategory] = useState("all");
+  const myExpenses = data.expenseRecords
+    .filter((r) => r.createdBy === currentUser.id)
+    .filter((r) => (!from || r.expenseDate >= from) && (!to || r.expenseDate <= to))
+    .filter((r) => category === "all" || r.category === category)
+    .slice(0, 50);
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
@@ -3069,8 +3092,23 @@ function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
 
       <PhieuChiForm onSubmit={onSubmit} />
 
+      <Card className="p-4 sm:p-5 mb-5">
+        <p className="text-xs font-medium text-slate-500 mb-2">Lọc theo ngày &amp; loại chi phí</p>
+        <div className="grid sm:grid-cols-3 gap-3">
+          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <SelectField label="Loại chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
+            <option value="all">Tất cả</option>
+            {EXPENSE_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+          </SelectField>
+        </div>
+        {(from || to || category !== "all") && (
+          <button type="button" onClick={() => { setFrom(""); setTo(""); setCategory("all"); }} className="text-xs text-sky-700 hover:underline mt-2">Bỏ lọc</button>
+        )}
+      </Card>
+
       <Card className="p-0 overflow-hidden">
-        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu chi gần đây (của bạn)</p></div>
+        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu chi {(from || to || category !== "all") ? "" : "gần đây "}(của bạn)</p></div>
         {myExpenses.length === 0 ? <EmptyState icon={Receipt} text="Chưa có phiếu chi nào." /> : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
