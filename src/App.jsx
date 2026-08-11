@@ -3072,11 +3072,12 @@ function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [category, setCategory] = useState("all");
-  const myExpenses = data.expenseRecords
+  const filteredExpenses = data.expenseRecords
     .filter((r) => r.createdBy === currentUser.id)
     .filter((r) => (!from || r.expenseDate >= from) && (!to || r.expenseDate <= to))
-    .filter((r) => category === "all" || r.category === category)
-    .slice(0, 50);
+    .filter((r) => category === "all" || r.category === category);
+  const totalFilteredAmount = filteredExpenses.reduce((s, r) => s + r.amount, 0);
+  const myExpenses = filteredExpenses.slice(0, 50);
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
@@ -3106,6 +3107,11 @@ function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
           <button type="button" onClick={() => { setFrom(""); setTo(""); setCategory("all"); }} className="text-xs text-sky-700 hover:underline mt-2">Bỏ lọc</button>
         )}
       </Card>
+
+      <div className="grid grid-cols-2 gap-3 mb-5">
+        <MetricCard label="Số phiếu chi (theo bộ lọc)" value={fmtNumber(filteredExpenses.length)} icon={Receipt} accent="rose" />
+        <MetricCard label="Tổng chi phí (theo bộ lọc)" value={fmtMoney(totalFilteredAmount)} icon={TrendingDown} accent="rose" />
+      </div>
 
       <Card className="p-0 overflow-hidden">
         <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu chi {(from || to || category !== "all") ? "" : "gần đây "}(của bạn)</p></div>
