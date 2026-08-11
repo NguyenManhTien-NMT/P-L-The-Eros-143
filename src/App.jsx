@@ -3452,6 +3452,8 @@ function NotificationBell({ notifications, onMarkRead, onMarkAllRead }) {
 function QuyModule({ data, onBulkImportFromBills, onBulkImportInvoiceRevenue }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
+  const [openingBalance, setOpeningBalance] = useState("");
+  const openingBalanceNum = Number(openingBalance) || 0;
 
   const receipts = dailyReceiptsFromSales(data.dishSales, from, to);
   const totalThu = receipts.reduce((s, r) => s + r.amount, 0);
@@ -3502,7 +3504,11 @@ function QuyModule({ data, onBulkImportFromBills, onBulkImportInvoiceRevenue }) 
 
       {/* So sánh Thu ngân (tiền mặt+ngân hàng) đã thu vs Doanh thu bán hàng theo hoá đơn — cảnh báo lệch quỹ */}
       <Card className="p-4 sm:p-5 mb-5">
-        <p className="font-semibold text-slate-800 text-sm mb-3">Đối chiếu Thu ngân với Doanh thu bán hàng theo hoá đơn</p>
+        <p className="font-semibold text-slate-800 text-sm mb-3">Đối chiếu tồn quỹ</p>
+        <p className="text-xs text-slate-400 mb-3">Nhập số dư tồn quỹ trước đó (kiểm đếm thực tế) để so sánh: (Tồn quỹ trước + Doanh thu theo hoá đơn Excel) so với (Tồn quỹ trước + Doanh thu Thu ngân báo cáo).</p>
+        <div className="mb-3 max-w-xs">
+          <MoneyField label="Số dư tồn quỹ ngày trước (nhập tay)" value={openingBalance} onChange={setOpeningBalance} />
+        </div>
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
           <div className="bg-slate-50 rounded-xl px-3 py-2">
             <p className="text-xs text-slate-500">Thu ngân - Tiền mặt</p>
@@ -3521,19 +3527,29 @@ function QuyModule({ data, onBulkImportFromBills, onBulkImportInvoiceRevenue }) 
             <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalInvoiceRevenue)}</p>
           </div>
         </div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+          <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2">
+            <p className="text-xs text-indigo-700">Tồn quỹ dự kiến — theo hoá đơn Excel</p>
+            <p className="text-sm font-semibold text-indigo-800">Tồn trước {fmtMoney(openingBalanceNum)} + Doanh thu {fmtMoney(totalInvoiceRevenue)} = <span className="text-base">{fmtMoney(openingBalanceNum + totalInvoiceRevenue)}</span></p>
+          </div>
+          <div className="bg-teal-50 border border-teal-100 rounded-xl px-3 py-2">
+            <p className="text-xs text-teal-700">Tồn quỹ theo Thu ngân báo cáo</p>
+            <p className="text-sm font-semibold text-teal-800">Tồn trước {fmtMoney(openingBalanceNum)} + Thu ngân {fmtMoney(totalThuNgan)} = <span className="text-base">{fmtMoney(openingBalanceNum + totalThuNgan)}</span></p>
+          </div>
+        </div>
         {totalInvoiceRevenue === 0 && totalThuNgan === 0 ? (
           <p className="text-xs text-slate-400">Chưa có đủ dữ liệu để đối chiếu trong khoảng thời gian này — cần import "Bảng kê hoá đơn" và/hoặc có phiếu Thu ngân.</p>
         ) : diff === 0 ? (
           <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
-            <CheckCircle2 size={15} /> Khớp tuyệt đối giữa Thu ngân và Doanh thu bán hàng theo hoá đơn.
+            <CheckCircle2 size={15} /> Khớp tuyệt đối — tồn quỹ theo hoá đơn Excel và theo Thu ngân báo cáo bằng nhau.
           </div>
         ) : diff > 0 ? (
           <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-            <AlertTriangle size={15} /> <b>Thừa quỹ</b> {fmtMoney(diff)} ({diffPct.toFixed(1)}%) — Thu ngân báo thu nhiều hơn doanh thu theo hoá đơn.
+            <AlertTriangle size={15} /> <b>Thừa quỹ</b> {fmtMoney(diff)} ({diffPct.toFixed(1)}%) — Thu ngân báo thu nhiều hơn doanh thu theo hoá đơn, tồn quỹ theo Thu ngân đang cao hơn.
           </div>
         ) : (
           <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
-            <AlertTriangle size={15} /> Thiếu {fmtMoney(Math.abs(diff))} ({Math.abs(diffPct).toFixed(1)}%) — có thể <b>nhân sự chưa cập nhật hết các chi phí phát sinh</b> (chi trực tiếp từ quỹ chưa ghi phiếu chi), hoặc Thu ngân chưa nộp đủ.
+            <AlertTriangle size={15} /> Thiếu {fmtMoney(Math.abs(diff))} ({Math.abs(diffPct).toFixed(1)}%) — tồn quỹ theo Thu ngân đang thấp hơn theo hoá đơn Excel. Có thể <b>nhân sự chưa cập nhật hết các chi phí phát sinh</b> (chi trực tiếp từ quỹ chưa ghi phiếu chi), hoặc Thu ngân chưa nộp đủ.
           </div>
         )}
       </Card>
