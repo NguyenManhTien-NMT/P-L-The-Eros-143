@@ -4,7 +4,7 @@ import { supabase } from "./supabaseClient";
 import {
   Package, Truck, ClipboardList, BarChart3, Bell, LogOut, CheckCircle2, XCircle,
   Plus, Search, ChevronRight, Inbox, Warehouse, TrendingUp, TrendingDown, Wallet,
-  AlertTriangle, Clock, Loader2, Lock, User, X, Pencil, Trash2, Download, Upload, Users,
+  AlertTriangle, Clock, Loader2, Lock, Unlock, User, X, Pencil, Trash2, Download, Upload, Users,
   ShieldCheck, ArrowDownCircle, ArrowUpCircle, Boxes, Receipt, FileText, ChevronDown, ArrowUpDown, Filter, Coins,
 } from "lucide-react";
 import {
@@ -307,7 +307,7 @@ function mapFundDailyBalance(r) {
 }
 
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal, settings] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -325,8 +325,9 @@ async function fetchAll() {
     supabase.from("deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }),
     supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(100),
     supabase.from("fund_daily_balance").select("*").order("balance_date", { ascending: false }),
+    supabase.from("app_settings").select("*"),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal, settings].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -345,6 +346,7 @@ async function fetchAll() {
     deposits: (dep.data || []).map(mapDeposit),
     notifications: (noti.data || []).map(mapNotification),
     fundDailyBalances: (fundBal.data || []).map(mapFundDailyBalance),
+    settings: Object.fromEntries((settings.data || []).map((r) => [r.key, r.value])),
   };
 }
 
@@ -3034,7 +3036,7 @@ function EditCashierReceiptModal({ receipt, onSave, onClose }) {
   );
 }
 
-function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
+function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete, editEnabled }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const myReceipts = data.cashierReceipts
@@ -3055,6 +3057,12 @@ function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
   return (
     <div>
       <SectionTitle icon={Wallet} title="Thu ngân" subtitle="Ghi nhận phiếu thu tiền mặt/ngân hàng trong ngày" />
+
+      {!editEnabled && (
+        <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-5">
+          <Lock size={15} /> Quản lý đã khoá quyền tự sửa/xoá phiếu thu — bạn chỉ ghi nhận mới được, cần chỉnh sửa thì báo Quản lý.
+        </div>
+      )}
 
       <div className="grid grid-cols-2 gap-3 mb-5">
         <MetricCard label="Tổng thu hôm nay" value={fmtMoney(todayTotal)} icon={TrendingUp} accent="emerald" />
@@ -3090,12 +3098,14 @@ function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
                     <td className="px-3 py-2 text-right">{fmtMoney(r.bankAmount)}</td>
                     <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
                     <td className="px-3 py-2">
-                      <div className="flex items-center justify-end gap-1">
-                        <button type="button" onClick={() => setEditing(r)} className="text-slate-400 hover:text-sky-700 p-1" title="Sửa phiếu thu này"><Pencil size={14} /></button>
-                        <button type="button" onClick={() => handleDelete(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1" title="Xoá phiếu thu này">
-                          {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                        </button>
-                      </div>
+                      {editEnabled && (
+                        <div className="flex items-center justify-end gap-1">
+                          <button type="button" onClick={() => setEditing(r)} className="text-slate-400 hover:text-sky-700 p-1" title="Sửa phiếu thu này"><Pencil size={14} /></button>
+                          <button type="button" onClick={() => handleDelete(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1" title="Xoá phiếu thu này">
+                            {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -3104,7 +3114,7 @@ function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
           </div>
         )}
       </Card>
-      {editing && (
+      {editing && editEnabled && (
         <EditCashierReceiptModal
           receipt={editing}
           onSave={onUpdate}
@@ -3115,7 +3125,7 @@ function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
   );
 }
 
-function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
+function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete, editEnabled }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [category, setCategory] = useState("all");
@@ -3137,6 +3147,12 @@ function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
   return (
     <div>
       <SectionTitle icon={Receipt} title="Phiếu chi" subtitle="Ghi nhận phiếu chi phát sinh trong ngày" />
+
+      {!editEnabled && (
+        <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-5">
+          <Lock size={15} /> Quản lý đã khoá quyền tự sửa/xoá phiếu chi — bạn chỉ ghi nhận mới được, cần chỉnh sửa thì báo Quản lý.
+        </div>
+      )}
 
       <PhieuChiForm onSubmit={onSubmit} />
 
@@ -3177,12 +3193,14 @@ function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
                     <td className="px-3 py-2"><span className={`text-xs px-1.5 py-0.5 rounded-lg border ${EXPENSE_PAYMENT_METHOD_META[r.paymentMethod]?.color}`}>{EXPENSE_PAYMENT_METHOD_META[r.paymentMethod]?.label || r.paymentMethod}</span></td>
                     <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
                     <td className="px-3 py-2">
-                      <div className="flex items-center justify-end gap-1">
-                        <button type="button" onClick={() => setEditing(r)} className="text-slate-400 hover:text-sky-700 p-1" title="Sửa phiếu chi này"><Pencil size={14} /></button>
-                        <button type="button" onClick={() => handleDelete(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1" title="Xoá phiếu chi này">
-                          {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                        </button>
-                      </div>
+                      {editEnabled && (
+                        <div className="flex items-center justify-end gap-1">
+                          <button type="button" onClick={() => setEditing(r)} className="text-slate-400 hover:text-sky-700 p-1" title="Sửa phiếu chi này"><Pencil size={14} /></button>
+                          <button type="button" onClick={() => handleDelete(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1" title="Xoá phiếu chi này">
+                            {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                          </button>
+                        </div>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -3191,7 +3209,7 @@ function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
           </div>
         )}
       </Card>
-      {editing && (
+      {editing && editEnabled && (
         <EditExpenseModal
           expense={editing}
           onSave={onUpdate}
@@ -3770,9 +3788,15 @@ function DailyReconciliationTable({ rows }) {
   );
 }
 
-function QuyModule({ data, currentUser, onBulkImportFromBills, onBulkImportInvoiceRevenue, onUpsertOpeningBalance }) {
+function QuyModule({ data, currentUser, onBulkImportFromBills, onBulkImportInvoiceRevenue, onUpsertOpeningBalance, onSetThuNganEditEnabled }) {
   const [from, setFrom] = useState(daysAgoISO(30));
   const [to, setTo] = useState(todayISO());
+  const thuNganEditEnabled = data.settings?.thu_ngan_edit_enabled !== "false";
+  const [togglingEdit, setTogglingEdit] = useState(false);
+  const handleToggleEdit = async () => {
+    setTogglingEdit(true);
+    try { await onSetThuNganEditEnabled(!thuNganEditEnabled); } finally { setTogglingEdit(false); }
+  };
 
   const receipts = dailyReceiptsFromSales(data.dishSales, from, to);
   const totalThu = receipts.reduce((s, r) => s + r.amount, 0);
@@ -3812,6 +3836,31 @@ function QuyModule({ data, currentUser, onBulkImportFromBills, onBulkImportInvoi
   return (
     <div>
       <SectionTitle icon={Wallet} title="Quỹ" subtitle="Sổ quỹ thu-chi: Phiếu thu tự động theo doanh số bán hàng, xem lại Phiếu chi đã ghi nhận ở tab Chi phí" />
+
+      <Card className="p-4 sm:p-5 mb-5">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="font-semibold text-slate-800 text-sm flex items-center gap-2">
+              {thuNganEditEnabled ? <Unlock size={16} className="text-emerald-600" /> : <Lock size={16} className="text-rose-600" />}
+              Quyền sửa/xoá phiếu thu, phiếu chi của Thu ngân
+            </p>
+            <p className="text-xs text-slate-400 mt-0.5">
+              {thuNganEditEnabled
+                ? "Đang MỞ — tài khoản Thu ngân tự sửa/xoá được phiếu thu & phiếu chi do chính mình tạo."
+                : "Đang KHOÁ — tài khoản Thu ngân chỉ được thêm mới, không tự sửa/xoá được nữa."}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleToggleEdit}
+            disabled={togglingEdit}
+            className={`relative inline-flex items-center h-7 w-12 rounded-full transition-colors shrink-0 disabled:opacity-50 ${thuNganEditEnabled ? "bg-emerald-500" : "bg-slate-300"}`}
+            title={thuNganEditEnabled ? "Bấm để khoá" : "Bấm để mở khoá"}
+          >
+            <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${thuNganEditEnabled ? "translate-x-6" : "translate-x-1"}`} />
+          </button>
+        </div>
+      </Card>
 
       <Card className="p-4 sm:p-5 mb-5">
         <div className="grid sm:grid-cols-2 gap-3">
@@ -4831,7 +4880,7 @@ export default function App() {
   const [data, setData] = useState({
     employees: [], suppliers: [], revenueCodes: [], exportCodes: [], products: [],
     stockOpenings: [], importRecords: [], exportRecords: [], expenseRecords: [],
-    dishes: [], dishIngredients: [], deposits: [], notifications: [], fundDailyBalances: [],
+    dishes: [], dishIngredients: [], deposits: [], notifications: [], fundDailyBalances: [], settings: {},
   });
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
@@ -5200,6 +5249,17 @@ export default function App() {
     showToast("Đã cập nhật tồn quỹ đầu ngày");
   };
 
+  // Mở/khoá quyền tự sửa-xoá phiếu thu & phiếu chi của tài khoản Thu ngân — cấu hình chung áp
+  // dụng cho mọi tài khoản thu_ngan, do Quản lý hoặc Quản lý (Báo cáo) bật/tắt trong tab Quỹ.
+  const setThuNganEditEnabled = async (enabled) => {
+    const { error } = await supabase
+      .from("app_settings")
+      .upsert({ key: "thu_ngan_edit_enabled", value: enabled ? "true" : "false", updated_by: currentUser.id }, { onConflict: "key" });
+    if (error) throw error;
+    await refreshAll();
+    showToast(enabled ? "Đã mở khoá cho Thu ngân tự sửa/xoá" : "Đã khoá — Thu ngân không tự sửa/xoá được nữa");
+  };
+
   const markNotificationRead = async (id) => {
     const { error } = await supabase.from("notifications").update({ is_read: true }).eq("id", id);
     if (error) { console.error(error); return; }
@@ -5425,9 +5485,9 @@ export default function App() {
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
             {tab === "coc" && (canViewReports || isThuNgan) && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
-            {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} />}
-            {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} onUpdate={updateCashierReceipt} onDelete={deleteCashierReceipt} />}
-            {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} />}
+            {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
+            {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} onUpdate={updateCashierReceipt} onDelete={deleteCashierReceipt} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
+            {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
               <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
