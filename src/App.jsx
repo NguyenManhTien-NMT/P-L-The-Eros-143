@@ -2943,10 +2943,62 @@ function CashierReceiptForm({ onSubmit }) {
   );
 }
 
-function ThuModule({ data, currentUser, onSubmit }) {
+function EditCashierReceiptModal({ receipt, onSave, onClose }) {
+  const [receiptDate, setReceiptDate] = useState(receipt.receiptDate);
+  const [cashAmount, setCashAmount] = useState(String(receipt.cashAmount ?? ""));
+  const [bankAmount, setBankAmount] = useState(String(receipt.bankAmount ?? ""));
+  const [note, setNote] = useState(receipt.note || "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    if (!(Number(cashAmount) > 0 || Number(bankAmount) > 0)) { setError("Vui lòng nhập ít nhất 1 số tiền hợp lệ."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSave(receipt.id, { receiptDate, cashAmount: Number(cashAmount) || 0, bankAmount: Number(bankAmount) || 0, note: note.trim() });
+      onClose();
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full p-5">
+        <div className="flex items-center justify-between mb-4">
+          <p className="font-semibold text-slate-800 flex items-center gap-2"><Pencil size={17} className="text-sky-700" /> Sửa phiếu thu</p>
+          <button onClick={onClose}><X size={18} className="text-slate-400" /></button>
+        </div>
+        <div className="space-y-3">
+          <TextField label="Ngày" type="date" value={receiptDate} onChange={(e) => setReceiptDate(e.target.value)} />
+          <MoneyField label="Tiền mặt" value={cashAmount} onChange={setCashAmount} />
+          <MoneyField label="Tiền ngân hàng" value={bankAmount} onChange={setBankAmount} />
+          <TextField label="Ghi chú" value={note} onChange={(e) => setNote(e.target.value)} />
+          {error && <p className="text-sm text-rose-600 flex items-center gap-1.5"><AlertTriangle size={14} /> {error}</p>}
+          <div className="flex gap-2">
+            <PrimaryButton type="button" onClick={submit} disabled={saving}>{saving ? "Đang lưu..." : "Lưu thay đổi"}</PrimaryButton>
+            <GhostButton type="button" onClick={onClose}>Huỷ</GhostButton>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
   const myReceipts = data.cashierReceipts.filter((r) => r.createdBy === currentUser.id).slice(0, 15);
   const todayReceipts = data.cashierReceipts.filter((r) => r.receiptDate === todayISO());
   const todayTotal = todayReceipts.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
+  const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Xoá phiếu thu này? Không thể hoàn tác.")) return;
+    setDeleting(id);
+    try { await onDelete(id); } finally { setDeleting(null); }
+  };
 
   return (
     <div>
@@ -2965,7 +3017,7 @@ function ThuModule({ data, currentUser, onSubmit }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Ngân hàng</th><th className="px-3 py-2 text-right">Tổng</th>
+                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Ngân hàng</th><th className="px-3 py-2 text-right">Tổng</th><th className="px-3 py-2"></th>
               </tr></thead>
               <tbody>
                 {myReceipts.map((r) => (
@@ -2974,6 +3026,14 @@ function ThuModule({ data, currentUser, onSubmit }) {
                     <td className="px-3 py-2 text-right">{fmtMoney(r.cashAmount)}</td>
                     <td className="px-3 py-2 text-right">{fmtMoney(r.bankAmount)}</td>
                     <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.cashAmount + r.bankAmount)}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center justify-end gap-1">
+                        <button type="button" onClick={() => setEditing(r)} className="text-slate-400 hover:text-sky-700 p-1" title="Sửa phiếu thu này"><Pencil size={14} /></button>
+                        <button type="button" onClick={() => handleDelete(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1" title="Xoá phiếu thu này">
+                          {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -2981,12 +3041,27 @@ function ThuModule({ data, currentUser, onSubmit }) {
           </div>
         )}
       </Card>
+      {editing && (
+        <EditCashierReceiptModal
+          receipt={editing}
+          onSave={onUpdate}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }
 
-function ChiPhieuModule({ data, currentUser, onSubmit }) {
+function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
   const myExpenses = data.expenseRecords.filter((r) => r.createdBy === currentUser.id).slice(0, 15);
+  const [editing, setEditing] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+
+  const handleDelete = async (id) => {
+    if (!window.confirm("Xoá phiếu chi này? Không thể hoàn tác.")) return;
+    setDeleting(id);
+    try { await onDelete(id); } finally { setDeleting(null); }
+  };
 
   return (
     <div>
@@ -3000,7 +3075,7 @@ function ChiPhieuModule({ data, currentUser, onSubmit }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2 text-right">Số tiền</th>
+                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2 text-right">Số tiền</th><th className="px-3 py-2"></th>
               </tr></thead>
               <tbody>
                 {myExpenses.map((r) => (
@@ -3009,6 +3084,14 @@ function ChiPhieuModule({ data, currentUser, onSubmit }) {
                     <td className="px-3 py-2 text-slate-700">{r.itemName}</td>
                     <td className="px-3 py-2 text-slate-500">{EXPENSE_CATEGORY_META[r.category]?.label || r.category}</td>
                     <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex items-center justify-end gap-1">
+                        <button type="button" onClick={() => setEditing(r)} className="text-slate-400 hover:text-sky-700 p-1" title="Sửa phiếu chi này"><Pencil size={14} /></button>
+                        <button type="button" onClick={() => handleDelete(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1" title="Xoá phiếu chi này">
+                          {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -3016,6 +3099,13 @@ function ChiPhieuModule({ data, currentUser, onSubmit }) {
           </div>
         )}
       </Card>
+      {editing && (
+        <EditExpenseModal
+          expense={editing}
+          onSave={onUpdate}
+          onClose={() => setEditing(null)}
+        />
+      )}
     </div>
   );
 }
@@ -4768,6 +4858,24 @@ export default function App() {
     await refreshAll();
     showToast("Đã ghi nhận phiếu thu ngân");
   };
+  const updateCashierReceipt = async (id, { receiptDate, cashAmount, bankAmount, note }) => {
+    const { data: updatedRows, error } = await supabase
+      .from("cashier_receipts")
+      .update({ receipt_date: receiptDate, cash_amount: Number(cashAmount) || 0, bank_amount: Number(bankAmount) || 0, note: note || null })
+      .eq("id", id)
+      .select("id");
+    if (error) throw error;
+    if ((updatedRows || []).length === 0) throw new Error("Không sửa được — có thể bị chặn quyền (RLS) trên Supabase.");
+    await refreshAll();
+    showToast("Đã cập nhật phiếu thu ngân");
+  };
+  const deleteCashierReceipt = async (id) => {
+    const { data: deletedRows, error } = await supabase.from("cashier_receipts").delete().eq("id", id).select("id");
+    if (error) throw error;
+    if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
+    await refreshAll();
+    showToast("Đã xoá phiếu thu ngân");
+  };
 
   // Cọc — thu cọc (nhận cọc từ khách) / chi cọc (ứng cọc cho NCC, đối tác). Tách riêng khỏi
   // Chi phí vì đây là dòng tiền tạm giữ, chờ đối trừ hoặc hoàn trả, không phải chi phí thực.
@@ -5030,8 +5138,8 @@ export default function App() {
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
             {tab === "coc" && (canViewReports || isThuNgan) && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
             {tab === "quy" && canViewReports && <QuyModule data={data} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} />}
-            {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} />}
-            {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} />}
+            {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} onUpdate={updateCashierReceipt} onDelete={deleteCashierReceipt} />}
+            {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
               <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
