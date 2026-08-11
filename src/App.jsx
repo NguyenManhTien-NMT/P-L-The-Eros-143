@@ -3171,6 +3171,7 @@ function DepositForm({ onSubmit }) {
 
 function DepositList({ data, currentUser, from, to, onDelete, onUpdate }) {
   const isQuanLy = currentUser?.role === "quan_ly" || currentUser?.role === "bao_cao";
+  const isThuNgan = currentUser?.role === "thu_ngan";
   const [direction, setDirection] = useState("all");
   const [deleting, setDeleting] = useState(null);
   const [editing, setEditing] = useState(null);
@@ -3270,6 +3271,9 @@ function DepositList({ data, currentUser, from, to, onDelete, onUpdate }) {
                         {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
                       </button>
                     </>
+                  )}
+                  {!isQuanLy && isThuNgan && r.createdBy === currentUser.id && (
+                    <button type="button" onClick={() => setEditing(r)} className="text-slate-400 hover:text-sky-700 p-1" title="Sửa khoản cọc này"><Pencil size={14} /></button>
                   )}
                 </div>
               </div>
