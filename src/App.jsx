@@ -230,6 +230,7 @@ function mapExpenseRecord(r) {
     quantity: r.quantity === null ? null : Number(r.quantity),
     unitPrice: r.unit_price === null ? null : Number(r.unit_price),
     amount: Number(r.amount) || 0,
+    paymentMethod: r.payment_method || "tien_mat",
     expenseDate: r.expense_date, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
   };
 }
@@ -2836,6 +2837,10 @@ const EXPENSE_CATEGORIES = [
   { key: "khac", label: "Chi phí khác" },
 ];
 const EXPENSE_CATEGORY_META = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
+const EXPENSE_PAYMENT_METHOD_META = {
+  tien_mat: { label: "Tiền mặt", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
+  chuyen_khoan: { label: "Chuyển khoản", color: "bg-sky-50 text-sky-700 border-sky-200" },
+};
 
 // ---------------------------------------------------------------------------
 // QUỸ (Sổ quỹ thu-chi) — Phiếu thu lấy trực tiếp từ dữ liệu bán hàng (dish_sales,
@@ -2860,6 +2865,7 @@ function PhieuChiForm({ onSubmit }) {
   const [category, setCategory] = useState("van_hanh");
   const [itemName, setItemName] = useState("");
   const [amount, setAmount] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("tien_mat");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -2871,7 +2877,7 @@ function PhieuChiForm({ onSubmit }) {
     if (!amount || Number(amount) <= 0) { setError("Vui lòng nhập số tiền hợp lệ."); return; }
     setError(""); setSaving(true);
     try {
-      await onSubmit({ category, expenseDate, lines: [{ itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null }] });
+      await onSubmit({ category, expenseDate, paymentMethod, lines: [{ itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null }] });
       setItemName(""); setAmount(""); setNote("");
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
@@ -2890,6 +2896,10 @@ function PhieuChiForm({ onSubmit }) {
         </SelectField>
         <TextField label="Tên khoản chi" value={itemName} onChange={(e) => setItemName(e.target.value)} placeholder="VD: Tiền điện tháng 8" />
         <MoneyField label="Số tiền" value={amount} onChange={setAmount} />
+        <SelectField label="Hình thức" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+          <option value="tien_mat">Tiền mặt</option>
+          <option value="chuyen_khoan">Chuyển khoản</option>
+        </SelectField>
         <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
@@ -3119,7 +3129,7 @@ function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2 text-right">Số tiền</th><th className="px-3 py-2"></th>
+                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2">Hình thức</th><th className="px-3 py-2 text-right">Số tiền</th><th className="px-3 py-2"></th>
               </tr></thead>
               <tbody>
                 {myExpenses.map((r) => (
@@ -3127,6 +3137,7 @@ function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
                     <td className="px-3 py-2 text-slate-500">{fmtDate(r.expenseDate)}</td>
                     <td className="px-3 py-2 text-slate-700">{r.itemName}</td>
                     <td className="px-3 py-2 text-slate-500">{EXPENSE_CATEGORY_META[r.category]?.label || r.category}</td>
+                    <td className="px-3 py-2"><span className={`text-xs px-1.5 py-0.5 rounded-lg border ${EXPENSE_PAYMENT_METHOD_META[r.paymentMethod]?.color}`}>{EXPENSE_PAYMENT_METHOD_META[r.paymentMethod]?.label || r.paymentMethod}</span></td>
                     <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
                     <td className="px-3 py-2">
                       <div className="flex items-center justify-end gap-1">
@@ -3752,6 +3763,7 @@ function BaoTriVatTuForm({ currentUser, onSubmit }) {
   const [expenseDate, setExpenseDate] = useState(todayISO());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [paymentMethod, setPaymentMethod] = useState("tien_mat");
 
   const updateLine = (key, patch) => setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   const addRow = () => setLines((prev) => [...prev, { key: Math.random().toString(36).slice(2), itemName: "", quantity: "", unitPrice: "" }]);
@@ -3765,7 +3777,7 @@ function BaoTriVatTuForm({ currentUser, onSubmit }) {
     setError(""); setSaving(true);
     try {
       await onSubmit({
-        category: "bao_tri_vat_tu", expenseDate,
+        category: "bao_tri_vat_tu", expenseDate, paymentMethod,
         lines: validLines.map((l) => ({ itemName: l.itemName.trim(), quantity: Number(l.quantity), unitPrice: Number(l.unitPrice), amount: Number(l.quantity) * Number(l.unitPrice) })),
       });
       setLines([{ key: Math.random().toString(36).slice(2), itemName: "", quantity: "", unitPrice: "" }]);
@@ -3781,6 +3793,10 @@ function BaoTriVatTuForm({ currentUser, onSubmit }) {
       <p className="font-semibold text-slate-800 text-sm mb-3">Chi phí bảo trì & vật tư (CCDC, vật tư, sửa chữa, vật dụng tiêu hao...)</p>
       <div className="grid sm:grid-cols-2 gap-3 mb-4">
         <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+        <SelectField label="Hình thức" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+          <option value="tien_mat">Tiền mặt</option>
+          <option value="chuyen_khoan">Chuyển khoản</option>
+        </SelectField>
       </div>
       <div className="overflow-x-auto rounded-xl border border-slate-200 mb-3">
         <table className="w-full text-sm min-w-[640px]">
@@ -3837,6 +3853,7 @@ function PresetExpenseForm({ category, onSubmit }) {
   const meta = EXPENSE_CATEGORY_META[category];
   const [amounts, setAmounts] = useState(() => Object.fromEntries(meta.presetItems.map((n) => [n, ""])));
   const [expenseDate, setExpenseDate] = useState(todayISO());
+  const [paymentMethod, setPaymentMethod] = useState("tien_mat");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -3848,7 +3865,7 @@ function PresetExpenseForm({ category, onSubmit }) {
     setError(""); setSaving(true);
     try {
       await onSubmit({
-        category, expenseDate,
+        category, expenseDate, paymentMethod,
         lines: filled.map((n) => ({ itemName: n, amount: Number(amounts[n]) })),
       });
       setAmounts(Object.fromEntries(meta.presetItems.map((n) => [n, ""])));
@@ -3864,6 +3881,10 @@ function PresetExpenseForm({ category, onSubmit }) {
       <p className="font-semibold text-slate-800 text-sm mb-3">{meta.label}</p>
       <div className="grid sm:grid-cols-2 gap-3 mb-4">
         <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+        <SelectField label="Hình thức" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+          <option value="tien_mat">Tiền mặt</option>
+          <option value="chuyen_khoan">Chuyển khoản</option>
+        </SelectField>
       </div>
       <div className="space-y-2 mb-4">
         {meta.presetItems.map((n) => (
@@ -3888,6 +3909,7 @@ function PresetExpenseForm({ category, onSubmit }) {
 function OtherExpenseForm({ onSubmit }) {
   const [lines, setLines] = useState([{ key: Math.random().toString(36).slice(2), itemName: "", amount: "" }]);
   const [expenseDate, setExpenseDate] = useState(todayISO());
+  const [paymentMethod, setPaymentMethod] = useState("tien_mat");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -3903,7 +3925,7 @@ function OtherExpenseForm({ onSubmit }) {
     setError(""); setSaving(true);
     try {
       await onSubmit({
-        category: "khac", expenseDate,
+        category: "khac", expenseDate, paymentMethod,
         lines: validLines.map((l) => ({ itemName: l.itemName.trim(), amount: Number(l.amount) })),
       });
       setLines([{ key: Math.random().toString(36).slice(2), itemName: "", amount: "" }]);
@@ -3919,6 +3941,10 @@ function OtherExpenseForm({ onSubmit }) {
       <p className="font-semibold text-slate-800 text-sm mb-3">Chi phí khác</p>
       <div className="grid sm:grid-cols-2 gap-3 mb-4">
         <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
+        <SelectField label="Hình thức" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+          <option value="tien_mat">Tiền mặt</option>
+          <option value="chuyen_khoan">Chuyển khoản</option>
+        </SelectField>
       </div>
       <div className="space-y-2 mb-4">
         {lines.map((l) => (
@@ -3949,6 +3975,7 @@ function EditExpenseModal({ expense, onSave, onClose }) {
   const [amount, setAmount] = useState(String(expense.amount ?? ""));
   const [quantity, setQuantity] = useState(expense.quantity === null || expense.quantity === undefined ? "" : String(expense.quantity));
   const [unitPrice, setUnitPrice] = useState(expense.unitPrice === null || expense.unitPrice === undefined ? "" : String(expense.unitPrice));
+  const [paymentMethod, setPaymentMethod] = useState(expense.paymentMethod || "tien_mat");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -3962,6 +3989,7 @@ function EditExpenseModal({ expense, onSave, onClose }) {
         amount: Number(amount),
         quantity: quantity === "" ? null : Number(quantity),
         unitPrice: unitPrice === "" ? null : Number(unitPrice),
+        paymentMethod,
       });
       onClose();
     } catch (e) {
@@ -3989,6 +4017,10 @@ function EditExpenseModal({ expense, onSave, onClose }) {
             <MoneyField label="Đơn giá (nếu có)" value={unitPrice} onChange={setUnitPrice} />
           </div>
           <MoneyField label="Số tiền" value={amount} onChange={setAmount} />
+          <SelectField label="Hình thức" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+            <option value="tien_mat">Tiền mặt</option>
+            <option value="chuyen_khoan">Chuyển khoản</option>
+          </SelectField>
           {error && <p className="text-sm text-rose-600 flex items-center gap-1.5"><AlertTriangle size={14} /> {error}</p>}
           <div className="flex gap-2">
             <PrimaryButton type="button" onClick={submit} disabled={saving}>{saving ? "Đang lưu..." : "Lưu thay đổi"}</PrimaryButton>
@@ -4001,9 +4033,11 @@ function EditExpenseModal({ expense, onSave, onClose }) {
 }
 
 function ExpenseList({ data, currentUser, onDelete, onUpdate, filterCategory, from, to }) {
+  const [paymentFilter, setPaymentFilter] = useState("all");
   const rows = data.expenseRecords
     .filter((r) => !filterCategory || r.category === filterCategory)
     .filter((r) => (!from || r.expenseDate >= from) && (!to || r.expenseDate <= to))
+    .filter((r) => paymentFilter === "all" || r.paymentMethod === paymentFilter)
     .slice(0, 30);
   const isQuanLy = currentUser?.role === "quan_ly" || currentUser?.role === "bao_cao";
   const [deleting, setDeleting] = useState(null);
@@ -4022,7 +4056,7 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate, filterCategory, fr
     try {
       await onUpdate(r.id, {
         category: newCategory, itemName: r.itemName, expenseDate: r.expenseDate,
-        amount: r.amount, quantity: r.quantity, unitPrice: r.unitPrice,
+        amount: r.amount, quantity: r.quantity, unitPrice: r.unitPrice, paymentMethod: r.paymentMethod,
       });
     } finally {
       setChangingCategory(null);
@@ -4031,11 +4065,25 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate, filterCategory, fr
 
   return (
     <Card className="p-0 overflow-hidden">
-      <div className="p-4 border-b border-slate-100">
-        <p className="font-semibold text-slate-800 text-sm">
-          {filterCategory ? `Chi phí nhóm "${EXPENSE_CATEGORY_META[filterCategory]?.label || filterCategory}"` : "Chi phí ghi nhận gần đây"}
-        </p>
-        {isQuanLy && <p className="text-xs text-slate-400 mt-0.5">Có thể đổi nhanh "Loại chi phí" ngay tại đây nếu tự động phân nhóm bị sai.</p>}
+      <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+        <div>
+          <p className="font-semibold text-slate-800 text-sm">
+            {filterCategory ? `Chi phí nhóm "${EXPENSE_CATEGORY_META[filterCategory]?.label || filterCategory}"` : "Chi phí ghi nhận gần đây"}
+          </p>
+          {isQuanLy && <p className="text-xs text-slate-400 mt-0.5">Có thể đổi nhanh "Loại chi phí" ngay tại đây nếu tự động phân nhóm bị sai.</p>}
+        </div>
+        <div className="flex gap-1">
+          {[{ key: "all", label: "Tất cả" }, { key: "tien_mat", label: "Tiền mặt" }, { key: "chuyen_khoan", label: "Chuyển khoản" }].map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => setPaymentFilter(t.key)}
+              className={`text-xs px-2.5 py-1 rounded-lg border ${paymentFilter === t.key ? "bg-sky-700 text-white border-sky-700" : "text-slate-500 border-slate-200 hover:bg-slate-50"}`}
+            >
+              {t.label}
+            </button>
+          ))}
+        </div>
       </div>
       {rows.length === 0 ? <EmptyState icon={Receipt} text="Chưa có khoản chi phí nào ở nhóm này." /> : (
         <div className="divide-y divide-slate-100">
@@ -4043,7 +4091,7 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate, filterCategory, fr
             <div key={r.id} className="px-4 py-3 flex items-center justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-slate-800 truncate">{r.itemName}</p>
-                <div className="flex items-center gap-2 mt-1">
+                <div className="flex items-center gap-2 mt-1 flex-wrap">
                   {isQuanLy ? (
                     <select
                       value={r.category}
@@ -4058,6 +4106,7 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate, filterCategory, fr
                     <span className="text-xs text-slate-400">{EXPENSE_CATEGORY_META[r.category]?.label || r.category}</span>
                   )}
                   <p className="text-xs text-slate-400">· {fmtDate(r.expenseDate)}</p>
+                  <span className={`text-xs px-1.5 py-0.5 rounded-lg border ${EXPENSE_PAYMENT_METHOD_META[r.paymentMethod]?.color}`}>{EXPENSE_PAYMENT_METHOD_META[r.paymentMethod]?.label || r.paymentMethod}</span>
                   {changingCategory === r.id && <Loader2 size={11} className="animate-spin text-slate-400" />}
                 </div>
               </div>
@@ -4846,10 +4895,11 @@ export default function App() {
     }
   };
 
-  const submitExpense = async ({ category, lines, expenseDate }) => {
+  const submitExpense = async ({ category, lines, expenseDate, paymentMethod }) => {
     const rows = lines.map((l) => ({
       category, item_name: l.itemName,
       quantity: l.quantity ?? null, unit_price: l.unitPrice ?? null, amount: l.amount,
+      payment_method: paymentMethod || "tien_mat",
       expense_date: expenseDate || todayISO(), note: l.note || null, created_by: currentUser.id,
     }));
     const { error } = await supabase.from("expense_records").insert(rows);
@@ -4875,10 +4925,10 @@ export default function App() {
 
   // Sửa 1 khoản chi phí — áp dụng cho mọi khoản chi trong bảng expense_records, kể
   // cả khoản do tài khoản Thu ngân gửi lên (dùng chung 1 bảng, không phân biệt người tạo).
-  const updateExpenseRecord = async (id, { category, itemName, expenseDate, amount, quantity, unitPrice }) => {
+  const updateExpenseRecord = async (id, { category, itemName, expenseDate, amount, quantity, unitPrice, paymentMethod }) => {
     const { data: updatedRows, error } = await supabase
       .from("expense_records")
-      .update({ category, item_name: itemName, expense_date: expenseDate, amount, quantity, unit_price: unitPrice })
+      .update({ category, item_name: itemName, expense_date: expenseDate, amount, quantity, unit_price: unitPrice, payment_method: paymentMethod || "tien_mat" })
       .eq("id", id)
       .select("id");
     if (error) throw error;
