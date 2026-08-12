@@ -79,6 +79,12 @@ function enumerateDatesISO(from, to) {
 function stripDiacritics(str) {
   return (str || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").replace(/Đ/g, "D").toLowerCase();
 }
+// Nhận diện khoản chi phí thực chất là "Nộp tiền cho cô/chủ" (Thu ngân gõ nhầm chỗ, lẽ ra
+// không phải chi phí thật) — khớp theo tên khoản chi, không phân biệt dấu/hoa-thường.
+function isRemittedExpenseName(itemName) {
+  const s = stripDiacritics(itemName).replace(/\s+/g, " ").trim();
+  return s.includes("nop") && (s.includes(" co") || s.endsWith("co") || s.includes(" chu") || s.endsWith("chu"));
+}
 // Chuẩn hoá chuỗi để SO KHỚP tên món/tên NVL giữa 2 nguồn khác nhau (Cost món ăn
 // gõ tay vs. tên trích từ file Excel POS) — ngoài bỏ dấu còn loại các ký tự
 // "vô hình" hay gặp trong file Excel xuất từ phần mềm POS (khoảng trắng không
@@ -273,6 +279,8 @@ function mapCashierReceipt(r) {
 function mapInvoiceRevenue(r) {
   return {
     id: r.id, invoiceNo: r.invoice_no, invoiceDate: r.invoice_date, amount: Number(r.amount) || 0,
+    cashAmount: r.cash_amount === null || r.cash_amount === undefined ? null : Number(r.cash_amount),
+    bankAmount: r.bank_amount === null || r.bank_amount === undefined ? null : Number(r.bank_amount),
     createdBy: r.created_by, createdAt: r.created_at,
   };
 }
@@ -2891,10 +2899,14 @@ function buildFundLedger(dates, cashierReceipts, expenseRecords, deposits, overr
     const thuCocBank = deposits.filter((r) => r.direction === "thu" && r.depositDate === d && r.paymentMethod === "ngan_hang").reduce((s, r) => s + r.amount, 0);
     const chiCocCash = deposits.filter((r) => r.direction === "chi" && r.depositDate === d && r.paymentMethod === "tien_mat").reduce((s, r) => s + r.amount, 0);
     const chiCocBank = deposits.filter((r) => r.direction === "chi" && r.depositDate === d && r.paymentMethod === "ngan_hang").reduce((s, r) => s + r.amount, 0);
-    const chiPhiCash = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "tien_mat").reduce((s, r) => s + r.amount, 0);
-    const chiPhiBank = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "chuyen_khoan").reduce((s, r) => s + r.amount, 0);
-    const remittedCash = remittedMap[d]?.cash || 0;
-    const remittedBank = remittedMap[d]?.bank || 0;
+    const chiPhiCash = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "tien_mat" && !isRemittedExpenseName(r.itemName)).reduce((s, r) => s + r.amount, 0);
+    const chiPhiBank = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "chuyen_khoan" && !isRemittedExpenseName(r.itemName)).reduce((s, r) => s + r.amount, 0);
+    // "Nộp cho cô" = tự động lấy từ các khoản chi phí Thu ngân lỡ ghi vào Chi phí (tên khớp
+    // "nộp ... cô/chủ") + phần ghi tay bổ sung qua Sổ quỹ (remittedMap, nếu quản lý cộng thêm).
+    const autoRemittedCash = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "tien_mat" && isRemittedExpenseName(r.itemName)).reduce((s, r) => s + r.amount, 0);
+    const autoRemittedBank = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "chuyen_khoan" && isRemittedExpenseName(r.itemName)).reduce((s, r) => s + r.amount, 0);
+    const remittedCash = autoRemittedCash + (remittedMap[d]?.cash || 0);
+    const remittedBank = autoRemittedBank + (remittedMap[d]?.bank || 0);
 
     const ov = overridesMap[d];
     const hasOverride = !!ov;
@@ -3258,6 +3270,8 @@ function InvoiceRevenueImportForm({ onImport }) {
   const [done, setDone] = useState(null);
   const [cancelled, setCancelled] = useState(0);
 
+  const [hasSplitDetected, setHasSplitDetected] = useState(null); // null=chưa import, true/false sau khi đọc file
+
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -3270,6 +3284,7 @@ function InvoiceRevenueImportForm({ onImport }) {
       const rawObjRows = rowsToObjects(rawRows, headerIdx);
       const valid = [];
       let cancelledCount = 0;
+      let splitFound = false;
       rawObjRows.forEach((row) => {
         const invoiceNo = String(pickCol(row, "Số hóa đơn", "So hoa don") ?? "").trim();
         const amount = Number(pickCol(row, "Doanh thu", "Doanh thu bán hàng")) || 0;
@@ -3277,10 +3292,29 @@ function InvoiceRevenueImportForm({ onImport }) {
         const note = String(pickCol(row, "Ghi chú", "Ghi chu") ?? "").trim();
         if (!invoiceNo) return;
         if (stripDiacritics(note).includes("huy")) { cancelledCount += 1; return; } // bỏ hoá đơn đã huỷ
-        valid.push({ invoiceNo, invoiceDate, amount });
+
+        // Tự nhận diện Tiền mặt/Chuyển khoản: hoặc file có 2 cột số tiền riêng, hoặc 1 cột
+        // chữ "Hình thức/Phương thức thanh toán" ghi rõ Tiền mặt/Chuyển khoản cho từng hoá đơn.
+        let cashAmount = null, bankAmount = null;
+        const cashCol = pickColContains(row, "tienmat");
+        const bankCol = pickColContains(row, "chuyenkhoan") ?? pickColContains(row, "nganhang");
+        if (cashCol !== undefined || bankCol !== undefined) {
+          cashAmount = Number(cashCol) || 0;
+          bankAmount = Number(bankCol) || 0;
+          splitFound = true;
+        } else {
+          const methodRaw = pickColContains(row, "hinhthuc") ?? pickColContains(row, "phuongthuc") ?? pickColContains(row, "pttt");
+          if (methodRaw !== undefined) {
+            const m = stripDiacritics(String(methodRaw)).replace(/\s+/g, "");
+            if (m.includes("tienmat") || m === "tm") { cashAmount = amount; bankAmount = 0; splitFound = true; }
+            else if (m.includes("chuyenkhoan") || m.includes("nganhang") || m === "ck") { cashAmount = 0; bankAmount = amount; splitFound = true; }
+          }
+        }
+        valid.push({ invoiceNo, invoiceDate, amount, cashAmount, bankAmount });
       });
       setPreview(valid);
       setCancelled(cancelledCount);
+      setHasSplitDetected(splitFound);
       setErrors([]);
     } catch (err) {
       setErrors([err.message || "Không đọc được file, kiểm tra lại định dạng .xlsx/.xls."]);
@@ -3307,14 +3341,14 @@ function InvoiceRevenueImportForm({ onImport }) {
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Import Doanh thu bán hàng theo hoá đơn</p>
-      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>. Import lại cùng số hoá đơn sẽ tự ghi đè, không bị trùng. Hoá đơn có ghi chú "đã huỷ" sẽ tự động bị loại bỏ, không tính vào doanh thu.</p>
+      <p className="text-xs text-slate-500 mb-3">Dùng file <b>"Bảng kê hoá đơn"</b> xuất từ POS (khác với file "Chi tiết doanh thu theo hoá đơn và mặt hàng"). Cần có cột <b>Ngày</b>, <b>Số hoá đơn</b>, <b>Doanh thu</b>. Nếu file có thêm cột <b>Tiền mặt/Chuyển khoản</b> (hoặc cột "Hình thức thanh toán") sẽ tự tách để đối chiếu riêng từng loại tiền. Import lại cùng số hoá đơn sẽ tự ghi đè, không bị trùng. Hoá đơn có ghi chú "đã huỷ" sẽ tự động bị loại bỏ, không tính vào doanh thu.</p>
       <div className="flex items-center gap-2 mb-3">
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
           <Upload size={15} /> {fileName || "Chọn file Excel..."}
           <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
         </label>
         {fileName && (
-          <button type="button" onClick={() => { setFileName(""); setPreview([]); setErrors([]); setCancelled(0); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
+          <button type="button" onClick={() => { setFileName(""); setPreview([]); setErrors([]); setCancelled(0); setHasSplitDetected(null); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
             <X size={16} />
           </button>
         )}
@@ -3322,6 +3356,16 @@ function InvoiceRevenueImportForm({ onImport }) {
       {errors.length > 0 && (
         <div className="mb-3 text-xs text-rose-600 bg-rose-50 border border-rose-200 rounded-xl p-3 space-y-1">
           {errors.map((e, i) => <p key={i} className="flex items-center gap-1"><AlertTriangle size={12} className="shrink-0" /> {e}</p>)}
+        </div>
+      )}
+      {preview.length > 0 && hasSplitDetected === false && (
+        <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-1">
+          <AlertTriangle size={12} className="shrink-0" /> Không tìm thấy cột Tiền mặt/Chuyển khoản (hoặc Hình thức thanh toán) trong file này — sẽ KHÔNG đối chiếu được riêng theo Tiền mặt/Ngân hàng cho các hoá đơn này, chỉ đối chiếu được tổng.
+        </div>
+      )}
+      {preview.length > 0 && hasSplitDetected === true && (
+        <div className="mb-3 text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl p-3 flex items-center gap-1">
+          <CheckCircle2 size={12} className="shrink-0" /> Đã nhận diện được cột Tiền mặt/Chuyển khoản — sẽ đối chiếu được riêng theo từng loại tiền.
         </div>
       )}
       {cancelled > 0 && (
@@ -3785,6 +3829,18 @@ function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted }) {
                 </tr>
               ))}
             </tbody>
+            <tfoot className="sticky bottom-0 bg-slate-50 border-t-2 border-slate-200">
+              <tr>
+                <td className="px-3 py-2 font-semibold text-slate-600">Tổng</td>
+                <td className="px-3 py-2"></td>
+                <td className="px-3 py-2 text-right font-semibold text-emerald-700">{fmtMoney(ledger.reduce((s, r) => s + r[thuNganKey], 0))}</td>
+                <td className="px-3 py-2 text-right font-semibold text-teal-700">{fmtMoney(ledger.reduce((s, r) => s + r[thuCocKey], 0))}</td>
+                <td className="px-3 py-2 text-right font-semibold text-rose-700">{fmtMoney(ledger.reduce((s, r) => s + r[chiPhiKey], 0))}</td>
+                <td className="px-3 py-2 text-right font-semibold text-amber-700">{fmtMoney(ledger.reduce((s, r) => s + r[chiCocKey], 0))}</td>
+                <td className="px-3 py-2 text-right font-semibold text-purple-700">{fmtMoney(ledger.reduce((s, r) => s + r[remittedKey], 0))}</td>
+                <td className="px-3 py-2"></td>
+              </tr>
+            </tfoot>
           </table>
         </div>
       )}
@@ -3804,64 +3860,108 @@ function buildDailyReconciliation(dates, fundLedger, invoiceRevenue) {
     const thuNganCash = row.thuNganCash;
     const thuNganBank = row.thuNganBank;
     const thuNgan = thuNganCash + thuNganBank;
-    const hoaDon = invoiceRevenue.filter((r) => r.invoiceDate === d).reduce((s, r) => s + r.amount, 0);
-    const diff = thuNgan - hoaDon;
 
-    return { date: d, thuNganCash, thuNganBank, thuNgan, hoaDon, diff };
+    const invoicesForDay = invoiceRevenue.filter((r) => r.invoiceDate === d);
+    const hoaDon = invoicesForDay.reduce((s, r) => s + r.amount, 0);
+    const hasSplit = invoicesForDay.some((r) => r.cashAmount !== null || r.bankAmount !== null);
+    const hoaDonCash = hasSplit ? invoicesForDay.reduce((s, r) => s + (r.cashAmount || 0), 0) : null;
+    const hoaDonBank = hasSplit ? invoicesForDay.reduce((s, r) => s + (r.bankAmount || 0), 0) : null;
+
+    const diff = thuNgan - hoaDon;
+    const diffCash = hasSplit ? thuNganCash - hoaDonCash : null;
+    const diffBank = hasSplit ? thuNganBank - hoaDonBank : null;
+
+    return { date: d, thuNganCash, thuNganBank, thuNgan, hoaDon, hoaDonCash, hoaDonBank, hasSplit, diff, diffCash, diffBank };
   });
 }
 
 function DailyReconciliationTable({ rows }) {
-  const mismatchCount = rows.filter((r) => r.diff !== 0 && (r.thuNgan > 0 || r.hoaDon > 0)).length;
+  const [tab, setTab] = useState("cash"); // "cash" | "bank" | "total"
+  const anySplit = rows.some((r) => r.hasSplit);
+
+  const hoaDonKey = tab === "cash" ? "hoaDonCash" : tab === "bank" ? "hoaDonBank" : "hoaDon";
+  const thuNganKey = tab === "cash" ? "thuNganCash" : tab === "bank" ? "thuNganBank" : "thuNgan";
+  const diffKey = tab === "cash" ? "diffCash" : tab === "bank" ? "diffBank" : "diff";
+  const needsSplit = tab !== "total";
+
+  const comparableRows = rows.filter((r) => !needsSplit || r.hasSplit);
+  const mismatchCount = comparableRows.filter((r) => r[diffKey] !== 0 && (r[thuNganKey] > 0 || r[hoaDonKey] > 0)).length;
 
   return (
     <Card className="p-0 overflow-hidden mb-5">
       <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
         <div>
           <p className="font-semibold text-slate-800 text-sm">Đối chiếu Doanh thu theo ngày</p>
-          <p className="text-xs text-slate-400 mt-0.5">So sánh Doanh thu Thu ngân báo cáo (tách Tiền mặt/Ngân hàng) với Doanh thu theo hoá đơn Excel cho từng ngày.</p>
+          <p className="text-xs text-slate-400 mt-0.5">So sánh Doanh thu file Excel với Doanh thu Thu ngân báo cáo — theo từng hình thức thu.</p>
         </div>
-        {mismatchCount > 0 && (
-          <span className="text-xs px-2 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-medium flex items-center gap-1">
-            <AlertTriangle size={13} /> {mismatchCount} ngày lệch số liệu
-          </span>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex gap-1">
+            {[{ key: "cash", label: "Tiền mặt" }, { key: "bank", label: "Ngân hàng" }, { key: "total", label: "Tổng" }].map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setTab(t.key)}
+                className={`text-xs px-2.5 py-1 rounded-lg border ${tab === t.key ? "bg-sky-700 text-white border-sky-700" : "text-slate-500 border-slate-200 hover:bg-slate-50"}`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {mismatchCount > 0 && (
+            <span className="text-xs px-2 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-medium flex items-center gap-1">
+              <AlertTriangle size={13} /> {mismatchCount} ngày lệch
+            </span>
+          )}
+        </div>
       </div>
+      {needsSplit && !anySplit && (
+        <div className="mx-4 mt-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-1">
+          <AlertTriangle size={12} className="shrink-0" /> File Excel đang import chưa có cột Tiền mặt/Chuyển khoản (hoặc Hình thức thanh toán) nên chưa tách được — xem tạm ở tab "Tổng", hoặc import lại file có cột này.
+        </div>
+      )}
       {rows.length === 0 ? <EmptyState icon={AlertTriangle} text="Chọn khoảng ngày để đối chiếu." /> : (
         <div className="overflow-x-auto max-h-96 overflow-y-auto">
           <table className="w-full text-sm">
             <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
               <th className="px-3 py-2">Ngày</th>
-              <th className="px-3 py-2 text-right">Doanh thu hoá đơn</th>
-              <th className="px-3 py-2 text-right">Thu ngân - Tiền mặt</th>
-              <th className="px-3 py-2 text-right">Thu ngân - Ngân hàng</th>
-              <th className="px-3 py-2 text-right">Tổng Thu ngân</th>
+              <th className="px-3 py-2 text-right">Doanh thu file Excel {tab === "cash" ? "(Tiền mặt)" : tab === "bank" ? "(Ngân hàng)" : ""}</th>
+              <th className="px-3 py-2 text-right">Thu ngân báo cáo {tab === "cash" ? "(Tiền mặt)" : tab === "bank" ? "(Ngân hàng)" : ""}</th>
               <th className="px-3 py-2 text-right">Chênh lệch</th>
               <th className="px-3 py-2">Trạng thái</th>
             </tr></thead>
             <tbody>
               {rows.map((r) => {
-                const noData = r.thuNgan === 0 && r.hoaDon === 0;
-                const rowClass = noData ? "" : r.diff === 0 ? "" : r.diff > 0 ? "bg-amber-50/60" : "bg-rose-50/60";
+                if (needsSplit && !r.hasSplit) {
+                  return (
+                    <tr key={r.date} className="border-b border-slate-50 last:border-0">
+                      <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
+                      <td className="px-3 py-2 text-right text-slate-300" colSpan={3}>Chưa phân loại được Tiền mặt/Ngân hàng cho ngày này</td>
+                      <td className="px-3 py-2"><span className="text-xs text-slate-300">—</span></td>
+                    </tr>
+                  );
+                }
+                const hoaDonVal = r[hoaDonKey];
+                const thuNganVal = r[thuNganKey];
+                const diffVal = r[diffKey];
+                const noData = thuNganVal === 0 && hoaDonVal === 0;
+                const rowClass = noData ? "" : diffVal === 0 ? "" : diffVal > 0 ? "bg-amber-50/60" : "bg-rose-50/60";
                 return (
                   <tr key={r.date} className={`border-b border-slate-50 last:border-0 ${rowClass}`}>
                     <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.hoaDon)}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.thuNganCash)}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.thuNganBank)}</td>
-                    <td className="px-3 py-2 text-right font-medium text-slate-800">{fmtMoney(r.thuNgan)}</td>
-                    <td className={`px-3 py-2 text-right font-semibold ${r.diff === 0 ? "text-slate-400" : r.diff > 0 ? "text-amber-700" : "text-rose-700"}`}>
-                      {r.diff > 0 ? "+" : ""}{fmtMoney(r.diff)}
+                    <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(hoaDonVal)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(thuNganVal)}</td>
+                    <td className={`px-3 py-2 text-right font-semibold ${diffVal === 0 ? "text-slate-400" : diffVal > 0 ? "text-amber-700" : "text-rose-700"}`}>
+                      {diffVal > 0 ? "+" : ""}{fmtMoney(diffVal)}
                     </td>
                     <td className="px-3 py-2">
                       {noData ? (
                         <span className="text-xs text-slate-300">Chưa có dữ liệu</span>
-                      ) : r.diff === 0 ? (
+                      ) : diffVal === 0 ? (
                         <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-lg">
                           <CheckCircle2 size={12} /> Khớp
                         </span>
                       ) : (
-                        <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-lg border ${r.diff > 0 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-rose-700 bg-rose-50 border-rose-200"}`}>
+                        <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-lg border ${diffVal > 0 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-rose-700 bg-rose-50 border-rose-200"}`}>
                           <AlertTriangle size={12} /> Chênh lệch
                         </span>
                       )}
@@ -3923,6 +4023,14 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
   const tonQuyHoaDonTongThe = openingBalanceNum + totalInvoiceRevenue + totalThuCocCash + totalThuCocBank - totalChiPhiCash - totalChiPhiBank - totalChiCocCash - totalChiCocBank - totalRemittedCash - totalRemittedBank;
   const tonQuyThuNganTongThe = closingCash + closingBank;
   const diffTongThe = tonQuyThuNganTongThe - tonQuyHoaDonTongThe;
+
+  // Doanh thu hoá đơn Excel tách TM/NH (nếu file import có cột Hình thức) — để đối chiếu
+  // riêng từng loại tiền cho cả khoảng đang lọc, giống hệt logic của DailyReconciliationTable.
+  const invoiceHasSplitInRange = invoiceRevenueInRange.some((r) => r.cashAmount !== null || r.bankAmount !== null);
+  const totalHoaDonCash = invoiceHasSplitInRange ? invoiceRevenueInRange.reduce((s, r) => s + (r.cashAmount || 0), 0) : null;
+  const totalHoaDonBank = invoiceHasSplitInRange ? invoiceRevenueInRange.reduce((s, r) => s + (r.bankAmount || 0), 0) : null;
+  const diffCashTongThe = invoiceHasSplitInRange ? totalThuNganCash - totalHoaDonCash : null;
+  const diffBankTongThe = invoiceHasSplitInRange ? totalThuNganBank - totalHoaDonBank : null;
 
   return (
     <div>
@@ -4053,12 +4161,55 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
           {totalInvoiceRevenue === 0 && totalThuNgan === 0 ? (
             <p className="text-xs text-slate-400">Chưa có đủ dữ liệu để đối chiếu trong khoảng thời gian này.</p>
           ) : diffTongThe === 0 ? (
-            <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 font-medium">
+            <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 font-medium mb-3">
               <CheckCircle2 size={16} /> Khớp — Tồn quỹ theo hoá đơn Excel và theo Thu ngân báo cáo bằng nhau.
             </div>
           ) : (
-            <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2 font-medium">
+            <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2 font-medium mb-3">
               <AlertTriangle size={16} /> Chênh lệch {fmtMoney(Math.abs(diffTongThe))} — {diffTongThe > 0 ? "Thu ngân báo cao hơn hoá đơn Excel" : "Thu ngân báo thấp hơn hoá đơn Excel"}.
+            </div>
+          )}
+
+          <p className="text-xs font-medium text-slate-500 mb-2">Đối chiếu Doanh thu theo từng hình thức (cả khoảng)</p>
+          {!invoiceHasSplitInRange ? (
+            <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3 flex items-center gap-1">
+              <AlertTriangle size={12} className="shrink-0" /> File hoá đơn Excel trong khoảng này chưa có cột Tiền mặt/Chuyển khoản nên chưa tách được — chỉ đối chiếu được tổng ở trên.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                  <th className="px-3 py-2">Hình thức</th>
+                  <th className="px-3 py-2 text-right">Doanh thu file Excel</th>
+                  <th className="px-3 py-2 text-right">Thu ngân báo cáo</th>
+                  <th className="px-3 py-2 text-right">Chênh lệch</th>
+                  <th className="px-3 py-2">Trạng thái</th>
+                </tr></thead>
+                <tbody>
+                  {[{ label: "Tiền mặt", hoaDon: totalHoaDonCash, thuNgan: totalThuNganCash, diff: diffCashTongThe },
+                    { label: "Ngân hàng", hoaDon: totalHoaDonBank, thuNgan: totalThuNganBank, diff: diffBankTongThe }].map((r) => (
+                    <tr key={r.label} className="border-b border-slate-50 last:border-0">
+                      <td className="px-3 py-2 font-medium text-slate-700">{r.label}</td>
+                      <td className="px-3 py-2 text-right">{fmtMoney(r.hoaDon)}</td>
+                      <td className="px-3 py-2 text-right">{fmtMoney(r.thuNgan)}</td>
+                      <td className={`px-3 py-2 text-right font-semibold ${r.diff === 0 ? "text-slate-400" : r.diff > 0 ? "text-amber-700" : "text-rose-700"}`}>
+                        {r.diff > 0 ? "+" : ""}{fmtMoney(r.diff)}
+                      </td>
+                      <td className="px-3 py-2">
+                        {r.diff === 0 ? (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-lg">
+                            <CheckCircle2 size={12} /> Khớp
+                          </span>
+                        ) : (
+                          <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-lg border ${r.diff > 0 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-rose-700 bg-rose-50 border-rose-200"}`}>
+                            <AlertTriangle size={12} /> Chênh lệch
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           )}
         </Card>
@@ -5369,7 +5520,10 @@ export default function App() {
   const bulkImportInvoiceRevenue = async (rows) => {
     if (rows.length === 0) return;
     const dbRows = rows.map((r) => ({
-      invoice_no: r.invoiceNo, invoice_date: r.invoiceDate, amount: r.amount, created_by: currentUser.id,
+      invoice_no: r.invoiceNo, invoice_date: r.invoiceDate, amount: r.amount,
+      cash_amount: r.cashAmount === null || r.cashAmount === undefined ? null : r.cashAmount,
+      bank_amount: r.bankAmount === null || r.bankAmount === undefined ? null : r.bankAmount,
+      created_by: currentUser.id,
     }));
     const { error } = await supabase.from("invoice_revenue").upsert(dbRows, { onConflict: "invoice_no" });
     if (error) throw error;
