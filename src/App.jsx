@@ -305,6 +305,8 @@ function mapFundDailyBalance(r) {
   return {
     date: r.balance_date, openingBalance: Number(r.opening_balance) || 0,
     openingBalanceBank: Number(r.opening_balance_bank) || 0,
+    remittedOwnerCash: Number(r.remitted_owner_cash) || 0,
+    remittedOwnerBank: Number(r.remitted_owner_bank) || 0,
     note: r.note || "", updatedBy: r.updated_by, updatedAt: r.updated_at,
   };
 }
@@ -2879,7 +2881,7 @@ const EXPENSE_PAYMENT_METHOD_META = {
 // (cashier_receipts), Thu/Chi cọc (deposits, lọc theo payment_method), Chi phí (expense_records,
 // lọc theo payment_method). Tồn đầu ngày lấy override trong overridesMap nếu có (dạng
 // {cash, bank}), không thì lấy Tồn cuối của ngày liền trước trong danh sách.
-function buildFundLedger(dates, cashierReceipts, expenseRecords, deposits, overridesMap) {
+function buildFundLedger(dates, cashierReceipts, expenseRecords, deposits, overridesMap, remittedMap = {}) {
   let prevCash = null;
   let prevBank = null;
   return dates.map((d) => {
@@ -2891,14 +2893,16 @@ function buildFundLedger(dates, cashierReceipts, expenseRecords, deposits, overr
     const chiCocBank = deposits.filter((r) => r.direction === "chi" && r.depositDate === d && r.paymentMethod === "ngan_hang").reduce((s, r) => s + r.amount, 0);
     const chiPhiCash = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "tien_mat").reduce((s, r) => s + r.amount, 0);
     const chiPhiBank = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "chuyen_khoan").reduce((s, r) => s + r.amount, 0);
+    const remittedCash = remittedMap[d]?.cash || 0;
+    const remittedBank = remittedMap[d]?.bank || 0;
 
     const ov = overridesMap[d];
     const hasOverride = !!ov;
     const openingCash = hasOverride ? ov.cash : (prevCash !== null ? prevCash : 0);
     const openingBank = hasOverride ? ov.bank : (prevBank !== null ? prevBank : 0);
 
-    const closingCash = openingCash + thuNganCash + thuCocCash - chiPhiCash - chiCocCash;
-    const closingBank = openingBank + thuNganBank + thuCocBank - chiPhiBank - chiCocBank;
+    const closingCash = openingCash + thuNganCash + thuCocCash - chiPhiCash - chiCocCash - remittedCash;
+    const closingBank = openingBank + thuNganBank + thuCocBank - chiPhiBank - chiCocBank - remittedBank;
     prevCash = closingCash;
     prevBank = closingBank;
 
@@ -2906,6 +2910,7 @@ function buildFundLedger(dates, cashierReceipts, expenseRecords, deposits, overr
       date: d, hasOverride,
       openingCash, openingBank,
       thuNganCash, thuNganBank, thuCocCash, thuCocBank, chiPhiCash, chiPhiBank, chiCocCash, chiCocBank,
+      remittedCash, remittedBank,
       closingCash, closingBank,
     };
   });
@@ -3675,9 +3680,9 @@ function NotificationBell({ notifications, onMarkRead, onMarkAllRead }) {
 
 // Sổ quỹ tiền mặt theo ngày — Tồn đầu ngày tự nhảy từ Tồn cuối ngày liền trước, sửa được từng ngày
 // (lưu vào fund_daily_balance); khi sửa 1 ngày, các ngày sau đó trong bảng tự tính lại theo.
-function FundLedgerTable({ ledger, onSaveOpening }) {
+function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted }) {
   const [currency, setCurrency] = useState("cash"); // "cash" | "bank"
-  const [editingDate, setEditingDate] = useState(null);
+  const [editingCell, setEditingCell] = useState(null); // { date, field: "opening" | "remitted" }
   const [draftValue, setDraftValue] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -3686,15 +3691,17 @@ function FundLedgerTable({ ledger, onSaveOpening }) {
   const thuCocKey = currency === "cash" ? "thuCocCash" : "thuCocBank";
   const chiPhiKey = currency === "cash" ? "chiPhiCash" : "chiPhiBank";
   const chiCocKey = currency === "cash" ? "chiCocCash" : "chiCocBank";
+  const remittedKey = currency === "cash" ? "remittedCash" : "remittedBank";
   const closingKey = currency === "cash" ? "closingCash" : "closingBank";
 
-  const startEdit = (row) => { setEditingDate(row.date); setDraftValue(String(row[openingKey])); };
-  const cancelEdit = () => { setEditingDate(null); setDraftValue(""); };
-  const save = async (date) => {
+  const startEdit = (row, field) => { setEditingCell({ date: row.date, field }); setDraftValue(String(field === "opening" ? row[openingKey] : row[remittedKey])); };
+  const cancelEdit = () => { setEditingCell(null); setDraftValue(""); };
+  const save = async (date, field) => {
     setSaving(true);
     try {
-      await onSaveOpening(date, currency, Number(draftValue) || 0);
-      setEditingDate(null);
+      if (field === "opening") await onSaveOpening(date, currency, Number(draftValue) || 0);
+      else await onSaveRemitted(date, currency, Number(draftValue) || 0);
+      setEditingCell(null);
       setDraftValue("");
     } finally {
       setSaving(false);
@@ -3706,7 +3713,7 @@ function FundLedgerTable({ ledger, onSaveOpening }) {
       <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
         <div>
           <p className="font-semibold text-slate-800 text-sm">Sổ quỹ theo ngày</p>
-          <p className="text-xs text-slate-400 mt-0.5">Tồn đầu ngày tự động lấy Tồn cuối ngày liền trước — bấm vào số để sửa tay, các ngày sau đó tự tính lại. Đã cộng cả Thu/Chi cọc.</p>
+          <p className="text-xs text-slate-400 mt-0.5">Tồn đầu ngày tự động lấy Tồn cuối ngày liền trước — bấm vào số để sửa tay, các ngày sau đó tự tính lại. Đã cộng cả Thu/Chi cọc và trừ tiền nộp.</p>
         </div>
         <div className="flex gap-1">
           {[{ key: "cash", label: "Tiền mặt" }, { key: "bank", label: "Ngân hàng" }].map((t) => (
@@ -3731,6 +3738,7 @@ function FundLedgerTable({ ledger, onSaveOpening }) {
               <th className="px-3 py-2 text-right">Thu cọc</th>
               <th className="px-3 py-2 text-right">Chi phí</th>
               <th className="px-3 py-2 text-right">Chi cọc</th>
+              <th className="px-3 py-2 text-right">Nộp cho cô</th>
               <th className="px-3 py-2 text-right">Tồn cuối ngày</th>
             </tr></thead>
             <tbody>
@@ -3738,18 +3746,18 @@ function FundLedgerTable({ ledger, onSaveOpening }) {
                 <tr key={row.date} className="border-b border-slate-50 last:border-0">
                   <td className="px-3 py-2 text-slate-500">{fmtDate(row.date)}</td>
                   <td className="px-3 py-2 text-right">
-                    {editingDate === row.date ? (
+                    {editingCell?.date === row.date && editingCell?.field === "opening" ? (
                       <div className="flex items-center justify-end gap-1">
                         <MoneyField value={draftValue} onChange={setDraftValue} className="w-32 !py-1" />
-                        <button type="button" onClick={() => save(row.date)} disabled={saving} className="text-emerald-600 hover:text-emerald-700 p-1">
+                        <button type="button" onClick={() => save(row.date, "opening")} disabled={saving} className="text-emerald-600 hover:text-emerald-700 p-1">
                           {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
                         </button>
                         <button type="button" onClick={cancelEdit} className="text-slate-400 hover:text-rose-600 p-1"><X size={14} /></button>
                       </div>
                     ) : (
-                      <button type="button" onClick={() => startEdit(row)} className="inline-flex items-center gap-1 font-medium text-slate-700 hover:text-sky-700" title="Bấm để sửa tay">
+                      <button type="button" onClick={() => startEdit(row, "opening")} className="inline-flex items-center gap-1 font-medium text-slate-700 hover:text-sky-700" title="Bấm để sửa tay">
                         {fmtMoney(row[openingKey])}
-                        {row.hasOverride ? <span className="text-[10px] px-1 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">đã sửa</span> : <Pencil size={11} className="text-slate-300" />}
+                        <Pencil size={11} className="text-slate-300" />
                       </button>
                     )}
                   </td>
@@ -3757,6 +3765,22 @@ function FundLedgerTable({ ledger, onSaveOpening }) {
                   <td className="px-3 py-2 text-right text-teal-700">{fmtMoney(row[thuCocKey])}</td>
                   <td className="px-3 py-2 text-right text-rose-700">{fmtMoney(row[chiPhiKey])}</td>
                   <td className="px-3 py-2 text-right text-amber-700">{fmtMoney(row[chiCocKey])}</td>
+                  <td className="px-3 py-2 text-right">
+                    {editingCell?.date === row.date && editingCell?.field === "remitted" ? (
+                      <div className="flex items-center justify-end gap-1">
+                        <MoneyField value={draftValue} onChange={setDraftValue} className="w-32 !py-1" />
+                        <button type="button" onClick={() => save(row.date, "remitted")} disabled={saving} className="text-emerald-600 hover:text-emerald-700 p-1">
+                          {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                        </button>
+                        <button type="button" onClick={cancelEdit} className="text-slate-400 hover:text-rose-600 p-1"><X size={14} /></button>
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => startEdit(row, "remitted")} className="inline-flex items-center gap-1 font-medium text-purple-700 hover:text-purple-800" title="Bấm để nhập số tiền đã nộp">
+                        {fmtMoney(row[remittedKey])}
+                        <Pencil size={11} className="text-slate-300" />
+                      </button>
+                    )}
+                  </td>
                   <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmtMoney(row[closingKey])}</td>
                 </tr>
               ))}
@@ -3777,19 +3801,13 @@ function FundLedgerTable({ ledger, onSaveOpening }) {
 function buildDailyReconciliation(dates, fundLedger, invoiceRevenue) {
   return dates.map((d, i) => {
     const row = fundLedger[i];
-    const thuNgan = row.thuNganCash + row.thuNganBank;
+    const thuNganCash = row.thuNganCash;
+    const thuNganBank = row.thuNganBank;
+    const thuNgan = thuNganCash + thuNganBank;
     const hoaDon = invoiceRevenue.filter((r) => r.invoiceDate === d).reduce((s, r) => s + r.amount, 0);
     const diff = thuNgan - hoaDon;
 
-    const openingTotal = row.openingCash + row.openingBank;
-    const thuCocTotal = row.thuCocCash + row.thuCocBank;
-    const chiPhiTotal = row.chiPhiCash + row.chiPhiBank;
-    const chiCocTotal = row.chiCocCash + row.chiCocBank;
-
-    const tonQuyHoaDon = openingTotal + hoaDon + thuCocTotal - chiPhiTotal - chiCocTotal;
-    const tonQuyThuNgan = row.closingCash + row.closingBank;
-
-    return { date: d, thuNgan, hoaDon, diff, tonQuyHoaDon, tonQuyThuNgan };
+    return { date: d, thuNganCash, thuNganBank, thuNgan, hoaDon, diff };
   });
 }
 
@@ -3800,8 +3818,8 @@ function DailyReconciliationTable({ rows }) {
     <Card className="p-0 overflow-hidden mb-5">
       <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
         <div>
-          <p className="font-semibold text-slate-800 text-sm">Đối chiếu theo ngày</p>
-          <p className="text-xs text-slate-400 mt-0.5">So sánh Tồn quỹ dự kiến (theo hoá đơn Excel) với Tồn quỹ thực tế (theo Thu ngân báo cáo) cho từng ngày — dòng nào lệch sẽ tô đỏ/vàng để dễ tra.</p>
+          <p className="font-semibold text-slate-800 text-sm">Đối chiếu Doanh thu theo ngày</p>
+          <p className="text-xs text-slate-400 mt-0.5">So sánh Doanh thu Thu ngân báo cáo (tách Tiền mặt/Ngân hàng) với Doanh thu theo hoá đơn Excel cho từng ngày.</p>
         </div>
         {mismatchCount > 0 && (
           <span className="text-xs px-2 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-medium flex items-center gap-1">
@@ -3815,9 +3833,9 @@ function DailyReconciliationTable({ rows }) {
             <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
               <th className="px-3 py-2">Ngày</th>
               <th className="px-3 py-2 text-right">Doanh thu hoá đơn</th>
-              <th className="px-3 py-2 text-right">Thu ngân báo cáo</th>
-              <th className="px-3 py-2 text-right">Tồn quỹ theo hoá đơn</th>
-              <th className="px-3 py-2 text-right">Tồn quỹ theo Thu ngân</th>
+              <th className="px-3 py-2 text-right">Thu ngân - Tiền mặt</th>
+              <th className="px-3 py-2 text-right">Thu ngân - Ngân hàng</th>
+              <th className="px-3 py-2 text-right">Tổng Thu ngân</th>
               <th className="px-3 py-2 text-right">Chênh lệch</th>
               <th className="px-3 py-2">Trạng thái</th>
             </tr></thead>
@@ -3829,9 +3847,9 @@ function DailyReconciliationTable({ rows }) {
                   <tr key={r.date} className={`border-b border-slate-50 last:border-0 ${rowClass}`}>
                     <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
                     <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.hoaDon)}</td>
-                    <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.thuNgan)}</td>
-                    <td className="px-3 py-2 text-right text-indigo-700">{fmtMoney(r.tonQuyHoaDon)}</td>
-                    <td className="px-3 py-2 text-right text-teal-700">{fmtMoney(r.tonQuyThuNgan)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.thuNganCash)}</td>
+                    <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.thuNganBank)}</td>
+                    <td className="px-3 py-2 text-right font-medium text-slate-800">{fmtMoney(r.thuNgan)}</td>
                     <td className={`px-3 py-2 text-right font-semibold ${r.diff === 0 ? "text-slate-400" : r.diff > 0 ? "text-amber-700" : "text-rose-700"}`}>
                       {r.diff > 0 ? "+" : ""}{fmtMoney(r.diff)}
                     </td>
@@ -3859,7 +3877,7 @@ function DailyReconciliationTable({ rows }) {
   );
 }
 
-function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpeningBalance, onSetThuNganEditEnabled }) {
+function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpeningBalance, onUpsertRemittedAmount, onSetThuNganEditEnabled }) {
   const [from, setFrom] = useState(FUND_START_DATE);
   const [to, setTo] = useState(todayISO());
   const [viewMode, setViewMode] = useState("ngay"); // "ngay" | "tongthe"
@@ -3879,7 +3897,8 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
   // tiền mỗi ngày: Thu ngân, Thu cọc, Chi phí, Chi cọc (deposits/expense_records).
   const ledgerDates = enumerateDatesISO(from, to);
   const overridesMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, { cash: b.openingBalance, bank: b.openingBalanceBank }]));
-  const fundLedger = buildFundLedger(ledgerDates, data.cashierReceipts, data.expenseRecords, data.deposits, overridesMap);
+  const remittedMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, { cash: b.remittedOwnerCash, bank: b.remittedOwnerBank }]));
+  const fundLedger = buildFundLedger(ledgerDates, data.cashierReceipts, data.expenseRecords, data.deposits, overridesMap, remittedMap);
   const openingBalanceNum = fundLedger.length > 0 ? fundLedger[0].openingCash + fundLedger[0].openingBank : 0;
   const dailyReconciliation = buildDailyReconciliation(ledgerDates, fundLedger, data.invoiceRevenue);
 
@@ -3894,11 +3913,14 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
   const totalChiPhiBank = sumField("chiPhiBank");
   const totalChiCocCash = sumField("chiCocCash");
   const totalChiCocBank = sumField("chiCocBank");
+  const totalRemittedCash = sumField("remittedCash");
+  const totalRemittedBank = sumField("remittedBank");
   const closingCash = fundLedger.length > 0 ? fundLedger[fundLedger.length - 1].closingCash : 0;
   const closingBank = fundLedger.length > 0 ? fundLedger[fundLedger.length - 1].closingBank : 0;
 
   // Đối chiếu tổng thể cả khoảng: Tồn quỹ theo hoá đơn Excel vs theo Thu ngân báo cáo.
-  const tonQuyHoaDonTongThe = openingBalanceNum + totalInvoiceRevenue + totalThuCocCash + totalThuCocBank - totalChiPhiCash - totalChiPhiBank - totalChiCocCash - totalChiCocBank;
+  // Trừ cả "Nộp cho cô" ở vế hoá đơn để nhất quán với closingCash/closingBank (đã trừ khoản này).
+  const tonQuyHoaDonTongThe = openingBalanceNum + totalInvoiceRevenue + totalThuCocCash + totalThuCocBank - totalChiPhiCash - totalChiPhiBank - totalChiCocCash - totalChiCocBank - totalRemittedCash - totalRemittedBank;
   const tonQuyThuNganTongThe = closingCash + closingBank;
   const diffTongThe = tonQuyThuNganTongThe - tonQuyHoaDonTongThe;
 
@@ -3973,11 +3995,17 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
                 <td className="px-3 py-2 text-right">{fmtMoney(totalChiPhiBank)}</td>
                 <td className="px-3 py-2 text-right font-semibold">{fmtMoney(totalChiPhiCash + totalChiPhiBank)}</td>
               </tr>
-              <tr>
+              <tr className="border-b border-slate-50">
                 <td className="px-3 py-2 text-amber-700 font-medium">Chi cọc</td>
                 <td className="px-3 py-2 text-right">{fmtMoney(totalChiCocCash)}</td>
                 <td className="px-3 py-2 text-right">{fmtMoney(totalChiCocBank)}</td>
                 <td className="px-3 py-2 text-right font-semibold">{fmtMoney(totalChiCocCash + totalChiCocBank)}</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2 text-purple-700 font-medium">Nộp cho cô</td>
+                <td className="px-3 py-2 text-right">{fmtMoney(totalRemittedCash)}</td>
+                <td className="px-3 py-2 text-right">{fmtMoney(totalRemittedBank)}</td>
+                <td className="px-3 py-2 text-right font-semibold">{fmtMoney(totalRemittedCash + totalRemittedBank)}</td>
               </tr>
             </tbody>
           </table>
@@ -3986,7 +4014,7 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
 
       <InvoiceRevenueImportForm onImport={onBulkImportInvoiceRevenue} />
 
-      <FundLedgerTable ledger={fundLedger} onSaveOpening={onUpsertOpeningBalance} />
+      <FundLedgerTable ledger={fundLedger} onSaveOpening={onUpsertOpeningBalance} onSaveRemitted={onUpsertRemittedAmount} />
 
       {/* Đối chiếu Doanh thu & Tồn quỹ — xem theo từng ngày hoặc tổng thể cả khoảng đang lọc */}
       <Card className="p-4 sm:p-5 mb-2">
@@ -5301,6 +5329,17 @@ export default function App() {
     showToast("Đã cập nhật tồn quỹ đầu ngày");
   };
 
+  // Tiền nộp cho chủ (cô) mỗi ngày — trừ khỏi Tồn cuối ngày trong Sổ quỹ theo ngày.
+  const upsertFundRemittedAmount = async (date, field, amount) => {
+    const column = field === "bank" ? "remitted_owner_bank" : "remitted_owner_cash";
+    const { error } = await supabase
+      .from("fund_daily_balance")
+      .upsert({ balance_date: date, [column]: Number(amount) || 0, updated_by: currentUser.id }, { onConflict: "balance_date" });
+    if (error) throw error;
+    await refreshAll();
+    showToast("Đã cập nhật tiền nộp cho cô");
+  };
+
   // Mở/khoá quyền tự sửa-xoá phiếu thu & phiếu chi của tài khoản Thu ngân — cấu hình chung áp
   // dụng cho mọi tài khoản thu_ngan, do Quản lý hoặc Quản lý (Báo cáo) bật/tắt trong tab Quỹ.
   const setThuNganEditEnabled = async (enabled) => {
@@ -5537,7 +5576,7 @@ export default function App() {
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
             {tab === "coc" && (canViewReports || isThuNgan) && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
-            {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
+            {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onUpsertRemittedAmount={upsertFundRemittedAmount} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
             {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} onUpdate={updateCashierReceipt} onDelete={deleteCashierReceipt} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
