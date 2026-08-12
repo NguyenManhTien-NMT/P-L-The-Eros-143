@@ -60,6 +60,8 @@ function daysAgoISO(n) {
   d.setDate(d.getDate() - n);
   return d.toISOString().slice(0, 10);
 }
+// Ngày bắt đầu theo dõi quỹ — mặc định cho các bộ lọc trong tab Quỹ.
+const FUND_START_DATE = "2026-08-01";
 // Liệt kê danh sách ngày (yyyy-mm-dd) từ "from" đến "to", tăng dần. Giới hạn 62 ngày để tránh render quá nặng.
 function enumerateDatesISO(from, to) {
   if (!from || !to) return [];
@@ -3817,7 +3819,7 @@ function DailyReconciliationTable({ rows }) {
               <th className="px-3 py-2 text-right">Tồn quỹ theo hoá đơn</th>
               <th className="px-3 py-2 text-right">Tồn quỹ theo Thu ngân</th>
               <th className="px-3 py-2 text-right">Chênh lệch</th>
-              <th className="px-3 py-2"></th>
+              <th className="px-3 py-2">Trạng thái</th>
             </tr></thead>
             <tbody>
               {rows.map((r) => {
@@ -3834,12 +3836,15 @@ function DailyReconciliationTable({ rows }) {
                       {r.diff > 0 ? "+" : ""}{fmtMoney(r.diff)}
                     </td>
                     <td className="px-3 py-2">
-                      {noData ? null : r.diff === 0 ? (
-                        <CheckCircle2 size={14} className="text-emerald-500" />
+                      {noData ? (
+                        <span className="text-xs text-slate-300">Chưa có dữ liệu</span>
+                      ) : r.diff === 0 ? (
+                        <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-lg">
+                          <CheckCircle2 size={12} /> Khớp
+                        </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 text-xs">
-                          <AlertTriangle size={13} className={r.diff > 0 ? "text-amber-600" : "text-rose-600"} />
-                          {r.diff > 0 ? "Thừa" : "Thiếu"}
+                        <span className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-lg border ${r.diff > 0 ? "text-amber-700 bg-amber-50 border-amber-200" : "text-rose-700 bg-rose-50 border-rose-200"}`}>
+                          <AlertTriangle size={12} /> Chênh lệch
                         </span>
                       )}
                     </td>
@@ -3854,9 +3859,10 @@ function DailyReconciliationTable({ rows }) {
   );
 }
 
-function QuyModule({ data, currentUser, onBulkImportFromBills, onBulkImportInvoiceRevenue, onUpsertOpeningBalance, onSetThuNganEditEnabled }) {
-  const [from, setFrom] = useState(daysAgoISO(30));
+function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpeningBalance, onSetThuNganEditEnabled }) {
+  const [from, setFrom] = useState(FUND_START_DATE);
   const [to, setTo] = useState(todayISO());
+  const [viewMode, setViewMode] = useState("ngay"); // "ngay" | "tongthe"
   const thuNganEditEnabled = data.settings?.thu_ngan_edit_enabled !== "false";
   const [togglingEdit, setTogglingEdit] = useState(false);
   const handleToggleEdit = async () => {
@@ -3864,45 +3870,41 @@ function QuyModule({ data, currentUser, onBulkImportFromBills, onBulkImportInvoi
     try { await onSetThuNganEditEnabled(!thuNganEditEnabled); } finally { setTogglingEdit(false); }
   };
 
-  const receipts = dailyReceiptsFromSales(data.dishSales, from, to);
-  const totalThu = receipts.reduce((s, r) => s + r.amount, 0);
-
-  // Doanh thu bán hàng theo hoá đơn — import trực tiếp từ file "Bảng kê hoá đơn" POS,
-  // độc lập với totalThu (vốn tính từ dish_sales/"Xuất kho tự động từ báo cáo doanh thu").
+  // Doanh thu bán hàng theo hoá đơn — import trực tiếp từ file "Bảng kê hoá đơn" POS.
   const invoiceRevenueInRange = data.invoiceRevenue.filter((r) => r.invoiceDate >= from && r.invoiceDate <= to);
   const totalInvoiceRevenue = invoiceRevenueInRange.reduce((s, r) => s + r.amount, 0);
 
-  // Phiếu chi = toàn bộ expense_records (trừ nhóm nvl — NVL tính riêng vì có công nợ, chưa chắc đã chi tiền)
-  // + phần NVL đã trả bằng tiền mặt thực tế (payment_type = tien_mat) để sổ quỹ phản ánh đúng dòng tiền thật.
-  const chiExpense = data.expenseRecords.filter((r) => r.category !== "nvl" && r.expenseDate >= from && r.expenseDate <= to);
-  const chiNvlTienMat = data.importRecords.filter((r) => r.paymentType === "tien_mat" && r.importDate >= from && r.importDate <= to);
-  const totalChi = chiExpense.reduce((s, r) => s + r.amount, 0) + chiNvlTienMat.reduce((s, r) => s + r.totalAmount, 0);
-
-  const soDu = totalThu - totalChi;
-
-  // Thu ngân đã thu (Thu tiền mặt + Thu tiền ngân hàng) — độc lập với "Phiếu thu" tính từ báo cáo bán hàng.
-  const cashierInRange = data.cashierReceipts.filter((r) => r.receiptDate >= from && r.receiptDate <= to);
-  const totalThuNgan = cashierInRange.reduce((s, r) => s + r.cashAmount + r.bankAmount, 0);
-  const totalThuNganCash = cashierInRange.reduce((s, r) => s + r.cashAmount, 0);
-  const totalThuNganBank = cashierInRange.reduce((s, r) => s + r.bankAmount, 0);
-
   // Sổ quỹ theo ngày (Tiền mặt & Ngân hàng riêng): Tồn đầu ngày tự động = Tồn cuối ngày liền
-  // trước, có thể ghi đè tay từng loại tiền (lưu vào bảng fund_daily_balance) — dùng để đối
-  // chiếu tồn quỹ thực tế bên dưới. Đã cộng cả Thu/Chi cọc (deposits) vào dòng tiền mỗi ngày.
+  // trước, có thể ghi đè tay từng loại tiền (lưu vào bảng fund_daily_balance). Đi qua đủ 4 dòng
+  // tiền mỗi ngày: Thu ngân, Thu cọc, Chi phí, Chi cọc (deposits/expense_records).
   const ledgerDates = enumerateDatesISO(from, to);
   const overridesMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, { cash: b.openingBalance, bank: b.openingBalanceBank }]));
   const fundLedger = buildFundLedger(ledgerDates, data.cashierReceipts, data.expenseRecords, data.deposits, overridesMap);
   const openingBalanceNum = fundLedger.length > 0 ? fundLedger[0].openingCash + fundLedger[0].openingBank : 0;
   const dailyReconciliation = buildDailyReconciliation(ledgerDates, fundLedger, data.invoiceRevenue);
 
-  // So sánh Thu ngân (tiền mặt + ngân hàng) vs Doanh thu bán hàng theo hoá đơn (Bảng kê hoá đơn) —
-  // dùng đúng số tiền thực thu để đối chiếu, không dùng số tính ngược từ Xuất kho.
-  const diff = totalThuNgan - totalInvoiceRevenue;
-  const diffPct = totalInvoiceRevenue > 0 ? (diff / totalInvoiceRevenue) * 100 : 0;
+  // Tổng hợp theo khoảng đang lọc — tách riêng Tiền mặt / Ngân hàng cho từng chỉ tiêu.
+  const sumField = (key) => fundLedger.reduce((s, r) => s + r[key], 0);
+  const totalThuNganCash = sumField("thuNganCash");
+  const totalThuNganBank = sumField("thuNganBank");
+  const totalThuNgan = totalThuNganCash + totalThuNganBank;
+  const totalThuCocCash = sumField("thuCocCash");
+  const totalThuCocBank = sumField("thuCocBank");
+  const totalChiPhiCash = sumField("chiPhiCash");
+  const totalChiPhiBank = sumField("chiPhiBank");
+  const totalChiCocCash = sumField("chiCocCash");
+  const totalChiCocBank = sumField("chiCocBank");
+  const closingCash = fundLedger.length > 0 ? fundLedger[fundLedger.length - 1].closingCash : 0;
+  const closingBank = fundLedger.length > 0 ? fundLedger[fundLedger.length - 1].closingBank : 0;
+
+  // Đối chiếu tổng thể cả khoảng: Tồn quỹ theo hoá đơn Excel vs theo Thu ngân báo cáo.
+  const tonQuyHoaDonTongThe = openingBalanceNum + totalInvoiceRevenue + totalThuCocCash + totalThuCocBank - totalChiPhiCash - totalChiPhiBank - totalChiCocCash - totalChiCocBank;
+  const tonQuyThuNganTongThe = closingCash + closingBank;
+  const diffTongThe = tonQuyThuNganTongThe - tonQuyHoaDonTongThe;
 
   return (
     <div>
-      <SectionTitle icon={Wallet} title="Quỹ" subtitle="Sổ quỹ thu-chi: Phiếu thu tự động theo doanh số bán hàng, xem lại Phiếu chi đã ghi nhận ở tab Chi phí" />
+      <SectionTitle icon={Wallet} title="Quỹ" subtitle="Đối chiếu Doanh thu (hoá đơn Excel & Thu ngân báo cáo) và Tồn quỹ mỗi ngày" />
 
       <Card className="p-4 sm:p-5 mb-5">
         <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -3936,121 +3938,103 @@ function QuyModule({ data, currentUser, onBulkImportFromBills, onBulkImportInvoi
         </div>
       </Card>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+      <div className="grid grid-cols-2 gap-3 mb-5">
         <MetricCard label="Doanh thu bán hàng theo hoá đơn" value={fmtMoney(totalInvoiceRevenue)} icon={FileText} accent="indigo" />
-        <MetricCard label="Doanh thu từ phiếu xuất kho" value={fmtMoney(totalThu)} icon={TrendingUp} accent="emerald" />
-        <MetricCard label="Tổng chi" value={fmtMoney(totalChi)} icon={TrendingDown} accent="rose" />
-        <MetricCard label="Số dư quỹ" value={fmtMoney(soDu)} icon={Wallet} accent={soDu >= 0 ? "teal" : "rose"} />
+        <MetricCard label="Tồn quỹ cuối kỳ (theo Thu ngân)" value={fmtMoney(closingCash + closingBank)} icon={Wallet} accent={closingCash + closingBank >= 0 ? "teal" : "rose"} />
       </div>
+
+      {/* Phân loại Tổng thu / Tổng chi / Cọc theo Tiền mặt & Ngân hàng */}
+      <Card className="p-4 sm:p-5 mb-5">
+        <p className="font-semibold text-slate-800 text-sm mb-3">Tổng thu, tổng chi &amp; cọc theo hình thức</p>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+              <th className="px-3 py-2">Chỉ tiêu</th>
+              <th className="px-3 py-2 text-right">Tiền mặt</th>
+              <th className="px-3 py-2 text-right">Ngân hàng</th>
+              <th className="px-3 py-2 text-right">Tổng</th>
+            </tr></thead>
+            <tbody>
+              <tr className="border-b border-slate-50">
+                <td className="px-3 py-2 text-emerald-700 font-medium">Thu ngân báo cáo</td>
+                <td className="px-3 py-2 text-right">{fmtMoney(totalThuNganCash)}</td>
+                <td className="px-3 py-2 text-right">{fmtMoney(totalThuNganBank)}</td>
+                <td className="px-3 py-2 text-right font-semibold">{fmtMoney(totalThuNganCash + totalThuNganBank)}</td>
+              </tr>
+              <tr className="border-b border-slate-50">
+                <td className="px-3 py-2 text-teal-700 font-medium">Thu cọc</td>
+                <td className="px-3 py-2 text-right">{fmtMoney(totalThuCocCash)}</td>
+                <td className="px-3 py-2 text-right">{fmtMoney(totalThuCocBank)}</td>
+                <td className="px-3 py-2 text-right font-semibold">{fmtMoney(totalThuCocCash + totalThuCocBank)}</td>
+              </tr>
+              <tr className="border-b border-slate-50">
+                <td className="px-3 py-2 text-rose-700 font-medium">Chi phí</td>
+                <td className="px-3 py-2 text-right">{fmtMoney(totalChiPhiCash)}</td>
+                <td className="px-3 py-2 text-right">{fmtMoney(totalChiPhiBank)}</td>
+                <td className="px-3 py-2 text-right font-semibold">{fmtMoney(totalChiPhiCash + totalChiPhiBank)}</td>
+              </tr>
+              <tr>
+                <td className="px-3 py-2 text-amber-700 font-medium">Chi cọc</td>
+                <td className="px-3 py-2 text-right">{fmtMoney(totalChiCocCash)}</td>
+                <td className="px-3 py-2 text-right">{fmtMoney(totalChiCocBank)}</td>
+                <td className="px-3 py-2 text-right font-semibold">{fmtMoney(totalChiCocCash + totalChiCocBank)}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
 
       <InvoiceRevenueImportForm onImport={onBulkImportInvoiceRevenue} />
 
       <FundLedgerTable ledger={fundLedger} onSaveOpening={onUpsertOpeningBalance} />
 
-      <DailyReconciliationTable rows={dailyReconciliation} />
-
-      {/* So sánh Thu ngân (tiền mặt+ngân hàng) đã thu vs Doanh thu bán hàng theo hoá đơn — cảnh báo lệch quỹ */}
-      <Card className="p-4 sm:p-5 mb-5">
-        <p className="font-semibold text-slate-800 text-sm mb-3">Đối chiếu tồn quỹ</p>
-        <p className="text-xs text-slate-400 mb-3">Tồn quỹ đầu ngày ({fmtDate(from)}) lấy từ bảng "Sổ quỹ tiền mặt theo ngày" ở trên — sửa ở đó nếu cần. So sánh: (Tồn đầu ngày + Doanh thu theo hoá đơn Excel) so với (Tồn đầu ngày + Doanh thu Thu ngân báo cáo).</p>
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
-          <div className="bg-slate-50 rounded-xl px-3 py-2">
-            <p className="text-xs text-slate-500">Thu ngân - Tiền mặt</p>
-            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalThuNganCash)}</p>
-          </div>
-          <div className="bg-slate-50 rounded-xl px-3 py-2">
-            <p className="text-xs text-slate-500">Thu ngân - Ngân hàng</p>
-            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalThuNganBank)}</p>
-          </div>
-          <div className="bg-slate-50 rounded-xl px-3 py-2">
-            <p className="text-xs text-slate-500">Tổng Thu ngân đã thu</p>
-            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalThuNgan)}</p>
-          </div>
-          <div className="bg-slate-50 rounded-xl px-3 py-2">
-            <p className="text-xs text-slate-500">Doanh thu bán hàng theo hoá đơn</p>
-            <p className="text-sm font-semibold text-slate-700">{fmtMoney(totalInvoiceRevenue)}</p>
+      {/* Đối chiếu Doanh thu & Tồn quỹ — xem theo từng ngày hoặc tổng thể cả khoảng đang lọc */}
+      <Card className="p-4 sm:p-5 mb-2">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <p className="font-semibold text-slate-800 text-sm">Đối chiếu Doanh thu &amp; Tồn quỹ</p>
+          <div className="flex gap-1">
+            {[{ key: "ngay", label: "Theo ngày" }, { key: "tongthe", label: "Tổng thể" }].map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setViewMode(t.key)}
+                className={`text-xs px-2.5 py-1 rounded-lg border ${viewMode === t.key ? "bg-sky-700 text-white border-sky-700" : "text-slate-500 border-slate-200 hover:bg-slate-50"}`}
+              >
+                {t.label}
+              </button>
+            ))}
           </div>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
-          <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2">
-            <p className="text-xs text-indigo-700">Tồn quỹ dự kiến — theo hoá đơn Excel</p>
-            <p className="text-sm font-semibold text-indigo-800">Tồn đầu ngày {fmtMoney(openingBalanceNum)} + Doanh thu {fmtMoney(totalInvoiceRevenue)} = <span className="text-base">{fmtMoney(openingBalanceNum + totalInvoiceRevenue)}</span></p>
-          </div>
-          <div className="bg-teal-50 border border-teal-100 rounded-xl px-3 py-2">
-            <p className="text-xs text-teal-700">Tồn quỹ theo Thu ngân báo cáo</p>
-            <p className="text-sm font-semibold text-teal-800">Tồn đầu ngày {fmtMoney(openingBalanceNum)} + Thu ngân {fmtMoney(totalThuNgan)} = <span className="text-base">{fmtMoney(openingBalanceNum + totalThuNgan)}</span></p>
-          </div>
-        </div>
-        {totalInvoiceRevenue === 0 && totalThuNgan === 0 ? (
-          <p className="text-xs text-slate-400">Chưa có đủ dữ liệu để đối chiếu trong khoảng thời gian này — cần import "Bảng kê hoá đơn" và/hoặc có phiếu Thu ngân.</p>
-        ) : diff === 0 ? (
-          <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2">
-            <CheckCircle2 size={15} /> Khớp tuyệt đối — tồn quỹ theo hoá đơn Excel và theo Thu ngân báo cáo bằng nhau.
-          </div>
-        ) : diff > 0 ? (
-          <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
-            <AlertTriangle size={15} /> <b>Thừa quỹ</b> {fmtMoney(diff)} ({diffPct.toFixed(1)}%) — Thu ngân báo thu nhiều hơn doanh thu theo hoá đơn, tồn quỹ theo Thu ngân đang cao hơn.
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
-            <AlertTriangle size={15} /> Thiếu {fmtMoney(Math.abs(diff))} ({Math.abs(diffPct).toFixed(1)}%) — tồn quỹ theo Thu ngân đang thấp hơn theo hoá đơn Excel. Có thể <b>nhân sự chưa cập nhật hết các chi phí phát sinh</b> (chi trực tiếp từ quỹ chưa ghi phiếu chi), hoặc Thu ngân chưa nộp đủ.
-          </div>
-        )}
       </Card>
 
-      {onBulkImportFromBills && (
-        <XuatExcelImportForm data={data} onImport={onBulkImportFromBills} />
+      {viewMode === "ngay" ? (
+        <DailyReconciliationTable rows={dailyReconciliation} />
+      ) : (
+        <Card className="p-4 sm:p-5 mb-5">
+          <p className="text-xs text-slate-400 mb-3">Tổng thể từ {fmtDate(from)} đến {fmtDate(to)} — Tồn đầu kỳ {fmtMoney(openingBalanceNum)}.</p>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-3">
+            <div className="bg-indigo-50 border border-indigo-100 rounded-xl px-3 py-2">
+              <p className="text-xs text-indigo-700">Tồn quỹ theo hoá đơn Excel</p>
+              <p className="text-lg font-semibold text-indigo-800">{fmtMoney(tonQuyHoaDonTongThe)}</p>
+            </div>
+            <div className="bg-teal-50 border border-teal-100 rounded-xl px-3 py-2">
+              <p className="text-xs text-teal-700">Tồn quỹ theo Thu ngân báo cáo</p>
+              <p className="text-lg font-semibold text-teal-800">{fmtMoney(tonQuyThuNganTongThe)}</p>
+            </div>
+          </div>
+          {totalInvoiceRevenue === 0 && totalThuNgan === 0 ? (
+            <p className="text-xs text-slate-400">Chưa có đủ dữ liệu để đối chiếu trong khoảng thời gian này.</p>
+          ) : diffTongThe === 0 ? (
+            <div className="flex items-center gap-2 text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-xl px-3 py-2 font-medium">
+              <CheckCircle2 size={16} /> Khớp — Tồn quỹ theo hoá đơn Excel và theo Thu ngân báo cáo bằng nhau.
+            </div>
+          ) : (
+            <div className="flex items-center gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2 font-medium">
+              <AlertTriangle size={16} /> Chênh lệch {fmtMoney(Math.abs(diffTongThe))} — {diffTongThe > 0 ? "Thu ngân báo cao hơn hoá đơn Excel" : "Thu ngân báo thấp hơn hoá đơn Excel"}.
+            </div>
+          )}
+        </Card>
       )}
-
-      <div className="grid lg:grid-cols-2 gap-5">
-        <Card className="p-0 overflow-hidden">
-          <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu thu (tự động từ báo cáo doanh thu)</p></div>
-          {receipts.length === 0 ? <EmptyState icon={TrendingUp} text="Chưa có dữ liệu bán hàng trong khoảng này." /> : (
-            <div className="overflow-x-auto max-h-96 overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                  <th className="px-3 py-2">Ngày</th><th className="px-3 py-2 text-right">Số món bán</th><th className="px-3 py-2 text-right">Số tiền thu</th>
-                </tr></thead>
-                <tbody>
-                  {receipts.map((r) => (
-                    <tr key={r.date} className="border-b border-slate-50 last:border-0">
-                      <td className="px-3 py-2 font-medium text-slate-700">{fmtDate(r.date)}</td>
-                      <td className="px-3 py-2 text-right text-slate-500">{fmtNumber(r.qty)}</td>
-                      <td className="px-3 py-2 text-right font-medium text-emerald-700">{fmtMoney(r.amount)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-
-        <Card className="p-0 overflow-hidden">
-          <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu chi gần đây</p></div>
-          {chiExpense.length === 0 && chiNvlTienMat.length === 0 ? <EmptyState icon={TrendingDown} text="Chưa có khoản chi nào trong khoảng này." /> : (
-            <div className="overflow-x-auto max-h-96 overflow-y-auto">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                  <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Khoản chi</th><th className="px-3 py-2">Nhóm</th><th className="px-3 py-2 text-right">Số tiền</th>
-                </tr></thead>
-                <tbody>
-                  {[...chiExpense.map((r) => ({ date: r.expenseDate, name: r.itemName, group: EXPENSE_CATEGORY_META[r.category]?.label || r.category, amount: r.amount })),
-                    ...chiNvlTienMat.map((r) => ({ date: r.importDate, name: "NVL (tiền mặt)", group: "Nguyên vật liệu", amount: r.totalAmount }))]
-                    .sort((a, b) => b.date.localeCompare(a.date))
-                    .map((r, i) => (
-                      <tr key={i} className="border-b border-slate-50 last:border-0">
-                        <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
-                        <td className="px-3 py-2">{r.name}</td>
-                        <td className="px-3 py-2 text-slate-500">{r.group}</td>
-                        <td className="px-3 py-2 text-right font-medium text-rose-700">{fmtMoney(r.amount)}</td>
-                      </tr>
-                    ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
-      </div>
     </div>
   );
 }
@@ -5553,7 +5537,7 @@ export default function App() {
             {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
             {tab === "coc" && (canViewReports || isThuNgan) && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
-            {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportFromBills={bulkImportXuatFromBills} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
+            {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
             {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} onUpdate={updateCashierReceipt} onDelete={deleteCashierReceipt} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
