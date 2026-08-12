@@ -3752,7 +3752,7 @@ function NotificationBell({ notifications, onMarkRead, onMarkAllRead }) {
 
 // Sổ quỹ tiền mặt theo ngày — Tồn đầu ngày tự nhảy từ Tồn cuối ngày liền trước, sửa được từng ngày
 // (lưu vào fund_daily_balance); khi sửa 1 ngày, các ngày sau đó trong bảng tự tính lại theo.
-function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted }) {
+function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted, readOnly = false }) {
   const [currency, setCurrency] = useState("cash"); // "cash" | "bank"
   const [editingCell, setEditingCell] = useState(null); // { date, field: "opening" | "remitted" }
   const [draftValue, setDraftValue] = useState("");
@@ -3785,7 +3785,11 @@ function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted }) {
       <div className="p-4 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
         <div>
           <p className="font-semibold text-slate-800 text-sm">Sổ quỹ theo ngày</p>
-          <p className="text-xs text-slate-400 mt-0.5">Tồn đầu ngày tự động lấy Tồn cuối ngày liền trước — bấm vào số để sửa tay, các ngày sau đó tự tính lại. Đã cộng cả Thu/Chi cọc và trừ tiền nộp.</p>
+          <p className="text-xs text-slate-400 mt-0.5">
+            {readOnly
+              ? "Tồn đầu ngày tự động lấy Tồn cuối ngày liền trước. Đã cộng cả Thu/Chi cọc và trừ tiền nộp."
+              : "Tồn đầu ngày tự động lấy Tồn cuối ngày liền trước — bấm vào số để sửa tay, các ngày sau đó tự tính lại. Đã cộng cả Thu/Chi cọc và trừ tiền nộp."}
+          </p>
         </div>
         <div className="flex gap-1">
           {[{ key: "cash", label: "Tiền mặt" }, { key: "bank", label: "Ngân hàng" }].map((t) => (
@@ -3818,7 +3822,7 @@ function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted }) {
                 <tr key={row.date} className="border-b border-slate-50 last:border-0">
                   <td className="px-3 py-2 text-slate-500">{fmtDate(row.date)}</td>
                   <td className="px-3 py-2 text-right">
-                    {editingCell?.date === row.date && editingCell?.field === "opening" ? (
+                    {!readOnly && editingCell?.date === row.date && editingCell?.field === "opening" ? (
                       <div className="flex items-center justify-end gap-1">
                         <MoneyField value={draftValue} onChange={setDraftValue} className="w-32 !py-1" />
                         <button type="button" onClick={() => save(row.date, "opening")} disabled={saving} className="text-emerald-600 hover:text-emerald-700 p-1">
@@ -3826,6 +3830,8 @@ function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted }) {
                         </button>
                         <button type="button" onClick={cancelEdit} className="text-slate-400 hover:text-rose-600 p-1"><X size={14} /></button>
                       </div>
+                    ) : readOnly ? (
+                      <span className="font-medium text-slate-700">{fmtMoney(row[openingKey])}</span>
                     ) : (
                       <button type="button" onClick={() => startEdit(row, "opening")} className="inline-flex items-center gap-1 font-medium text-slate-700 hover:text-sky-700" title="Bấm để sửa tay">
                         {fmtMoney(row[openingKey])}
@@ -3838,7 +3844,7 @@ function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted }) {
                   <td className="px-3 py-2 text-right text-rose-700">{fmtMoney(row[chiPhiKey])}</td>
                   <td className="px-3 py-2 text-right text-amber-700">{fmtMoney(row[chiCocKey])}</td>
                   <td className="px-3 py-2 text-right">
-                    {editingCell?.date === row.date && editingCell?.field === "remitted" ? (
+                    {!readOnly && editingCell?.date === row.date && editingCell?.field === "remitted" ? (
                       <div className="flex items-center justify-end gap-1">
                         <MoneyField value={draftValue} onChange={setDraftValue} className="w-32 !py-1" />
                         <button type="button" onClick={() => save(row.date, "remitted")} disabled={saving} className="text-emerald-600 hover:text-emerald-700 p-1">
@@ -3846,6 +3852,8 @@ function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted }) {
                         </button>
                         <button type="button" onClick={cancelEdit} className="text-slate-400 hover:text-rose-600 p-1"><X size={14} /></button>
                       </div>
+                    ) : readOnly ? (
+                      <span className="font-medium text-purple-700">{fmtMoney(row[remittedKey])}</span>
                     ) : (
                       <button type="button" onClick={() => startEdit(row, "remitted")} className="inline-flex items-center gap-1 font-medium text-purple-700 hover:text-purple-800" title="Bấm để nhập số tiền đã nộp">
                         {fmtMoney(row[remittedKey])}
@@ -4002,6 +4010,33 @@ function DailyReconciliationTable({ rows }) {
         </div>
       )}
     </Card>
+  );
+}
+
+// Báo cáo Sổ quỹ theo ngày (Tiền mặt/Ngân hàng) cho tài khoản Thu ngân — CHỈ XEM, không có
+// quyền sửa Tồn đầu ngày/Nộp cho cô (2 việc đó chỉ Quản lý/Báo cáo mới làm được, trong tab Quỹ).
+function SoQuyBaoCaoModule({ data }) {
+  const [from, setFrom] = useState(FUND_START_DATE);
+  const [to, setTo] = useState(todayISO());
+
+  const ledgerDates = enumerateDatesISO(from, to);
+  const overridesMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, { cash: b.openingBalance, bank: b.openingBalanceBank }]));
+  const remittedMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, { cash: b.remittedOwnerCash, bank: b.remittedOwnerBank }]));
+  const fundLedger = buildFundLedger(ledgerDates, data.cashierReceipts, data.expenseRecords, data.deposits, overridesMap, remittedMap);
+
+  return (
+    <div>
+      <SectionTitle icon={BarChart3} title="Sổ quỹ theo ngày" subtitle="Báo cáo Tồn quỹ Tiền mặt & Ngân hàng theo từng ngày" />
+
+      <Card className="p-4 sm:p-5 mb-5">
+        <div className="grid sm:grid-cols-2 gap-3">
+          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </div>
+      </Card>
+
+      <FundLedgerTable ledger={fundLedger} readOnly />
+    </div>
   );
 }
 
@@ -5674,6 +5709,7 @@ export default function App() {
     { key: "thu", label: "Thu ngân", icon: Wallet },
     { key: "chi", label: "Phiếu chi", icon: Receipt },
     { key: "coc", label: "Cọc", icon: Coins },
+    { key: "so_quy", label: "Sổ quỹ", icon: BarChart3 },
   ];
   const navItems = isQuanLy ? NAV_QUAN_LY : isBaoCao ? NAV_BAO_CAO : isThuNgan ? NAV_THU_NGAN : NAV_NHAN_VIEN;
 
@@ -5761,6 +5797,7 @@ export default function App() {
             {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onUpsertRemittedAmount={upsertFundRemittedAmount} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
             {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} onUpdate={updateCashierReceipt} onDelete={deleteCashierReceipt} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
+            {tab === "so_quy" && isThuNgan && <SoQuyBaoCaoModule data={data} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
               <DanhMucModule data={data} onAddSupplier={addSupplier} onAddProduct={addProduct} onAddRevenueCode={addRevenueCode} onAddExportCode={addExportCode} />
