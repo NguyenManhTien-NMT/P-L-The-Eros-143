@@ -53,12 +53,22 @@ function fmtDate(d) {
   return new Date(d).toLocaleDateString("vi-VN");
 }
 function todayISO() {
-  return new Date().toISOString().slice(0, 10);
+  return formatDateLocal(new Date());
 }
 function daysAgoISO(n) {
   const d = new Date();
   d.setDate(d.getDate() - n);
-  return d.toISOString().slice(0, 10);
+  return formatDateLocal(d);
+}
+// Định dạng 1 đối tượng Date thành "yyyy-mm-dd" THEO GIỜ ĐỊA PHƯƠNG (không dùng toISOString,
+// vì hàm đó quy đổi sang UTC — với múi giờ Việt Nam (UTC+7) sẽ bị lùi ngày, VD 1/8 00:00 giờ VN
+// thành 31/7 17:00 UTC, gây hiện sai ngày trong Sổ quỹ theo ngày, hoặc todayISO() trả về hôm qua
+// vào các giờ đầu buổi sáng).
+function formatDateLocal(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 // Ngày bắt đầu theo dõi quỹ — mặc định cho các bộ lọc trong tab Quỹ.
 const FUND_START_DATE = "2026-08-01";
@@ -71,7 +81,7 @@ function enumerateDatesISO(from, to) {
   const dates = [];
   const cur = new Date(start);
   while (cur <= end && dates.length < 62) {
-    dates.push(cur.toISOString().slice(0, 10));
+    dates.push(formatDateLocal(cur));
     cur.setDate(cur.getDate() + 1);
   }
   return dates;
