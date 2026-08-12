@@ -3281,33 +3281,61 @@ function InvoiceRevenueImportForm({ onImport }) {
       const rawRows = await readExcelRaw(file);
       const headerIdx = detectHeaderRow(rawRows, ["Số hóa đơn", "Doanh thu"]);
       if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Số hóa đơn" và "Doanh thu") trong file.']); setPreview([]); return; }
-      const rawObjRows = rowsToObjects(rawRows, headerIdx);
+      const headerRow = rawRows[headerIdx] || [];
+
+      // Một số phần mềm POS xuất tiêu đề 2 tầng: 1 dòng tiêu đề gộp ("Khách hàng/đối tác
+      // thanh toán") + 1 dòng tiêu đề phụ ngay bên dưới ghi rõ "Tiền mặt"/"Chuyển khoản"/
+      // "Voucher"/"Khách nợ" cho từng cột con. Dò dòng phụ này bằng cách quét theo VỊ TRÍ CỘT
+      // (không dùng tên cột gộp) để không bỏ sót — đây chính là trường hợp file BẢNG KÊ HOÁ ĐƠN.
+      const subRow = rawRows[headerIdx + 1] || [];
+      const findColBySub = (substrs) => subRow.findIndex((c) => {
+        const norm = stripDiacritics(String(c ?? "")).replace(/\s+/g, "");
+        return substrs.some((s) => norm === s || norm.includes(s));
+      });
+      const cashColIdx = findColBySub(["tienmat"]);
+      const bankColIdx = findColBySub(["chuyenkhoan", "nganhang"]);
+      const hasSubHeaderRow = cashColIdx !== -1 || bankColIdx !== -1;
+
+      const headers = headerRow.map((h) => String(h ?? "").trim());
+      const dataRows = hasSubHeaderRow ? rawRows.slice(headerIdx + 2) : rawRows.slice(headerIdx + 1);
+
       const valid = [];
       let cancelledCount = 0;
       let splitFound = false;
-      rawObjRows.forEach((row) => {
-        const invoiceNo = String(pickCol(row, "Số hóa đơn", "So hoa don") ?? "").trim();
-        const amount = Number(pickCol(row, "Doanh thu", "Doanh thu bán hàng")) || 0;
-        const invoiceDate = excelDateToISO(pickCol(row, "Ngày", "Ngay") ?? pickColContains(row, "ngay")) || todayISO();
-        const note = String(pickCol(row, "Ghi chú", "Ghi chu") ?? "").trim();
+      dataRows.forEach((row) => {
+        if (!row || row.every((c) => c === "" || c === undefined || c === null)) return;
+        const obj = {};
+        headers.forEach((h, idx) => { if (h) obj[h] = row[idx]; });
+
+        const invoiceNo = String(pickCol(obj, "Số hóa đơn", "So hoa don") ?? "").trim();
+        const amount = Number(pickCol(obj, "Doanh thu", "Doanh thu bán hàng")) || 0;
+        const invoiceDate = excelDateToISO(pickCol(obj, "Ngày", "Ngay") ?? pickColContains(obj, "ngay")) || todayISO();
+        const note = String(pickCol(obj, "Ghi chú", "Ghi chu") ?? "").trim();
         if (!invoiceNo) return;
         if (stripDiacritics(note).includes("huy")) { cancelledCount += 1; return; } // bỏ hoá đơn đã huỷ
 
-        // Tự nhận diện Tiền mặt/Chuyển khoản: hoặc file có 2 cột số tiền riêng, hoặc 1 cột
-        // chữ "Hình thức/Phương thức thanh toán" ghi rõ Tiền mặt/Chuyển khoản cho từng hoá đơn.
+        // Tự nhận diện Tiền mặt/Chuyển khoản: ưu tiên tiêu đề phụ theo vị trí cột (file 2 tầng
+        // tiêu đề); nếu không có, thử cột tên trực tiếp "Tiền mặt"/"Chuyển khoản", hoặc 1 cột
+        // chữ "Hình thức/Phương thức thanh toán" ghi rõ cho từng hoá đơn.
         let cashAmount = null, bankAmount = null;
-        const cashCol = pickColContains(row, "tienmat");
-        const bankCol = pickColContains(row, "chuyenkhoan") ?? pickColContains(row, "nganhang");
-        if (cashCol !== undefined || bankCol !== undefined) {
-          cashAmount = Number(cashCol) || 0;
-          bankAmount = Number(bankCol) || 0;
+        if (hasSubHeaderRow) {
+          cashAmount = cashColIdx !== -1 ? (Number(row[cashColIdx]) || 0) : 0;
+          bankAmount = bankColIdx !== -1 ? (Number(row[bankColIdx]) || 0) : 0;
           splitFound = true;
         } else {
-          const methodRaw = pickColContains(row, "hinhthuc") ?? pickColContains(row, "phuongthuc") ?? pickColContains(row, "pttt");
-          if (methodRaw !== undefined) {
-            const m = stripDiacritics(String(methodRaw)).replace(/\s+/g, "");
-            if (m.includes("tienmat") || m === "tm") { cashAmount = amount; bankAmount = 0; splitFound = true; }
-            else if (m.includes("chuyenkhoan") || m.includes("nganhang") || m === "ck") { cashAmount = 0; bankAmount = amount; splitFound = true; }
+          const cashCol = pickColContains(obj, "tienmat");
+          const bankCol = pickColContains(obj, "chuyenkhoan") ?? pickColContains(obj, "nganhang");
+          if (cashCol !== undefined || bankCol !== undefined) {
+            cashAmount = Number(cashCol) || 0;
+            bankAmount = Number(bankCol) || 0;
+            splitFound = true;
+          } else {
+            const methodRaw = pickColContains(obj, "hinhthuc") ?? pickColContains(obj, "phuongthuc") ?? pickColContains(obj, "pttt");
+            if (methodRaw !== undefined) {
+              const m = stripDiacritics(String(methodRaw)).replace(/\s+/g, "");
+              if (m.includes("tienmat") || m === "tm") { cashAmount = amount; bankAmount = 0; splitFound = true; }
+              else if (m.includes("chuyenkhoan") || m.includes("nganhang") || m === "ck") { cashAmount = 0; bankAmount = amount; splitFound = true; }
+            }
           }
         }
         valid.push({ invoiceNo, invoiceDate, amount, cashAmount, bankAmount });
