@@ -3976,11 +3976,15 @@ function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted, readOnly = fal
 // (Tồn đầu + Doanh thu hoá đơn + Thu cọc - Chi phí - Chi cọc) và (2) Tồn quỹ thực tế theo
 // Thu ngân báo cáo (lấy thẳng từ fundLedger, dùng đúng Thu ngân thay vì Doanh thu hoá đơn).
 // Chi phí/Thu cọc/Chi cọc/Tồn đầu dùng chung 1 nguồn dữ liệu cho cả 2 vế nên không lệch.
-function buildDailyReconciliation(dates, fundLedger, invoiceRevenue) {
-  return dates.map((d, i) => {
-    const row = fundLedger[i];
-    const thuNganCash = row.thuNganCash;
-    const thuNganBank = row.thuNganBank;
+// Đối chiếu Doanh thu theo ngày — CHỈ tính các phiếu Thu ngân KHÔNG có ghi chú (đại diện cho
+// doanh thu bán hàng thông thường, dùng để so sánh với hoá đơn Excel). Phiếu Thu ngân CÓ ghi
+// chú (thu bất thường, thu hộ, điều chỉnh...) vẫn tính đủ vào Sổ quỹ, nhưng KHÔNG đưa vào đối
+// chiếu doanh thu ở đây để tránh làm sai lệch số liệu so sánh.
+function buildDailyReconciliation(dates, cashierReceipts, invoiceRevenue) {
+  return dates.map((d) => {
+    const dayReceipts = cashierReceipts.filter((r) => r.receiptDate === d && !r.note.trim());
+    const thuNganCash = dayReceipts.reduce((s, r) => s + r.cashAmount, 0);
+    const thuNganBank = dayReceipts.reduce((s, r) => s + r.bankAmount, 0);
     const thuNgan = thuNganCash + thuNganBank;
 
     const invoicesForDay = invoiceRevenue.filter((r) => r.invoiceDate === d);
@@ -4724,7 +4728,7 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
   const remittedMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, { cash: b.remittedOwnerCash, bank: b.remittedOwnerBank }]));
   const fundLedger = buildFundLedger(ledgerDates, data.cashierReceipts, data.expenseRecords, data.deposits, overridesMap, remittedMap);
   const openingBalanceNum = fundLedger.length > 0 ? fundLedger[0].openingCash + fundLedger[0].openingBank : 0;
-  const dailyReconciliation = buildDailyReconciliation(ledgerDates, fundLedger, data.invoiceRevenue);
+  const dailyReconciliation = buildDailyReconciliation(ledgerDates, data.cashierReceipts, data.invoiceRevenue);
 
   // Tổng hợp theo khoảng đang lọc — tách riêng Tiền mặt / Ngân hàng cho từng chỉ tiêu.
   const sumField = (key) => fundLedger.reduce((s, r) => s + r[key], 0);
@@ -4750,11 +4754,15 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
 
   // Doanh thu hoá đơn Excel tách TM/NH (nếu file import có cột Hình thức) — để đối chiếu
   // riêng từng loại tiền cho cả khoảng đang lọc, giống hệt logic của DailyReconciliationTable.
+  // Đối chiếu doanh thu CHỈ tính phiếu Thu ngân KHÔNG ghi chú (phiếu có ghi chú theo dõi ở Sổ quỹ).
+  const noNoteReceiptsInRange = data.cashierReceipts.filter((r) => r.receiptDate >= from && r.receiptDate <= to && !r.note.trim());
+  const totalThuNganCashForCompare = noNoteReceiptsInRange.reduce((s, r) => s + r.cashAmount, 0);
+  const totalThuNganBankForCompare = noNoteReceiptsInRange.reduce((s, r) => s + r.bankAmount, 0);
   const invoiceHasSplitInRange = invoiceRevenueInRange.some((r) => r.cashAmount !== null || r.bankAmount !== null);
   const totalHoaDonCash = invoiceHasSplitInRange ? invoiceRevenueInRange.reduce((s, r) => s + (r.cashAmount || 0), 0) : null;
   const totalHoaDonBank = invoiceHasSplitInRange ? invoiceRevenueInRange.reduce((s, r) => s + (r.bankAmount || 0), 0) : null;
-  const diffCashTongThe = invoiceHasSplitInRange ? totalThuNganCash - totalHoaDonCash : null;
-  const diffBankTongThe = invoiceHasSplitInRange ? totalThuNganBank - totalHoaDonBank : null;
+  const diffCashTongThe = invoiceHasSplitInRange ? totalThuNganCashForCompare - totalHoaDonCash : null;
+  const diffBankTongThe = invoiceHasSplitInRange ? totalThuNganBankForCompare - totalHoaDonBank : null;
 
   return (
     <div>
@@ -4865,6 +4873,7 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
             ))}
           </div>
         </div>
+        <p className="text-xs text-slate-400 mt-2">Phần "Thu ngân báo cáo" ở đây chỉ tính các phiếu thu <b>KHÔNG có ghi chú</b> (để so sánh đúng với doanh thu bán hàng thông thường). Phiếu thu có ghi chú (thu bất thường, thu hộ...) vẫn tính đủ ở Sổ quỹ theo ngày, không đưa vào đối chiếu này.</p>
       </Card>
 
       {viewMode === "ngay" ? (
@@ -4910,8 +4919,8 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
                   <th className="px-3 py-2">Trạng thái</th>
                 </tr></thead>
                 <tbody>
-                  {[{ label: "Tiền mặt", hoaDon: totalHoaDonCash, thuNgan: totalThuNganCash, diff: diffCashTongThe },
-                    { label: "Ngân hàng", hoaDon: totalHoaDonBank, thuNgan: totalThuNganBank, diff: diffBankTongThe }].map((r) => (
+                  {[{ label: "Tiền mặt", hoaDon: totalHoaDonCash, thuNgan: totalThuNganCashForCompare, diff: diffCashTongThe },
+                    { label: "Ngân hàng", hoaDon: totalHoaDonBank, thuNgan: totalThuNganBankForCompare, diff: diffBankTongThe }].map((r) => (
                     <tr key={r.label} className="border-b border-slate-50 last:border-0">
                       <td className="px-3 py-2 font-medium text-slate-700">{r.label}</td>
                       <td className="px-3 py-2 text-right">{fmtMoney(r.hoaDon)}</td>
