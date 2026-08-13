@@ -496,13 +496,16 @@ function nktForResaleProduct(productId, from, to, data) {
 // đúng ngày đó (nếu có, không thì 0) — các ngày sau đó Tồn đầu = Tồn cuối tham chiếu ngày liền
 // trước (KHÔNG bị kiểm kê các ngày sau ghi đè — kiểm kê chỉ dùng để đối chiếu/cảnh báo).
 function buildResaleProductLedger(dates, productId, resaleGoodsReceipts, exportRecords, stockCounts) {
+  // Kiểm kê Thu ngân = số đếm CUỐI ngày (giống Sổ quỹ), KHÔNG phải tồn đầu ngày. Vì vậy Tồn đầu
+  // của ngày đầu tiên trong khoảng lọc phải suy ngược từ kiểm kê cuối ngày đó: Tồn đầu = Kiểm kê
+  // − Nhập trong ngày + Xuất trong ngày (đảo ngược đúng 1 ngày để ra số tồn TRƯỚC khi phát sinh).
   let prevClosing = null;
   return dates.map((d, i) => {
     const nhap = resaleGoodsReceipts.filter((r) => r.productId === productId && r.invoiceDate === d).reduce((s, r) => s + r.quantity, 0);
     const xuat = exportRecords.filter((r) => r.productId === productId && r.exportDate === d).reduce((s, r) => s + r.quantity, 0);
     const count = stockCounts.find((c) => c.productId === productId && c.countDate === d);
     const actual = count ? count.quantity : null;
-    const opening = i === 0 ? (actual !== null ? actual : 0) : prevClosing;
+    const opening = i === 0 ? (actual !== null ? actual - nhap + xuat : 0) : prevClosing;
     const closing = opening + nhap - xuat;
     prevClosing = closing;
     const diff = actual !== null ? actual - closing : null;
