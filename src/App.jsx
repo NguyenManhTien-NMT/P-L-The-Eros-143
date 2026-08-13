@@ -4566,7 +4566,7 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening }) {
             )}
           </Card>
         </>
-      ) : (
+      ) : tab === "ton" ? (
         <>
           {currentUser.role === "quan_ly" && <StockOpeningForm data={data} currentUser={currentUser} onSubmit={onSaveOpening} />}
           <div className="grid grid-cols-2 gap-3 mb-5">
