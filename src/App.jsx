@@ -2784,7 +2784,10 @@ function TonKhoModule({ data, currentUser, onSaveOpening }) {
   const [q, setQ] = useState("");
   const isQuanLy = currentUser.role === "quan_ly";
 
-  let products = classification === "all" ? data.products : data.products.filter((p) => p.classification === classification);
+  // Tồn kho NVL-Hàng hoá chung KHÔNG gồm Hàng chuyển bán (HCB) — đã có báo cáo
+  // Xuất-Nhập-Tồn riêng trong tab "Hàng chuyển bán", tách hẳn khỏi tab này.
+  let products = data.products.filter((p) => p.classification !== "HCB");
+  if (classification !== "all") products = products.filter((p) => p.classification === classification);
   if (q) products = products.filter((p) => stripDiacritics(p.name).includes(stripDiacritics(q)) || p.code.includes(q));
 
   const rows = products.map((p) => ({ product: p, ...nktForProduct(p.id, from, to, data) }));
