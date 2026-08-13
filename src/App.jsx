@@ -230,7 +230,7 @@ function mapProduct(p) {
   return {
     id: p.id, code: p.code, name: p.name, unit: p.unit,
     groupCode: p.group_code || "", groupName: p.group_name || "",
-    classification: p.classification, createdAt: p.created_at,
+    classification: p.classification, caseSize: Number(p.case_size) || 1, createdAt: p.created_at,
   };
 }
 function mapStockOpening(o) {
@@ -324,6 +324,14 @@ function mapResaleReceipt(r) {
     note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
   };
 }
+// Phiếu kiểm kê kho Hàng chuyển bán do Thu ngân đếm mỗi ngày — 1 dòng/(ngày, mặt hàng),
+// dùng để đối chiếu với số Tồn cuối tham chiếu (Tồn đầu + Nhập - Xuất) bên Quản lý.
+function mapResaleStockCount(r) {
+  return {
+    id: r.id, countDate: r.count_date, productId: r.product_id, quantity: Number(r.quantity) || 0,
+    note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
 function mapNotification(r) {
   return {
     id: r.id, message: r.message, type: r.type, targetRole: r.target_role,
@@ -341,7 +349,7 @@ function mapFundDailyBalance(r) {
 }
 
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal, settings, resale] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal, settings, resale, stockCount] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline"),
     supabase.from("suppliers").select("*").order("code"),
     supabase.from("revenue_codes").select("*").order("code"),
@@ -361,8 +369,9 @@ async function fetchAll() {
     supabase.from("fund_daily_balance").select("*").order("balance_date", { ascending: false }),
     supabase.from("app_settings").select("*"),
     supabase.from("resale_goods_receipts").select("*").order("invoice_date", { ascending: false }).order("created_at", { ascending: false }),
+    supabase.from("resale_stock_counts").select("*").order("count_date", { ascending: false }),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal, settings, resale].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal, settings, resale, stockCount].forEach((r) => { if (r.error) console.error(r.error); });
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -383,6 +392,7 @@ async function fetchAll() {
     fundDailyBalances: (fundBal.data || []).map(mapFundDailyBalance),
     settings: Object.fromEntries((settings.data || []).map((r) => [r.key, r.value])),
     resaleGoodsReceipts: (resale.data || []).map(mapResaleReceipt),
+    resaleStockCounts: (stockCount.data || []).map(mapResaleStockCount),
   };
 }
 
@@ -481,7 +491,26 @@ function nktForResaleProduct(productId, from, to, data) {
 }
 
 
-// Sinh mã phiếu tự động — VD NK-20260803-0001 / XK-20260803-0001
+// Sổ tham chiếu Nhập-Xuất-Tồn theo NGÀY cho 1 mặt hàng Hàng chuyển bán, dùng để đối chiếu với
+// kiểm kê thực tế của Thu ngân. Tồn đầu ngày ĐẦU TIÊN trong danh sách = số kiểm kê của Thu ngân
+// đúng ngày đó (nếu có, không thì 0) — các ngày sau đó Tồn đầu = Tồn cuối tham chiếu ngày liền
+// trước (KHÔNG bị kiểm kê các ngày sau ghi đè — kiểm kê chỉ dùng để đối chiếu/cảnh báo).
+function buildResaleProductLedger(dates, productId, resaleGoodsReceipts, exportRecords, stockCounts) {
+  let prevClosing = null;
+  return dates.map((d, i) => {
+    const nhap = resaleGoodsReceipts.filter((r) => r.productId === productId && r.invoiceDate === d).reduce((s, r) => s + r.quantity, 0);
+    const xuat = exportRecords.filter((r) => r.productId === productId && r.exportDate === d).reduce((s, r) => s + r.quantity, 0);
+    const count = stockCounts.find((c) => c.productId === productId && c.countDate === d);
+    const actual = count ? count.quantity : null;
+    const opening = i === 0 ? (actual !== null ? actual : 0) : prevClosing;
+    const closing = opening + nhap - xuat;
+    prevClosing = closing;
+    const diff = actual !== null ? actual - closing : null;
+    return { date: d, opening, nhap, xuat, closing, actual, diff };
+  });
+}
+
+
 // Mã phiếu = tiền tố + ngày + giờ:phút:giây:mili giây — không dựa vào số lượng bản ghi hiện có,
 // nên không bao giờ bị trùng dù dữ liệu vừa bị xoá sạch trước đó (tránh trùng mã phiếu).
 function genReceiptCode(prefix) {
@@ -885,6 +914,7 @@ function AddProductForm({ products, onAdd }) {
   const [unit, setUnit] = useState("");
   const [groupCode, setGroupCode] = useState("N10");
   const [groupName, setGroupName] = useState("FOOD");
+  const [caseSize, setCaseSize] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -894,9 +924,9 @@ function AddProductForm({ products, onAdd }) {
     if (!code.trim() || !name.trim() || !unit.trim()) { setError("Vui lòng nhập đủ Mã, Tên và Đơn vị tính."); return; }
     setError(""); setSaving(true);
     try {
-      await onAdd({ code: code.trim(), name: name.trim(), unit: unit.trim(), groupCode: groupCode.trim(), groupName: groupName.trim(), classification });
+      await onAdd({ code: code.trim(), name: name.trim(), unit: unit.trim(), groupCode: groupCode.trim(), groupName: groupName.trim(), classification, caseSize: caseSize ? Number(caseSize) : 1 });
       setCode(nextProductCode([...products, { code, classification }], classification));
-      setName(""); setUnit("");
+      setName(""); setUnit(""); setCaseSize("");
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
     } finally {
@@ -918,6 +948,9 @@ function AddProductForm({ products, onAdd }) {
         <TextField label="Tên sản phẩm" value={name} onChange={(e) => setName(e.target.value)} className="sm:col-span-3" />
         <TextField label="Mã nhóm" value={groupCode} onChange={(e) => setGroupCode(e.target.value)} />
         <TextField label="Mã nhóm lớn" value={groupName} onChange={(e) => setGroupName(e.target.value)} className="sm:col-span-2" />
+        {classification === "HCB" && (
+          <MoneyField label="Quy cách 1 thùng (số lượng đơn vị lẻ/thùng)" value={caseSize} onChange={setCaseSize} placeholder="VD: 24" />
+        )}
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
       <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Plus size={15} />} Thêm sản phẩm</PrimaryButton>
@@ -4069,6 +4102,7 @@ function DailyReconciliationTable({ rows }) {
 // đính kèm ảnh/scan hoá đơn. Sau khi lưu, thông tin tự hiện trong báo cáo bên Quản lý.
 function ResaleReceiptForm({ hcbProducts, onSubmit }) {
   const [productId, setProductId] = useState(hcbProducts[0]?.id || "");
+  const [unitMode, setUnitMode] = useState("le"); // "le" | "thung"
   const [quantity, setQuantity] = useState("");
   const [unitPrice, setUnitPrice] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(todayISO());
@@ -4077,7 +4111,10 @@ function ResaleReceiptForm({ hcbProducts, onSubmit }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  const totalAmount = (Number(quantity) || 0) * (Number(unitPrice) || 0);
+  const selectedProduct = hcbProducts.find((p) => p.id === productId);
+  const caseSize = selectedProduct?.caseSize || 1;
+  const quantityBase = unitMode === "thung" ? (Number(quantity) || 0) * caseSize : (Number(quantity) || 0);
+  const totalAmount = quantityBase * (Number(unitPrice) || 0);
 
   const submit = async () => {
     if (!productId) { setError("Vui lòng chọn mặt hàng."); return; }
@@ -4085,7 +4122,7 @@ function ResaleReceiptForm({ hcbProducts, onSubmit }) {
     if (!unitPrice || Number(unitPrice) < 0) { setError("Vui lòng nhập đơn giá hợp lệ."); return; }
     setError(""); setSaving(true);
     try {
-      await onSubmit({ productId, quantity: Number(quantity), unitPrice: Number(unitPrice), invoiceDate, file, note: note.trim() });
+      await onSubmit({ productId, quantity: quantityBase, unitPrice: Number(unitPrice), invoiceDate, file, note: note.trim() });
       setQuantity(""); setUnitPrice(""); setFile(null); setNote("");
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
@@ -4110,10 +4147,17 @@ function ResaleReceiptForm({ hcbProducts, onSubmit }) {
           {hcbProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </SelectField>
         <TextField label="Ngày hoá đơn" type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} />
-        <MoneyField label="Số lượng" value={quantity} onChange={setQuantity} />
-        <MoneyField label="Đơn giá" value={unitPrice} onChange={setUnitPrice} />
+        <SelectField label="Đơn vị nhập" value={unitMode} onChange={(e) => setUnitMode(e.target.value)}>
+          <option value="le">Lẻ ({selectedProduct?.unit || "lon/chai"})</option>
+          <option value="thung">Thùng ({caseSize} {selectedProduct?.unit || "lon/chai"}/thùng)</option>
+        </SelectField>
+        <MoneyField label={unitMode === "thung" ? "Số lượng (thùng)" : "Số lượng"} value={quantity} onChange={setQuantity} />
+        <MoneyField label={`Đơn giá / ${selectedProduct?.unit || "lon/chai"}`} value={unitPrice} onChange={setUnitPrice} />
         <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
       </div>
+      {unitMode === "thung" && quantity && (
+        <p className="text-xs text-slate-500 mb-3">Quy đổi: {fmtNumber(quantity)} thùng × {caseSize} = <b>{fmtNumber(quantityBase)} {selectedProduct?.unit || "lon/chai"}</b></p>
+      )}
       <div className="mb-3">
         <label className="block text-xs font-medium text-slate-500 mb-1">Đính kèm ảnh/scan hoá đơn (tuỳ chọn)</label>
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
@@ -4188,8 +4232,105 @@ function EditResaleReceiptModal({ receipt, hcbProducts, onSave, onClose }) {
   );
 }
 
-function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onDelete, editEnabled }) {
+// Kiểm kê kho Hàng chuyển bán mỗi ngày — Thu ngân đếm 1 lần cho tất cả mặt hàng, mỗi dòng có
+// thể nhập theo Thùng hoặc Lẻ (tự quy đổi ra lon/chai theo caseSize của từng mặt hàng).
+function ResaleStockCountForm({ hcbProducts, existingCounts, editEnabled, onSubmit }) {
+  const [countDate, setCountDate] = useState(todayISO());
+  const [rows, setRows] = useState(() => Object.fromEntries(hcbProducts.map((p) => [p.id, { unitMode: "le", quantity: "" }])));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const countsForDate = existingCounts.filter((c) => c.countDate === countDate);
+  const alreadyCounted = countsForDate.length > 0;
+  const locked = alreadyCounted && !editEnabled;
+
+  // Đổi ngày → nạp lại số liệu đã kiểm kê của ngày đó (nếu có) để xem/sửa.
+  const changeDate = (d) => {
+    setCountDate(d);
+    const counts = existingCounts.filter((c) => c.countDate === d);
+    setRows(Object.fromEntries(hcbProducts.map((p) => {
+      const existing = counts.find((c) => c.productId === p.id);
+      return [p.id, { unitMode: "le", quantity: existing ? String(existing.quantity) : "" }];
+    })));
+  };
+
+  const updateRow = (productId, patch) => setRows((prev) => ({ ...prev, [productId]: { ...prev[productId], ...patch } }));
+
+  const submit = async () => {
+    const items = hcbProducts
+      .map((p) => {
+        const row = rows[p.id] || {};
+        if (!row.quantity) return null;
+        const qtyBase = row.unitMode === "thung" ? (Number(row.quantity) || 0) * (p.caseSize || 1) : (Number(row.quantity) || 0);
+        return { productId: p.id, quantity: qtyBase };
+      })
+      .filter(Boolean);
+    if (items.length === 0) { setError("Vui lòng nhập số lượng kiểm kê cho ít nhất 1 mặt hàng."); return; }
+    setError(""); setSaving(true);
+    try {
+      await onSubmit({ countDate, items });
+    } catch (e) {
+      setError(e.message || "Không lưu được, vui lòng thử lại.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (hcbProducts.length === 0) {
+    return (
+      <Card className="p-4 sm:p-5 mb-5">
+        <p className="text-sm text-slate-500">Chưa có mặt hàng "Hàng chuyển bán" nào trong danh mục.</p>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="p-4 sm:p-5 mb-5">
+      <p className="font-semibold text-slate-800 text-sm mb-3">Kiểm kê kho hàng hoá</p>
+      <div className="mb-3 max-w-xs">
+        <TextField label="Ngày kiểm kê" type="date" value={countDate} onChange={(e) => changeDate(e.target.value)} />
+      </div>
+      {alreadyCounted && (
+        <div className={`flex items-center gap-2 text-sm rounded-xl px-3 py-2 mb-3 ${locked ? "text-amber-700 bg-amber-50 border border-amber-200" : "text-sky-700 bg-sky-50 border border-sky-200"}`}>
+          {locked ? <Lock size={15} /> : <Pencil size={15} />}
+          {locked ? "Ngày này đã kiểm kê rồi và đang bị khoá — báo Quản lý mở khoá nếu cần sửa lại." : "Ngày này đã có kiểm kê — số liệu bên dưới là số cũ, sửa rồi lưu lại để ghi đè."}
+        </div>
+      )}
+      <div className="space-y-2 mb-4">
+        {hcbProducts.map((p) => {
+          const row = rows[p.id] || { unitMode: "le", quantity: "" };
+          const qtyBase = row.unitMode === "thung" ? (Number(row.quantity) || 0) * (p.caseSize || 1) : (Number(row.quantity) || 0);
+          return (
+            <div key={p.id} className="flex items-center gap-2">
+              <span className="text-sm text-slate-600 flex-1 min-w-0 truncate">{p.name}</span>
+              <select
+                value={row.unitMode}
+                onChange={(e) => updateRow(p.id, { unitMode: e.target.value })}
+                disabled={locked}
+                className="text-xs border border-slate-200 rounded-lg px-1.5 py-1.5 text-slate-600 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-sky-400 disabled:opacity-50 w-24 shrink-0"
+              >
+                <option value="le">Lẻ</option>
+                <option value="thung">Thùng</option>
+              </select>
+              <MoneyField value={row.quantity} onChange={(v) => updateRow(p.id, { quantity: v })} className="w-28 shrink-0" disabled={locked} />
+              <span className="text-xs text-slate-400 w-24 shrink-0">
+                {row.unitMode === "thung" && row.quantity ? `= ${fmtNumber(qtyBase)} ${p.unit}` : p.unit}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
+      {!locked && (
+        <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <ClipboardList size={15} />} Lưu phiếu kiểm kê</PrimaryButton>
+      )}
+    </Card>
+  );
+}
+
+function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onDelete, onSubmitStockCount, editEnabled }) {
   const hcbProducts = data.products.filter((p) => p.classification === "HCB");
+  const [subTab, setSubTab] = useState("nhap"); // "nhap" | "kiem_ke"
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const myReceipts = data.resaleGoodsReceipts
@@ -4199,6 +4340,11 @@ function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onD
   const [editing, setEditing] = useState(null);
   const [deleting, setDeleting] = useState(null);
 
+  const myCounts = data.resaleStockCounts
+    .filter((c) => c.createdBy === currentUser.id)
+    .slice(0, 200);
+  const countDates = [...new Set(myCounts.map((c) => c.countDate))].sort((a, b) => b.localeCompare(a)).slice(0, 15);
+
   const handleDelete = async (id) => {
     if (!window.confirm("Xoá phiếu nhập hàng chuyển bán này? Không thể hoàn tác.")) return;
     setDeleting(id);
@@ -4207,7 +4353,7 @@ function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onD
 
   return (
     <div>
-      <SectionTitle icon={Truck} title="Hàng chuyển bán" subtitle="Nhập kho Bia, nước ngọt, nước khoáng... — thông tin sẽ tự gửi đến Quản lý" />
+      <SectionTitle icon={Truck} title="Hàng chuyển bán" subtitle="Nhập kho và kiểm kê Bia, nước ngọt, nước khoáng... — thông tin sẽ tự gửi đến Quản lý" />
 
       {!editEnabled && (
         <div className="flex items-center gap-2 text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2 mb-5">
@@ -4215,67 +4361,109 @@ function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onD
         </div>
       )}
 
-      <ResaleReceiptForm hcbProducts={hcbProducts} onSubmit={onSubmit} />
+      <div className="flex gap-1 mb-5">
+        {[{ key: "nhap", label: "Nhập hàng" }, { key: "kiem_ke", label: "Kiểm kê tồn" }].map((t) => (
+          <button
+            key={t.key}
+            type="button"
+            onClick={() => setSubTab(t.key)}
+            className={`text-sm px-3 py-1.5 rounded-lg border font-medium ${subTab === t.key ? "bg-sky-700 text-white border-sky-700" : "text-slate-500 border-slate-200 hover:bg-slate-50"}`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
 
-      <Card className="p-4 sm:p-5 mb-5">
-        <p className="text-xs font-medium text-slate-500 mb-2">Lọc theo ngày</p>
-        <div className="grid grid-cols-2 gap-3">
-          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
-        </div>
-        {(from || to) && (
-          <button type="button" onClick={() => { setFrom(""); setTo(""); }} className="text-xs text-sky-700 hover:underline mt-2">Bỏ lọc ngày</button>
-        )}
-      </Card>
+      {subTab === "nhap" ? (
+        <>
+          <ResaleReceiptForm hcbProducts={hcbProducts} onSubmit={onSubmit} />
 
-      <Card className="p-0 overflow-hidden">
-        <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu nhập gần đây (của bạn)</p></div>
-        {myReceipts.length === 0 ? <EmptyState icon={Truck} text="Chưa có phiếu nhập hàng chuyển bán nào." /> : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Mặt hàng</th><th className="px-3 py-2 text-right">SL</th><th className="px-3 py-2 text-right">Đơn giá</th><th className="px-3 py-2 text-right">Thành tiền</th><th className="px-3 py-2">Hoá đơn</th><th className="px-3 py-2"></th>
-              </tr></thead>
-              <tbody>
-                {myReceipts.map((r) => {
-                  const product = data.products.find((p) => p.id === r.productId);
-                  return (
-                    <tr key={r.id} className="border-b border-slate-50 last:border-0">
-                      <td className="px-3 py-2 text-slate-500">{fmtDate(r.invoiceDate)}</td>
-                      <td className="px-3 py-2 text-slate-700">{product?.name || "—"}</td>
-                      <td className="px-3 py-2 text-right">{fmtNumber(r.quantity)}</td>
-                      <td className="px-3 py-2 text-right">{fmtMoney(r.unitPrice)}</td>
-                      <td className="px-3 py-2 text-right font-medium text-slate-800">{fmtMoney(r.totalAmount)}</td>
-                      <td className="px-3 py-2">
-                        {r.invoiceFileUrl ? (
-                          <a href={r.invoiceFileUrl} target="_blank" rel="noreferrer" className="text-sky-700 hover:underline text-xs inline-flex items-center gap-1"><FileText size={12} /> Xem</a>
-                        ) : <span className="text-xs text-slate-300">—</span>}
-                      </td>
-                      <td className="px-3 py-2">
-                        {editEnabled && (
-                          <div className="flex items-center justify-end gap-1">
-                            <button type="button" onClick={() => setEditing(r)} className="text-slate-400 hover:text-sky-700 p-1" title="Sửa"><Pencil size={14} /></button>
-                            <button type="button" onClick={() => handleDelete(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1" title="Xoá">
-                              {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-      {editing && editEnabled && (
-        <EditResaleReceiptModal
-          receipt={editing}
-          hcbProducts={hcbProducts}
-          onSave={onUpdate}
-          onClose={() => setEditing(null)}
-        />
+          <Card className="p-4 sm:p-5 mb-5">
+            <p className="text-xs font-medium text-slate-500 mb-2">Lọc theo ngày</p>
+            <div className="grid grid-cols-2 gap-3">
+              <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+              <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+            </div>
+            {(from || to) && (
+              <button type="button" onClick={() => { setFrom(""); setTo(""); }} className="text-xs text-sky-700 hover:underline mt-2">Bỏ lọc ngày</button>
+            )}
+          </Card>
+
+          <Card className="p-0 overflow-hidden">
+            <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Phiếu nhập gần đây (của bạn)</p></div>
+            {myReceipts.length === 0 ? <EmptyState icon={Truck} text="Chưa có phiếu nhập hàng chuyển bán nào." /> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                    <th className="px-3 py-2">Ngày</th><th className="px-3 py-2">Mặt hàng</th><th className="px-3 py-2 text-right">SL</th><th className="px-3 py-2 text-right">Đơn giá</th><th className="px-3 py-2 text-right">Thành tiền</th><th className="px-3 py-2">Hoá đơn</th><th className="px-3 py-2"></th>
+                  </tr></thead>
+                  <tbody>
+                    {myReceipts.map((r) => {
+                      const product = data.products.find((p) => p.id === r.productId);
+                      return (
+                        <tr key={r.id} className="border-b border-slate-50 last:border-0">
+                          <td className="px-3 py-2 text-slate-500">{fmtDate(r.invoiceDate)}</td>
+                          <td className="px-3 py-2 text-slate-700">{product?.name || "—"}</td>
+                          <td className="px-3 py-2 text-right">{fmtNumber(r.quantity)}</td>
+                          <td className="px-3 py-2 text-right">{fmtMoney(r.unitPrice)}</td>
+                          <td className="px-3 py-2 text-right font-medium text-slate-800">{fmtMoney(r.totalAmount)}</td>
+                          <td className="px-3 py-2">
+                            {r.invoiceFileUrl ? (
+                              <a href={r.invoiceFileUrl} target="_blank" rel="noreferrer" className="text-sky-700 hover:underline text-xs inline-flex items-center gap-1"><FileText size={12} /> Xem</a>
+                            ) : <span className="text-xs text-slate-300">—</span>}
+                          </td>
+                          <td className="px-3 py-2">
+                            {editEnabled && (
+                              <div className="flex items-center justify-end gap-1">
+                                <button type="button" onClick={() => setEditing(r)} className="text-slate-400 hover:text-sky-700 p-1" title="Sửa"><Pencil size={14} /></button>
+                                <button type="button" onClick={() => handleDelete(r.id)} disabled={deleting === r.id} className="text-slate-400 hover:text-rose-600 p-1" title="Xoá">
+                                  {deleting === r.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+          {editing && editEnabled && (
+            <EditResaleReceiptModal
+              receipt={editing}
+              hcbProducts={hcbProducts}
+              onSave={onUpdate}
+              onClose={() => setEditing(null)}
+            />
+          )}
+        </>
+      ) : (
+        <>
+          <ResaleStockCountForm hcbProducts={hcbProducts} existingCounts={data.resaleStockCounts} editEnabled={editEnabled} onSubmit={onSubmitStockCount} />
+
+          <Card className="p-0 overflow-hidden">
+            <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử kiểm kê (của bạn)</p></div>
+            {countDates.length === 0 ? <EmptyState icon={ClipboardList} text="Chưa có phiếu kiểm kê nào." /> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                    <th className="px-3 py-2">Ngày kiểm kê</th><th className="px-3 py-2 text-right">Số mặt hàng đã đếm</th>
+                  </tr></thead>
+                  <tbody>
+                    {countDates.map((d) => (
+                      <tr key={d} className="border-b border-slate-50 last:border-0">
+                        <td className="px-3 py-2 text-slate-700 font-medium">{fmtDate(d)}</td>
+                        <td className="px-3 py-2 text-right">{myCounts.filter((c) => c.countDate === d).length}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+        </>
       )}
     </div>
   );
@@ -4284,10 +4472,11 @@ function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onD
 // Báo cáo Hàng chuyển bán cho Quản lý/Báo cáo — (1) Báo cáo nhập từ Thu ngân gửi lên,
 // (2) Báo cáo Xuất-Nhập-Tồn (Nhập từ resale_goods_receipts, Xuất từ export_records).
 function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening }) {
-  const [tab, setTab] = useState("nhap"); // "nhap" | "ton"
+  const [tab, setTab] = useState("nhap"); // "nhap" | "ton" | "kiem_ke"
   const [from, setFrom] = useState(FUND_START_DATE);
   const [to, setTo] = useState(todayISO());
   const hcbProducts = data.products.filter((p) => p.classification === "HCB");
+  const [selectedProductId, setSelectedProductId] = useState(hcbProducts[0]?.id || "");
 
   const receiptsInRange = data.resaleGoodsReceipts.filter((r) => r.invoiceDate >= from && r.invoiceDate <= to);
   const totalQty = receiptsInRange.reduce((s, r) => s + r.quantity, 0);
@@ -4297,6 +4486,11 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening }) {
   const totals = rows.reduce((acc, r) => ({
     importValue: acc.importValue + r.importValue, exportValue: acc.exportValue + r.exportValue,
   }), { importValue: 0, exportValue: 0 });
+
+  const stockDates = enumerateDatesISO(from, to);
+  const stockLedger = selectedProductId ? buildResaleProductLedger(stockDates, selectedProductId, data.resaleGoodsReceipts, data.exportRecords, data.resaleStockCounts) : [];
+  const mismatchDays = stockLedger.filter((r) => r.diff !== null && r.diff !== 0).length;
+  const selectedProduct = hcbProducts.find((p) => p.id === selectedProductId);
 
   return (
     <div>
@@ -4309,7 +4503,7 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening }) {
             <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
           <div className="flex gap-1">
-            {[{ key: "nhap", label: "Báo cáo nhập" }, { key: "ton", label: "Xuất-Nhập-Tồn" }].map((t) => (
+            {[{ key: "nhap", label: "Báo cáo nhập" }, { key: "ton", label: "Xuất-Nhập-Tồn" }, { key: "kiem_ke", label: "Chi tiết hàng hoá" }].map((t) => (
               <button
                 key={t.key}
                 type="button"
@@ -4403,6 +4597,76 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening }) {
               </div>
             )}
           </Card>
+        </>
+      ) : (
+        <>
+          <Card className="p-4 sm:p-5 mb-5">
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="max-w-xs flex-1 min-w-[200px]">
+                <SelectField label="Mặt hàng" value={selectedProductId} onChange={(e) => setSelectedProductId(e.target.value)}>
+                  {hcbProducts.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </SelectField>
+              </div>
+              {mismatchDays > 0 && (
+                <span className="text-xs px-2 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-medium flex items-center gap-1">
+                  <AlertTriangle size={13} /> {mismatchDays} ngày lệch số liệu
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-slate-400 mt-2">Tồn đầu ngày {fmtDate(from)} lấy theo số kiểm kê của Thu ngân đúng ngày đó (nếu có). Tồn cuối tham chiếu = Tồn đầu + Nhập − Xuất, đối chiếu với số Thu ngân kiểm kê thực tế mỗi ngày.</p>
+          </Card>
+
+          {hcbProducts.length === 0 ? <EmptyState icon={Truck} text="Chưa có mặt hàng Hàng chuyển bán nào." /> : (
+            <Card className="p-0 overflow-hidden">
+              <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">{selectedProduct?.name} — sổ tham chiếu theo ngày</p></div>
+              <div className="overflow-x-auto max-h-[32rem] overflow-y-auto">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-white"><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                    <th className="px-3 py-2">Ngày</th>
+                    <th className="px-3 py-2 text-right">Tồn đầu</th>
+                    <th className="px-3 py-2 text-right">Nhập</th>
+                    <th className="px-3 py-2 text-right">Xuất</th>
+                    <th className="px-3 py-2 text-right">Tồn cuối (tham chiếu)</th>
+                    <th className="px-3 py-2 text-right">Kiểm kê Thu ngân</th>
+                    <th className="px-3 py-2 text-right">Chênh lệch</th>
+                    <th className="px-3 py-2">Trạng thái</th>
+                  </tr></thead>
+                  <tbody>
+                    {stockLedger.map((r) => {
+                      const noCount = r.actual === null;
+                      const rowClass = noCount ? "" : r.diff === 0 ? "" : "bg-rose-50/60";
+                      return (
+                        <tr key={r.date} className={`border-b border-slate-50 last:border-0 ${rowClass}`}>
+                          <td className="px-3 py-2 text-slate-500">{fmtDate(r.date)}</td>
+                          <td className="px-3 py-2 text-right">{fmtNumber(r.opening)}</td>
+                          <td className="px-3 py-2 text-right text-teal-700">+{fmtNumber(r.nhap)}</td>
+                          <td className="px-3 py-2 text-right text-rose-600">-{fmtNumber(r.xuat)}</td>
+                          <td className="px-3 py-2 text-right font-medium">{fmtNumber(r.closing)}</td>
+                          <td className="px-3 py-2 text-right">{noCount ? <span className="text-slate-300">—</span> : fmtNumber(r.actual)}</td>
+                          <td className={`px-3 py-2 text-right font-semibold ${noCount ? "text-slate-300" : r.diff === 0 ? "text-slate-400" : "text-rose-700"}`}>
+                            {noCount ? "—" : `${r.diff > 0 ? "+" : ""}${fmtNumber(r.diff)}`}
+                          </td>
+                          <td className="px-3 py-2">
+                            {noCount ? (
+                              <span className="text-xs text-slate-300">Chưa kiểm kê</span>
+                            ) : r.diff === 0 ? (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-lg">
+                                <CheckCircle2 size={12} /> Khớp
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-xs font-medium text-rose-700 bg-rose-50 border border-rose-200 px-2 py-0.5 rounded-lg">
+                                <AlertTriangle size={12} /> Lệch
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
         </>
       )}
     </div>
@@ -5567,7 +5831,7 @@ export default function App() {
   const [data, setData] = useState({
     employees: [], suppliers: [], revenueCodes: [], exportCodes: [], products: [],
     stockOpenings: [], importRecords: [], exportRecords: [], expenseRecords: [],
-    dishes: [], dishIngredients: [], deposits: [], notifications: [], fundDailyBalances: [], settings: {}, resaleGoodsReceipts: [],
+    dishes: [], dishIngredients: [], deposits: [], notifications: [], fundDailyBalances: [], settings: {}, resaleGoodsReceipts: [], resaleStockCounts: [],
   });
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
@@ -5615,8 +5879,8 @@ export default function App() {
     await refreshAll();
     showToast("Đã thêm nhà cung cấp");
   };
-  const addProduct = async ({ code, name, unit, groupCode, groupName, classification }) => {
-    const { error } = await supabase.from("products").insert({ code, name, unit, group_code: groupCode, group_name: groupName, classification });
+  const addProduct = async ({ code, name, unit, groupCode, groupName, classification, caseSize }) => {
+    const { error } = await supabase.from("products").insert({ code, name, unit, group_code: groupCode, group_name: groupName, classification, case_size: caseSize || 1 });
     if (error) throw error;
     await refreshAll();
     showToast("Đã thêm sản phẩm");
@@ -5982,6 +6246,24 @@ export default function App() {
     showToast("Đã xoá phiếu nhập hàng chuyển bán");
   };
 
+  // Kiểm kê kho Hàng chuyển bán — Thu ngân đếm mỗi ngày, lưu 1 lần cho nhiều mặt hàng
+  // (upsert theo cặp ngày+mặt hàng, ghi đè nếu kiểm kê lại đúng ngày đó).
+  const submitResaleStockCounts = async ({ countDate, items }) => {
+    const rows = items.map((it) => ({
+      count_date: countDate, product_id: it.productId, quantity: Number(it.quantity) || 0,
+      note: it.note || null, created_by: currentUser.id,
+    }));
+    if (rows.length === 0) throw new Error("Chưa nhập số lượng kiểm kê cho mặt hàng nào.");
+    const { error } = await supabase.from("resale_stock_counts").upsert(rows, { onConflict: "count_date,product_id" });
+    if (error) throw error;
+    await pushNotification({
+      type: "kiem_ke_hcb",
+      message: `${currentUser.name} vừa kiểm kê kho hàng chuyển bán ngày ${fmtDate(countDate)} — ${rows.length} mặt hàng`,
+    });
+    await refreshAll();
+    showToast("Đã lưu phiếu kiểm kê");
+  };
+
   // Tồn quỹ tiền mặt đầu ngày — lưu theo từng ngày, mặc định ngày sau tự lấy tồn cuối
   // ngày trước (tính ở QuyModule), nhưng có thể ghi đè tay bất kỳ ngày nào (kiểm đếm thực tế).
   const upsertFundOpeningBalance = async (date, field, amount) => {
@@ -6252,7 +6534,7 @@ export default function App() {
             {tab === "hang_chuyen_ban" && canViewReports && <HangChuyenBanQuanLyModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
             {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} onUpdate={updateCashierReceipt} onDelete={deleteCashierReceipt} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
-            {tab === "hang_chuyen_ban" && isThuNgan && <HangChuyenBanThuNganModule data={data} currentUser={currentUser} onSubmit={submitResaleGoodsReceipt} onUpdate={updateResaleGoodsReceipt} onDelete={deleteResaleGoodsReceipt} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
+            {tab === "hang_chuyen_ban" && isThuNgan && <HangChuyenBanThuNganModule data={data} currentUser={currentUser} onSubmit={submitResaleGoodsReceipt} onUpdate={updateResaleGoodsReceipt} onDelete={deleteResaleGoodsReceipt} onSubmitStockCount={submitResaleStockCounts} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "so_quy" && isThuNgan && <SoQuyBaoCaoModule data={data} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
             {tab === "danh_muc" && !isBaoCao && (
