@@ -469,16 +469,28 @@ function nktForProduct(productId, from, to, data) {
 // nktForProduct nhưng nguồn Nhập lấy từ resale_goods_receipts (phiếu Thu ngân tự nhập, không
 // qua Excel Nhập hàng), Xuất vẫn lấy từ export_records như bình thường (phần Xuất hàng).
 function nktForResaleProduct(productId, from, to, data) {
-  const { stockOpenings, resaleGoodsReceipts, exportRecords } = data;
-  const dayBeforeFrom = new Date(from);
-  dayBeforeFrom.setDate(dayBeforeFrom.getDate() - 1);
-  const openingDateStr = formatDateLocal(dayBeforeFrom);
-  const opening = latestOpening(productId, stockOpenings);
-  const baseQty = opening?.quantity || 0;
-  const baseDate = opening?.asOfDate || "1970-01-01";
-  const importsBeforeFrom = resaleGoodsReceipts.filter((r) => r.productId === productId && r.invoiceDate > baseDate && r.invoiceDate <= openingDateStr);
-  const exportsBeforeFrom = exportRecords.filter((r) => r.productId === productId && r.exportDate > baseDate && r.exportDate <= openingDateStr);
-  const openingQty = baseQty + importsBeforeFrom.reduce((s, r) => s + r.quantity, 0) - exportsBeforeFrom.reduce((s, r) => s + r.quantity, 0);
+  const { stockOpenings, resaleGoodsReceipts, exportRecords, resaleStockCounts } = data;
+
+  // Tồn đầu ưu tiên suy từ kiểm kê Thu ngân đúng ngày "from" (kiểm kê = số đếm CUỐI ngày, nên
+  // trừ Nhập + cộng Xuất trong đúng ngày đó để ra tồn TRƯỚC phát sinh — giống buildResaleProductLedger).
+  // Nếu ngày "from" chưa có kiểm kê, quay lại cách cũ: dùng stock_opening (Quản lý tự chốt tay).
+  const countOnFrom = resaleStockCounts.find((c) => c.productId === productId && c.countDate === from);
+  let openingQty;
+  if (countOnFrom) {
+    const nhapFrom = resaleGoodsReceipts.filter((r) => r.productId === productId && r.invoiceDate === from).reduce((s, r) => s + r.quantity, 0);
+    const xuatFrom = exportRecords.filter((r) => r.productId === productId && r.exportDate === from).reduce((s, r) => s + r.quantity, 0);
+    openingQty = countOnFrom.quantity - nhapFrom + xuatFrom;
+  } else {
+    const dayBeforeFrom = new Date(from);
+    dayBeforeFrom.setDate(dayBeforeFrom.getDate() - 1);
+    const openingDateStr = formatDateLocal(dayBeforeFrom);
+    const opening = latestOpening(productId, stockOpenings);
+    const baseQty = opening?.quantity || 0;
+    const baseDate = opening?.asOfDate || "1970-01-01";
+    const importsBeforeFrom = resaleGoodsReceipts.filter((r) => r.productId === productId && r.invoiceDate > baseDate && r.invoiceDate <= openingDateStr);
+    const exportsBeforeFrom = exportRecords.filter((r) => r.productId === productId && r.exportDate > baseDate && r.exportDate <= openingDateStr);
+    openingQty = baseQty + importsBeforeFrom.reduce((s, r) => s + r.quantity, 0) - exportsBeforeFrom.reduce((s, r) => s + r.quantity, 0);
+  }
 
   const importsInRange = resaleGoodsReceipts.filter((r) => r.productId === productId && r.invoiceDate >= from && r.invoiceDate <= to);
   const exportsInRange = exportRecords.filter((r) => r.productId === productId && r.exportDate >= from && r.exportDate <= to);
