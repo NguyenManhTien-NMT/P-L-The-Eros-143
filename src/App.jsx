@@ -2008,7 +2008,7 @@ function XuatExcelImportForm({ data, onImport, scope = "other" }) {
     if (preview.length === 0) return;
     setImporting(true);
     try {
-      await onImport({ rows: preview });
+      await onImport({ rows: preview, scope });
       setDone(preview.length);
       setPreview([]); setUnmatched([]); setOtherScopeCount(0); setFilterDish(""); setFileName("");
     } catch (e) {
@@ -2032,7 +2032,7 @@ function XuatExcelImportForm({ data, onImport, scope = "other" }) {
   return (
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-1">Xuất kho {scope === "hcb" ? "HCB" : "NVL & Hàng hoá"} tự động từ báo cáo doanh thu</p>
-      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Ngày</b>, <b>Tên món</b>, <b>SL bán</b>, <b>Đơn giá</b>, <b>Doanh thu</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn"; <b>doanh thu ghi nhận dùng đúng cột "Doanh thu" của file</b> (không tự nhân SL × Đơn giá, không dùng giá cấu hình sẵn trong Cost món ăn) — vì có trường hợp Đơn giá niêm yết không đổi nhưng thực thu khác do khuyến mãi/giảm giá/tặng kèm riêng từng dòng. App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), tự bỏ qua các dòng tổng phụ theo hoá đơn và các dòng có Đơn giá = 0đ (dữ liệu rác của máy POS như "Mở két"...). Ngày xuất của từng dòng lấy trực tiếp từ cột "Ngày" trong file (không cần chọn ngày thủ công) — file gộp nhiều ngày vẫn tách đúng theo từng ngày. Form này <b>chỉ xử lý phạm vi: {scopeLabel}</b> — có thể dùng chung 1 file cho cả 2 nơi import (HCB và NVL & Hàng hoá), mỗi nơi tự lọc đúng phần của mình, không bị trùng dữ liệu.</p>
+      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Ngày</b>, <b>Tên món</b>, <b>SL bán</b>, <b>Đơn giá</b>, <b>Doanh thu</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn"; <b>doanh thu ghi nhận dùng đúng cột "Doanh thu" của file</b> (không tự nhân SL × Đơn giá, không dùng giá cấu hình sẵn trong Cost món ăn) — vì có trường hợp Đơn giá niêm yết không đổi nhưng thực thu khác do khuyến mãi/giảm giá/tặng kèm riêng từng dòng. App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), tự bỏ qua các dòng tổng phụ theo hoá đơn và các dòng có Đơn giá = 0đ (dữ liệu rác của máy POS như "Mở két"...). Ngày xuất của từng dòng lấy trực tiếp từ cột "Ngày" trong file (không cần chọn ngày thủ công) — file gộp nhiều ngày vẫn tách đúng theo từng ngày. Form này <b>chỉ xử lý phạm vi: {scopeLabel}</b> — có thể dùng chung 1 file cho cả 2 nơi import (HCB và NVL & Hàng hoá), mỗi nơi tự lọc đúng phần của mình, không bị trùng dữ liệu. <b>Kiểu "file update":</b> import lại đúng khoảng ngày này (cùng phạm vi) sẽ <b>tự động xoá dữ liệu xuất kho cũ trùng khoảng ngày rồi ghi lại dữ liệu mới</b> — an toàn khi lỡ bấm 2 lần hoặc cần import lại file đã sửa, không lo bị cộng dồn/nhân đôi số liệu.</p>
 
       <div className="flex items-center gap-2 mb-3">
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
@@ -6102,7 +6102,13 @@ export default function App() {
   // cho cả file — vì 1 file có thể gộp doanh thu nhiều ngày.
   // Đồng thời lưu lại chi tiết từng lượt bán món vào dish_sales — phục vụ
   // "Báo cáo doanh thu theo ngày" (số hoá đơn, doanh số, giá vốn, số món bán, tỉ lệ cost).
-  const bulkImportXuatFromBills = async ({ rows }) => {
+  // KIỂU "FILE UPDATE": import lại cùng khoảng ngày (và cùng phạm vi scope) sẽ TỰ ĐỘNG XOÁ
+  // dữ liệu xuất kho cũ trùng khoảng ngày + đúng phạm vi trước khi ghi dữ liệu mới — tránh
+  // bị cộng dồn/nhân đôi nếu lỡ import 1 file nhiều lần hoặc import lại file đã cập nhật.
+  // Phạm vi xoá: export_records lọc theo line_type (HCB hoặc khác HCB tuỳ scope) trong
+  // [ngày nhỏ nhất, ngày lớn nhất] của các dòng đang import; dish_sales lọc theo đúng các
+  // dish_id xuất hiện trong lần import này (không đụng tới các món không có trong file).
+  const bulkImportXuatFromBills = async ({ rows, scope }) => {
     const exportRows = [];
     const saleRows = [];
     const notFoundDishes = new Set();
@@ -6142,6 +6148,26 @@ export default function App() {
     if (exportRows.length === 0) {
       throw new Error("Không có dòng nào khớp được với danh sách món ăn trong Cost món ăn.");
     }
+
+    // Xoá dữ liệu cũ trùng khoảng ngày + đúng phạm vi (kiểu "file update") trước khi ghi mới.
+    const importDates = exportRows.map((r) => r.export_date);
+    const minDate = importDates.reduce((a, b) => (a < b ? a : b));
+    const maxDate = importDates.reduce((a, b) => (a > b ? a : b));
+    const dishIdsInFile = Array.from(new Set(rows.map((r) => r.dishId)));
+    let deleteExportQuery = supabase.from("export_records").select("id").gte("export_date", minDate).lte("export_date", maxDate);
+    deleteExportQuery = scope === "hcb" ? deleteExportQuery.eq("line_type", "HCB") : deleteExportQuery.neq("line_type", "HCB");
+    const { data: oldExportRows, error: findExportErr } = await deleteExportQuery;
+    if (findExportErr) throw findExportErr;
+    if (oldExportRows && oldExportRows.length > 0) {
+      const { error: delExportErr } = await supabase.from("export_records").delete().in("id", oldExportRows.map((r) => r.id));
+      if (delExportErr) throw delExportErr;
+    }
+    if (dishIdsInFile.length > 0) {
+      const { error: delSaleErr } = await supabase.from("dish_sales").delete()
+        .in("dish_id", dishIdsInFile).gte("sale_date", minDate).lte("sale_date", maxDate);
+      if (delSaleErr) console.error(delSaleErr); // không chặn luồng chính nếu lỗi phần thống kê doanh thu
+    }
+
     const receiptCode = genReceiptCode("XK");
     exportRows.forEach((r) => { r.receipt_code = receiptCode; });
     saleRows.forEach((r) => { r.receipt_code = receiptCode; });
