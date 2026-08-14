@@ -4595,6 +4595,8 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening, onBulkImp
   const stockDates = enumerateDatesISO(from, to);
   const stockLedger = selectedProductId ? buildResaleProductLedger(stockDates, selectedProductId, data.resaleGoodsReceipts, data.exportRecords, data.resaleStockCounts) : [];
   const mismatchDays = stockLedger.filter((r) => r.diff !== null && r.diff !== 0).length;
+  const ledgerTotalNhap = stockLedger.reduce((s, r) => s + r.nhap, 0);
+  const ledgerTotalXuat = stockLedger.reduce((s, r) => s + r.xuat, 0);
   const selectedProduct = hcbProducts.find((p) => p.id === selectedProductId);
 
   return (
@@ -4722,6 +4724,13 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening, onBulkImp
             </div>
             <p className="text-xs text-slate-400 mt-2">Tồn đầu ngày {fmtDate(from)} lấy theo số kiểm kê của Thu ngân đúng ngày đó (nếu có). Tồn cuối tham chiếu = Tồn đầu + Nhập − Xuất, đối chiếu với số Thu ngân kiểm kê thực tế mỗi ngày.</p>
           </Card>
+
+          {selectedProduct && (
+            <div className="grid grid-cols-2 gap-3 mb-5">
+              <MetricCard label={`Tổng Nhập (${fmtDate(from)} - ${fmtDate(to)})`} value={`${fmtNumber(ledgerTotalNhap)} ${selectedProduct.unit}`} icon={ArrowDownCircle} accent="teal" />
+              <MetricCard label={`Tổng Xuất (${fmtDate(from)} - ${fmtDate(to)})`} value={`${fmtNumber(ledgerTotalXuat)} ${selectedProduct.unit}`} icon={ArrowUpCircle} accent="amber" />
+            </div>
+          )}
 
           {hcbProducts.length === 0 ? <EmptyState icon={Truck} text="Chưa có mặt hàng Hàng chuyển bán nào." /> : (
             <Card className="p-0 overflow-hidden">
