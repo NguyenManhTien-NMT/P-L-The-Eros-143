@@ -6066,6 +6066,10 @@ export default function App() {
   // Xuất kho NVL tự động từ báo cáo doanh thu chi tiết theo hoá đơn & món ăn:
   // mỗi dòng "món X bán N suất" được nổ ra thành các dòng NVL theo đúng công thức
   // (Cost món ăn) — số lượng NVL tiêu hao = định lượng trong công thức × N.
+  // RIÊNG với dòng Hàng chuyển bán (HCB, món tự tham chiếu): số lượng xuất kho LẤY THẲNG
+  // đúng bằng "SL bán" (cột G) của file, KHÔNG nhân qua định lượng công thức — vì HCB là
+  // 1 chai/lon bán ra tương ứng đúng 1 đơn vị xuất kho, tránh sai lệch nếu định lượng công
+  // thức của dòng tự tham chiếu không đúng 1.
   // Ngày của từng dòng lấy từ cột "Ngày" trong file (r.saleDate), không dùng 1 ngày chung
   // cho cả file — vì 1 file có thể gộp doanh thu nhiều ngày.
   // Đồng thời lưu lại chi tiết từng lượt bán món vào dish_sales — phục vụ
@@ -6085,7 +6089,7 @@ export default function App() {
         const unitPrice = ing.costMode === "phan_bo"
           ? (ing.quantity > 0 ? (ing.allocatedCost || 0) / ing.quantity : 0)
           : computeAvgPrice(ing.productId, data);
-        const quantity = ing.quantity * r.quantitySold;
+        const quantity = product.classification === "HCB" ? r.quantitySold : ing.quantity * r.quantitySold;
         exportRows.push({
           order_number: r.invoiceNo || null, receipt_code: null,
           revenue_code_id: null, export_code_id: null,
