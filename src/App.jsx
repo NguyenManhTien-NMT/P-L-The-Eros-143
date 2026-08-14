@@ -5,7 +5,7 @@ import {
   Package, Truck, ClipboardList, BarChart3, Bell, LogOut, CheckCircle2, XCircle,
   Plus, Search, ChevronRight, Inbox, Warehouse, TrendingUp, TrendingDown, Wallet,
   AlertTriangle, Clock, Loader2, Lock, Unlock, User, X, Pencil, Trash2, Download, Upload, Users,
-  ShieldCheck, ArrowDownCircle, ArrowUpCircle, Boxes, Receipt, FileText, ChevronDown, ArrowUpDown, Filter, Coins,
+  ShieldCheck, ArrowDownCircle, ArrowUpCircle, Boxes, Receipt, FileText, ChevronDown, ArrowUpDown, Filter, Coins, RefreshCw,
 } from "lucide-react";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, Cell,
@@ -5915,6 +5915,12 @@ export default function App() {
   const [tab, setTab] = useState("nhap");
   const [toast, setToast] = useState(null);
   const [showChangePassword, setShowChangePassword] = useState(false);
+  const [manualRefreshing, setManualRefreshing] = useState(false);
+  const handleManualRefresh = async () => {
+    setManualRefreshing(true);
+    try { await refreshAll(); showToast("Đã tải lại dữ liệu mới nhất"); }
+    finally { setManualRefreshing(false); }
+  };
 
   const [data, setData] = useState({
     employees: [], suppliers: [], revenueCodes: [], exportCodes: [], products: [],
@@ -6597,6 +6603,9 @@ export default function App() {
             <p className="text-xs font-medium text-slate-800 truncate">{currentUser.name}</p>
             <p className="text-[11px] text-slate-400 truncate">{ROLE_META[currentUser.role]?.label}</p>
           </div>
+          <button onClick={handleManualRefresh} disabled={manualRefreshing} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition shrink-0" title="Làm mới dữ liệu">
+            <RefreshCw size={14} className={`text-slate-500 ${manualRefreshing ? "animate-spin" : ""}`} />
+          </button>
           <button onClick={() => setShowChangePassword(true)} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition shrink-0" title="Đổi mật khẩu">
             <Lock size={14} className="text-slate-500" />
           </button>
@@ -6629,6 +6638,9 @@ export default function App() {
                   <p className="text-xs font-medium text-slate-800">{currentUser.name}</p>
                   <p className="text-[11px] text-slate-400">{ROLE_META[currentUser.role]?.label}</p>
                 </div>
+                <button onClick={handleManualRefresh} disabled={manualRefreshing} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition" title="Làm mới dữ liệu">
+                  <RefreshCw size={14} className={`text-slate-500 ${manualRefreshing ? "animate-spin" : ""}`} />
+                </button>
                 <button onClick={() => setShowChangePassword(true)} className="w-8 h-8 rounded-xl border border-slate-200 flex items-center justify-center hover:bg-slate-50 transition" title="Đổi mật khẩu">
                   <Lock size={14} className="text-slate-500" />
                 </button>
