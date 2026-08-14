@@ -1958,6 +1958,7 @@ function XuatExcelImportForm({ data, onImport, scope = "other" }) {
   const [errors, setErrors] = useState([]);
   const [importing, setImporting] = useState(false);
   const [done, setDone] = useState(null);
+  const [filterDish, setFilterDish] = useState("");
   const scopeLabel = scope === "hcb" ? "Hàng chuyển bán (HCB)" : "NVL & Hàng hoá (không gồm Hàng chuyển bán)";
 
   const handleFile = async (e) => {
@@ -1968,7 +1969,7 @@ function XuatExcelImportForm({ data, onImport, scope = "other" }) {
     try {
       const rawRows = await readExcelRaw(file);
       const headerIdx = detectHeaderRow(rawRows, ["Tên món", "SL bán"]);
-      if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Tên món" và "SL bán") trong file.']); setPreview([]); setUnmatched([]); setOtherScopeCount(0); return; }
+      if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Tên món" và "SL bán") trong file.']); setPreview([]); setUnmatched([]); setOtherScopeCount(0); setFilterDish(""); return; }
       const rawObjRows = rowsToObjects(rawRows, headerIdx);
       const valid = [];
       const unmatchedNames = new Set();
@@ -1995,10 +1996,11 @@ function XuatExcelImportForm({ data, onImport, scope = "other" }) {
       setPreview(valid);
       setUnmatched(Array.from(unmatchedNames));
       setOtherScopeCount(otherScope);
+      setFilterDish("");
       setErrors([]);
     } catch (err) {
       setErrors([err.message || "Không đọc được file, kiểm tra lại định dạng .xlsx."]);
-      setPreview([]); setUnmatched([]); setOtherScopeCount(0);
+      setPreview([]); setUnmatched([]); setOtherScopeCount(0); setFilterDish("");
     }
   };
 
@@ -2008,13 +2010,24 @@ function XuatExcelImportForm({ data, onImport, scope = "other" }) {
     try {
       await onImport({ rows: preview });
       setDone(preview.length);
-      setPreview([]); setUnmatched([]); setOtherScopeCount(0); setFileName("");
+      setPreview([]); setUnmatched([]); setOtherScopeCount(0); setFilterDish(""); setFileName("");
     } catch (e) {
       setErrors([e.message || "Không nhập được, vui lòng thử lại."]);
     } finally {
       setImporting(false);
     }
   };
+
+  // Bộ lọc theo mặt hàng trên bảng xem trước — chỉ để KIỂM TRA số liệu trước khi xuất,
+  // không ảnh hưởng đến việc xuất kho (nút Xuất kho luôn xử lý TOÀN BỘ preview, không chỉ phần đang lọc).
+  const dishOptions = useMemo(() => {
+    const counts = new Map();
+    preview.forEach((r) => counts.set(r.dishName, (counts.get(r.dishName) || 0) + r.quantitySold));
+    return Array.from(counts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [preview]);
+  const filteredPreview = filterDish ? preview.filter((r) => r.dishName === filterDish) : preview;
+  const filteredQty = filteredPreview.reduce((s, r) => s + r.quantitySold, 0);
+  const filteredRevenue = filteredPreview.reduce((s, r) => s + r.revenueInFile, 0);
 
   return (
     <Card className="p-4 sm:p-5 mb-5">
@@ -2027,7 +2040,7 @@ function XuatExcelImportForm({ data, onImport, scope = "other" }) {
           <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
         </label>
         {fileName && (
-          <button type="button" onClick={() => { setFileName(""); setPreview([]); setUnmatched([]); setOtherScopeCount(0); setErrors([]); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
+          <button type="button" onClick={() => { setFileName(""); setPreview([]); setUnmatched([]); setOtherScopeCount(0); setFilterDish(""); setErrors([]); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
             <X size={16} />
           </button>
         )}
@@ -2052,6 +2065,21 @@ function XuatExcelImportForm({ data, onImport, scope = "other" }) {
 
       {preview.length > 0 && (
         <>
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
+            <div className="max-w-xs flex-1 min-w-[200px]">
+              <SelectField label="Lọc theo mặt hàng (chỉ để kiểm tra)" value={filterDish} onChange={(e) => setFilterDish(e.target.value)}>
+                <option value="">Tất cả ({preview.length} dòng)</option>
+                {dishOptions.map(([name, qty]) => (
+                  <option key={name} value={name}>{name} — {fmtNumber(qty)} SL bán</option>
+                ))}
+              </SelectField>
+            </div>
+            {filterDish && (
+              <div className="text-xs text-slate-600 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
+                <b>{filteredPreview.length}</b> dòng · Tổng SL bán <b>{fmtNumber(filteredQty)}</b> · Doanh thu <b>{fmtMoney(filteredRevenue)}</b>
+              </div>
+            )}
+          </div>
           <div className="overflow-x-auto rounded-xl border border-slate-200 mb-3 max-h-72 overflow-y-auto">
             <table className="w-full text-sm min-w-[640px]">
               <thead className="sticky top-0 bg-slate-50">
@@ -2062,7 +2090,7 @@ function XuatExcelImportForm({ data, onImport, scope = "other" }) {
                 </tr>
               </thead>
               <tbody>
-                {preview.map((r, i) => {
+                {filteredPreview.map((r, i) => {
                   const costPerUnit = dishTotalCost(r.dishId, data);
                   const totalCost = costPerUnit * r.quantitySold;
                   const costPct = r.revenueInFile > 0 ? (totalCost / r.revenueInFile) * 100 : 0;
