@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback, useEffect } from "react";
+import React, { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
 import { supabase } from "./supabaseClient";
 import {
@@ -4352,9 +4352,15 @@ function EditResaleReceiptModal({ receipt, hcbProducts, onSave, onClose }) {
 
 // Kiểm kê kho Hàng chuyển bán mỗi ngày — Thu ngân đếm 1 lần cho tất cả mặt hàng, mỗi dòng có
 // thể nhập theo Thùng hoặc Lẻ (tự quy đổi ra lon/chai theo caseSize của từng mặt hàng).
-function ResaleStockCountForm({ hcbProducts, existingCounts, editEnabled, onSubmit }) {
-  const [countDate, setCountDate] = useState(todayISO());
-  const [rows, setRows] = useState(() => Object.fromEntries(hcbProducts.map((p) => [p.id, { unitMode: "le", quantity: "" }])));
+function ResaleStockCountForm({ hcbProducts, existingCounts, editEnabled, onSubmit, initialDate, formRef }) {
+  const [countDate, setCountDate] = useState(initialDate || todayISO());
+  const [rows, setRows] = useState(() => {
+    const counts = existingCounts.filter((c) => c.countDate === (initialDate || todayISO()));
+    return Object.fromEntries(hcbProducts.map((p) => {
+      const existing = counts.find((c) => c.productId === p.id);
+      return [p.id, { unitMode: "le", quantity: existing ? String(existing.quantity) : "" }];
+    }));
+  });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -4403,6 +4409,7 @@ function ResaleStockCountForm({ hcbProducts, existingCounts, editEnabled, onSubm
   }
 
   return (
+    <div ref={formRef}>
     <Card className="p-4 sm:p-5 mb-5">
       <p className="font-semibold text-slate-800 text-sm mb-3">Kiểm kê kho hàng hoá</p>
       <div className="mb-3 max-w-xs">
@@ -4443,6 +4450,7 @@ function ResaleStockCountForm({ hcbProducts, existingCounts, editEnabled, onSubm
         <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <ClipboardList size={15} />} Lưu phiếu kiểm kê</PrimaryButton>
       )}
     </Card>
+    </div>
   );
 }
 
@@ -4462,6 +4470,14 @@ function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onD
     .filter((c) => c.createdBy === currentUser.id)
     .slice(0, 200);
   const countDates = [...new Set(myCounts.map((c) => c.countDate))].sort((a, b) => b.localeCompare(a)).slice(0, 15);
+  const [editCountDate, setEditCountDate] = useState(null);
+  const [countFormKey, setCountFormKey] = useState(0);
+  const countFormRef = useRef(null);
+  const handleEditCount = (d) => {
+    setEditCountDate(d);
+    setCountFormKey((k) => k + 1);
+    setTimeout(() => countFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
 
   const handleDelete = async (id) => {
     if (!window.confirm("Xoá phiếu nhập hàng chuyển bán này? Không thể hoàn tác.")) return;
@@ -4559,7 +4575,7 @@ function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onD
         </>
       ) : (
         <>
-          <ResaleStockCountForm hcbProducts={hcbProducts} existingCounts={data.resaleStockCounts} editEnabled={editEnabled} onSubmit={onSubmitStockCount} />
+          <ResaleStockCountForm key={countFormKey} hcbProducts={hcbProducts} existingCounts={data.resaleStockCounts} editEnabled={editEnabled} onSubmit={onSubmitStockCount} initialDate={editCountDate} formRef={countFormRef} />
 
           <Card className="p-0 overflow-hidden">
             <div className="p-4 border-b border-slate-100"><p className="font-semibold text-slate-800 text-sm">Lịch sử kiểm kê (của bạn)</p></div>
@@ -4567,13 +4583,20 @@ function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onD
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
-                    <th className="px-3 py-2">Ngày kiểm kê</th><th className="px-3 py-2 text-right">Số mặt hàng đã đếm</th>
+                    <th className="px-3 py-2">Ngày kiểm kê</th><th className="px-3 py-2 text-right">Số mặt hàng đã đếm</th><th className="px-3 py-2"></th>
                   </tr></thead>
                   <tbody>
                     {countDates.map((d) => (
                       <tr key={d} className="border-b border-slate-50 last:border-0">
                         <td className="px-3 py-2 text-slate-700 font-medium">{fmtDate(d)}</td>
                         <td className="px-3 py-2 text-right">{myCounts.filter((c) => c.countDate === d).length}</td>
+                        <td className="px-3 py-2 text-right">
+                          {editEnabled ? (
+                            <button type="button" onClick={() => handleEditCount(d)} className="text-sky-700 hover:underline text-xs inline-flex items-center gap-1"><Pencil size={12} /> Sửa</button>
+                          ) : (
+                            <span className="text-xs text-slate-300 inline-flex items-center gap-1"><Lock size={12} /> Đã khoá</span>
+                          )}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
