@@ -543,17 +543,37 @@ function nktForResaleProduct(productId, from, to, data) {
 // kiểm kê thực tế của Thu ngân. Tồn đầu ngày ĐẦU TIÊN trong danh sách = số kiểm kê của Thu ngân
 // đúng ngày đó (nếu có, không thì 0) — các ngày sau đó Tồn đầu = Tồn cuối tham chiếu ngày liền
 // trước (KHÔNG bị kiểm kê các ngày sau ghi đè — kiểm kê chỉ dùng để đối chiếu/cảnh báo).
-function buildResaleProductLedger(dates, productId, resaleGoodsReceipts, exportRecords, stockCounts) {
+function buildResaleProductLedger(dates, productId, resaleGoodsReceipts, exportRecords, stockCounts, stockOpenings) {
   // Kiểm kê Thu ngân = số đếm CUỐI ngày (giống Sổ quỹ), KHÔNG phải tồn đầu ngày. Vì vậy Tồn đầu
   // của ngày đầu tiên trong khoảng lọc phải suy ngược từ kiểm kê cuối ngày đó: Tồn đầu = Kiểm kê
   // − Nhập trong ngày + Xuất trong ngày (đảo ngược đúng 1 ngày để ra số tồn TRƯỚC khi phát sinh).
+  // Nếu ngày đầu tiên CHƯA có kiểm kê Thu ngân, fallback dùng mốc `stock_opening` (Quản lý tự chốt
+  // tay) — cùng nguyên tắc với nktForResaleProduct, để 2 tab "Xuất-Nhập-Tồn" và "Chi tiết hàng hoá"
+  // luôn khớp nhau thay vì mặc định về 0 (gây lệch đúng bằng phần Tồn đầu đã chốt).
   let prevClosing = null;
   return dates.map((d, i) => {
     const nhap = resaleGoodsReceipts.filter((r) => r.productId === productId && r.invoiceDate === d).reduce((s, r) => s + r.quantity, 0);
     const xuat = exportRecords.filter((r) => r.productId === productId && r.exportDate === d).reduce((s, r) => s + r.quantity, 0);
     const count = stockCounts.find((c) => c.productId === productId && c.countDate === d);
     const actual = count ? count.quantity : null;
-    const opening = i === 0 ? (actual !== null ? actual - nhap + xuat : 0) : prevClosing;
+    let opening;
+    if (i === 0) {
+      if (actual !== null) {
+        opening = actual - nhap + xuat;
+      } else {
+        const dayBeforeD = new Date(d);
+        dayBeforeD.setDate(dayBeforeD.getDate() - 1);
+        const openingDateStr = formatDateLocal(dayBeforeD);
+        const stockOpening = latestOpening(productId, stockOpenings || []);
+        const baseQty = stockOpening?.quantity || 0;
+        const baseDate = stockOpening?.asOfDate || "1970-01-01";
+        const importsBeforeD = resaleGoodsReceipts.filter((r) => r.productId === productId && r.invoiceDate > baseDate && r.invoiceDate <= openingDateStr);
+        const exportsBeforeD = exportRecords.filter((r) => r.productId === productId && r.exportDate > baseDate && r.exportDate <= openingDateStr);
+        opening = baseQty + importsBeforeD.reduce((s, r) => s + r.quantity, 0) - exportsBeforeD.reduce((s, r) => s + r.quantity, 0);
+      }
+    } else {
+      opening = prevClosing;
+    }
     const closing = opening + nhap - xuat;
     prevClosing = closing;
     const diff = actual !== null ? actual - closing : null;
@@ -4593,7 +4613,7 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening, onBulkImp
   }), { importValue: 0, exportValue: 0 });
 
   const stockDates = enumerateDatesISO(from, to);
-  const stockLedger = selectedProductId ? buildResaleProductLedger(stockDates, selectedProductId, data.resaleGoodsReceipts, data.exportRecords, data.resaleStockCounts) : [];
+  const stockLedger = selectedProductId ? buildResaleProductLedger(stockDates, selectedProductId, data.resaleGoodsReceipts, data.exportRecords, data.resaleStockCounts, data.stockOpenings) : [];
   const mismatchDays = stockLedger.filter((r) => r.diff !== null && r.diff !== 0).length;
   const ledgerTotalNhap = stockLedger.reduce((s, r) => s + r.nhap, 0);
   const ledgerTotalXuat = stockLedger.reduce((s, r) => s + r.xuat, 0);
