@@ -4619,6 +4619,17 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening, onBulkImp
   const ledgerTotalXuat = stockLedger.reduce((s, r) => s + r.xuat, 0);
   const selectedProduct = hcbProducts.find((p) => p.id === selectedProductId);
 
+  // Tổng quan chênh lệch TẤT CẢ mặt hàng trong cùng khoảng ngày đang lọc — để không phải bấm
+  // chọn từng mặt hàng một mới biết cái nào bị lệch. Tính lại sổ ngày cho mọi mặt hàng HCB,
+  // đếm số ngày lệch + liệt kê chi tiết những ngày lệch gần nhất (kèm số chênh) cho mỗi mặt hàng.
+  const overviewRows = tab === "kiem_ke" ? hcbProducts.map((p) => {
+    const ledger = buildResaleProductLedger(stockDates, p.id, data.resaleGoodsReceipts, data.exportRecords, data.resaleStockCounts, data.stockOpenings);
+    const mismatches = ledger.filter((r) => r.diff !== null && r.diff !== 0);
+    const uncounted = ledger.filter((r) => r.actual === null).length;
+    return { product: p, mismatches, mismatchCount: mismatches.length, uncounted };
+  }) : [];
+  const overviewMismatched = overviewRows.filter((r) => r.mismatchCount > 0).sort((a, b) => b.mismatchCount - a.mismatchCount);
+
   return (
     <div>
       <SectionTitle icon={Truck} title="Hàng chuyển bán" subtitle="Bia, nước ngọt, nước khoáng... — báo cáo nhập từ Thu ngân và Xuất-Nhập-Tồn" />
@@ -4729,6 +4740,36 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening, onBulkImp
         </>
       ) : (
         <>
+          <Card className="p-4 sm:p-5 mb-5">
+            <div className="flex items-center justify-between gap-2 mb-3">
+              <p className="font-semibold text-slate-800 text-sm">Tổng quan chênh lệch ({fmtDate(from)} - {fmtDate(to)})</p>
+              {overviewMismatched.length > 0 && (
+                <span className="text-xs px-2 py-1 rounded-lg bg-rose-50 text-rose-700 border border-rose-200 font-medium shrink-0">
+                  {overviewMismatched.length}/{hcbProducts.length} mặt hàng lệch
+                </span>
+              )}
+            </div>
+            {overviewMismatched.length === 0 ? (
+              <p className="text-sm text-emerald-700 flex items-center gap-1.5"><CheckCircle2 size={15} /> Tất cả mặt hàng đều khớp số liệu trong khoảng ngày này.</p>
+            ) : (
+              <div className="space-y-1.5">
+                {overviewMismatched.map(({ product, mismatches, mismatchCount }) => (
+                  <button
+                    key={product.id}
+                    type="button"
+                    onClick={() => setSelectedProductId(product.id)}
+                    className={`w-full text-left flex items-center justify-between gap-2 rounded-xl px-3 py-2 border transition ${selectedProductId === product.id ? "bg-rose-50 border-rose-300" : "bg-white border-slate-200 hover:bg-slate-50"}`}
+                  >
+                    <span className="text-sm text-slate-700 font-medium truncate">{product.name}</span>
+                    <span className="text-xs text-rose-600 shrink-0">
+                      {mismatchCount} ngày lệch — gần nhất {fmtDate(mismatches[mismatches.length - 1].date)} ({mismatches[mismatches.length - 1].diff > 0 ? "+" : ""}{fmtNumber(mismatches[mismatches.length - 1].diff)})
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </Card>
+
           <Card className="p-4 sm:p-5 mb-5">
             <div className="flex items-center justify-between gap-2 flex-wrap">
               <div className="max-w-xs flex-1 min-w-[200px]">
