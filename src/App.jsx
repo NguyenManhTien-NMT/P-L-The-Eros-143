@@ -348,20 +348,36 @@ function mapFundDailyBalance(r) {
   };
 }
 
+// Tải TOÀN BỘ dữ liệu 1 bảng bằng phân trang thật (.range() lặp nhiều lần cho đến khi
+// nhận về ít hơn 1 trang) — không phụ thuộc vào .limit() phía client, vì Supabase/PostgREST
+// có thể áp giới hạn "Max Rows" ở cấp SERVER (Dashboard → Settings → API) đè lên mọi
+// .limit() client gửi lên. Nếu server chỉ trả tối đa vd 1000 dòng/lần bất kể client xin bao
+// nhiêu, cách duy nhất lấy đủ dữ liệu là gọi nhiều lần với .range(from, to) tăng dần.
+async function fetchAllPaginated(queryBuilder, pageSize = 1000) {
+  let allRows = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await queryBuilder().range(from, from + pageSize - 1);
+    if (error) { console.error(error); break; }
+    const rows = data || [];
+    allRows = allRows.concat(rows);
+    if (rows.length < pageSize) break; // hết dữ liệu (trang cuối chưa đầy)
+    from += pageSize;
+  }
+  return allRows;
+}
+
 async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal, settings, resale, stockCount] = await Promise.all([
+  const [emp, sup, rev, exc, prod, open, cost, dish, dishIng, cashierRec, invRev, dep, noti, fundBal, settings, resale, stockCount] = await Promise.all([
     supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline").limit(50000),
     supabase.from("suppliers").select("*").order("code").limit(50000),
     supabase.from("revenue_codes").select("*").order("code").limit(50000),
     supabase.from("export_codes").select("*").order("code").limit(50000),
     supabase.from("products").select("*").order("code").limit(50000),
     supabase.from("stock_opening").select("*").order("as_of_date", { ascending: false }).limit(50000),
-    supabase.from("import_records").select("*").order("import_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000),
-    supabase.from("export_records").select("*").order("export_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000),
     supabase.from("expense_records").select("*").order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000),
     supabase.from("dishes").select("*").order("name").limit(50000),
     supabase.from("dish_ingredients").select("*").order("sort_order").limit(50000),
-    supabase.from("dish_sales").select("*").order("sale_date", { ascending: false }).limit(50000),
     supabase.from("cashier_receipts").select("*").order("receipt_date", { ascending: false }).limit(50000),
     supabase.from("invoice_revenue").select("*").order("invoice_date", { ascending: false }).limit(50000),
     supabase.from("deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000),
@@ -371,7 +387,15 @@ async function fetchAll() {
     supabase.from("resale_goods_receipts").select("*").order("invoice_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000),
     supabase.from("resale_stock_counts").select("*").order("count_date", { ascending: false }).limit(50000),
   ]);
-  [emp, sup, rev, exc, prod, open, imp, exp, cost, dish, dishIng, dishSale, cashierRec, invRev, dep, noti, fundBal, settings, resale, stockCount].forEach((r) => { if (r.error) console.error(r.error); });
+  [emp, sup, rev, exc, prod, open, cost, dish, dishIng, cashierRec, invRev, dep, noti, fundBal, settings, resale, stockCount].forEach((r) => { if (r.error) console.error(r.error); });
+
+  // 4 bảng có khả năng phình to nhanh nhất (dễ vượt giới hạn server) — tải bằng phân trang thật.
+  const [impRows, expRows, dishSaleRows] = await Promise.all([
+    fetchAllPaginated(() => supabase.from("import_records").select("*").order("import_date", { ascending: false }).order("created_at", { ascending: false })),
+    fetchAllPaginated(() => supabase.from("export_records").select("*").order("export_date", { ascending: false }).order("created_at", { ascending: false })),
+    fetchAllPaginated(() => supabase.from("dish_sales").select("*").order("sale_date", { ascending: false })),
+  ]);
+
   return {
     employees: (emp.data || []).map(mapEmployee),
     suppliers: (sup.data || []).map(mapSupplier),
@@ -379,12 +403,12 @@ async function fetchAll() {
     exportCodes: (exc.data || []).map(mapExportCode),
     products: (prod.data || []).map(mapProduct),
     stockOpenings: (open.data || []).map(mapStockOpening),
-    importRecords: (imp.data || []).map(mapImportRecord),
-    exportRecords: (exp.data || []).map(mapExportRecord),
+    importRecords: impRows.map(mapImportRecord),
+    exportRecords: expRows.map(mapExportRecord),
     expenseRecords: (cost.data || []).map(mapExpenseRecord),
     dishes: (dish.data || []).map(mapDish),
     dishIngredients: (dishIng.data || []).map(mapDishIngredient),
-    dishSales: (dishSale.data || []).map(mapDishSale),
+    dishSales: dishSaleRows.map(mapDishSale),
     cashierReceipts: (cashierRec.data || []).map(mapCashierReceipt),
     invoiceRevenue: (invRev.data || []).map(mapInvoiceRevenue),
     deposits: (dep.data || []).map(mapDeposit),
