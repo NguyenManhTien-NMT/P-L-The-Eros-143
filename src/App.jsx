@@ -4943,12 +4943,12 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
           <div>
             <p className="font-semibold text-slate-800 text-sm flex items-center gap-2">
               {thuNganEditEnabled ? <Unlock size={16} className="text-emerald-600" /> : <Lock size={16} className="text-rose-600" />}
-              Quyền sửa/xoá phiếu thu, phiếu chi của Thu ngân
+              Quyền tự sửa/xoá của Thu ngân
             </p>
             <p className="text-xs text-slate-400 mt-0.5">
               {thuNganEditEnabled
-                ? "Đang MỞ — tài khoản Thu ngân tự sửa/xoá được phiếu thu & phiếu chi do chính mình tạo."
-                : "Đang KHOÁ — tài khoản Thu ngân chỉ được thêm mới, không tự sửa/xoá được nữa."}
+                ? "Đang MỞ — tài khoản Thu ngân tự sửa/xoá được: phiếu thu, phiếu chi, phiếu nhập Hàng chuyển bán, và số liệu Kiểm kê tồn — do chính mình tạo."
+                : "Đang KHOÁ — tài khoản Thu ngân chỉ được thêm mới (phiếu thu, phiếu chi, Nhập hàng chuyển bán, Kiểm kê tồn), không tự sửa/xoá được nữa. Quản lý hoặc Báo cáo bấm nút bên cạnh để mở khoá tạm thời khi cần."}
             </p>
           </div>
           <button
