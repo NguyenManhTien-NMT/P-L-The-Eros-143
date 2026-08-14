@@ -432,6 +432,18 @@ function dishTotalCost(dishId, data) {
   return data.dishIngredients.filter((i) => i.dishId === dishId).reduce((s, i) => s + dishIngredientCost(i, data), 0);
 }
 
+// Phạm vi của 1 món khi Xuất kho tự động từ báo cáo doanh thu — dùng để tách riêng
+// "Xuất kho HCB" (Hàng chuyển bán: Bia/nước ngọt/nước khoáng... tự tham chiếu) khỏi
+// "Xuất kho NVL & Hàng hoá" (các món ăn dùng nguyên liệu NL/TP thông thường), tránh nhầm lẫn
+// khi 2 nơi import cùng 1 file báo cáo doanh thu. Món được coi là "hcb" nếu có BẤT KỲ dòng
+// công thức nào trỏ tới sản phẩm classification = "HCB" (các món HCB tự tham chiếu chỉ có
+// đúng 1 dòng công thức trỏ về chính nó).
+function dishScope(dishId, data) {
+  const ingredients = data.dishIngredients.filter((i) => i.dishId === dishId);
+  const isHCB = ingredients.some((i) => data.products.find((p) => p.id === i.productId)?.classification === "HCB");
+  return isHCB ? "hcb" : "other";
+}
+
 // Tồn kho (số lượng) của 1 sản phẩm tính đến hết 1 ngày cụ thể.
 function stockAsOf(productId, asOfDate, { stockOpenings, importRecords, exportRecords }) {
   const opening = latestOpening(productId, stockOpenings);
@@ -1938,13 +1950,15 @@ function NhapExcelImportForm({ data, onImport }) {
 // mỗi dòng: Ngày, Tên món, Số lượng bán (tuỳ chọn: Số hoá đơn). Hệ thống tự nổ theo công thức
 // Cost món ăn để trừ đúng NVL tiêu hao. Ngày lấy trực tiếp từ cột "Ngày" của từng dòng trong
 // file (không dùng 1 ngày chung cho cả file) — vì 1 file có thể gộp doanh thu nhiều ngày.
-function XuatExcelImportForm({ data, onImport }) {
+function XuatExcelImportForm({ data, onImport, scope = "other" }) {
   const [fileName, setFileName] = useState("");
   const [preview, setPreview] = useState([]);
   const [unmatched, setUnmatched] = useState([]);
+  const [otherScopeCount, setOtherScopeCount] = useState(0);
   const [errors, setErrors] = useState([]);
   const [importing, setImporting] = useState(false);
   const [done, setDone] = useState(null);
+  const scopeLabel = scope === "hcb" ? "Hàng chuyển bán (HCB)" : "NVL & Hàng hoá (không gồm Hàng chuyển bán)";
 
   const handleFile = async (e) => {
     const file = e.target.files?.[0];
@@ -1954,10 +1968,11 @@ function XuatExcelImportForm({ data, onImport }) {
     try {
       const rawRows = await readExcelRaw(file);
       const headerIdx = detectHeaderRow(rawRows, ["Tên món", "SL bán"]);
-      if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Tên món" và "SL bán") trong file.']); setPreview([]); setUnmatched([]); return; }
+      if (headerIdx === -1) { setErrors(['Không tìm thấy dòng tiêu đề (cần có cột "Tên món" và "SL bán") trong file.']); setPreview([]); setUnmatched([]); setOtherScopeCount(0); return; }
       const rawObjRows = rowsToObjects(rawRows, headerIdx);
       const valid = [];
       const unmatchedNames = new Set();
+      let otherScope = 0;
       rawObjRows.forEach((row) => {
         const dishName = String(pickCol(row, "Tên món", "Ten mon", "Món ăn", "Mon an") ?? "").trim();
         const quantitySold = Number(pickCol(row, "SL bán", "SL ban", "Số lượng bán", "Số lượng", "So luong")) || 0;
@@ -1972,14 +1987,18 @@ function XuatExcelImportForm({ data, onImport }) {
         if (unitPriceInFile <= 0) return; // bỏ dòng rác của POS (VD "Mở két"...) — đơn giá 0đ không phải bán hàng thật
         const dish = data.dishes.find((d) => normalizeForMatch(d.name) === normalizeForMatch(dishName));
         if (!dish) { unmatchedNames.add(dishName); return; }
+        // Tách riêng theo phạm vi HCB / NVL & Hàng hoá — bỏ qua (không báo lỗi) các dòng
+        // không thuộc phạm vi của form này, để user import đúng chỗ mà không bị trùng dữ liệu.
+        if (dishScope(dish.id, data) !== scope) { otherScope += 1; return; }
         valid.push({ dishName, dishId: dish.id, quantitySold, unitPriceInFile, revenueInFile, invoiceNo, saleDate });
       });
       setPreview(valid);
       setUnmatched(Array.from(unmatchedNames));
+      setOtherScopeCount(otherScope);
       setErrors([]);
     } catch (err) {
       setErrors([err.message || "Không đọc được file, kiểm tra lại định dạng .xlsx."]);
-      setPreview([]); setUnmatched([]);
+      setPreview([]); setUnmatched([]); setOtherScopeCount(0);
     }
   };
 
@@ -1989,7 +2008,7 @@ function XuatExcelImportForm({ data, onImport }) {
     try {
       await onImport({ rows: preview });
       setDone(preview.length);
-      setPreview([]); setUnmatched([]); setFileName("");
+      setPreview([]); setUnmatched([]); setOtherScopeCount(0); setFileName("");
     } catch (e) {
       setErrors([e.message || "Không nhập được, vui lòng thử lại."]);
     } finally {
@@ -1999,8 +2018,8 @@ function XuatExcelImportForm({ data, onImport }) {
 
   return (
     <Card className="p-4 sm:p-5 mb-5">
-      <p className="font-semibold text-slate-800 text-sm mb-1">Xuất kho NVL tự động từ báo cáo doanh thu</p>
-      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Ngày</b>, <b>Tên món</b>, <b>SL bán</b>, <b>Đơn giá</b>, <b>Doanh thu</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn"; <b>doanh thu ghi nhận dùng đúng cột "Doanh thu" của file</b> (không tự nhân SL × Đơn giá, không dùng giá cấu hình sẵn trong Cost món ăn) — vì có trường hợp Đơn giá niêm yết không đổi nhưng thực thu khác do khuyến mãi/giảm giá/tặng kèm riêng từng dòng. App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), tự bỏ qua các dòng tổng phụ theo hoá đơn và các dòng có Đơn giá = 0đ (dữ liệu rác của máy POS như "Mở két"...). Ngày xuất của từng dòng lấy trực tiếp từ cột "Ngày" trong file (không cần chọn ngày thủ công) — file gộp nhiều ngày vẫn tách đúng theo từng ngày.</p>
+      <p className="font-semibold text-slate-800 text-sm mb-1">Xuất kho {scope === "hcb" ? "HCB" : "NVL & Hàng hoá"} tự động từ báo cáo doanh thu</p>
+      <p className="text-xs text-slate-500 mb-3">File cần có các cột: <b>Ngày</b>, <b>Tên món</b>, <b>SL bán</b>, <b>Đơn giá</b>, <b>Doanh thu</b> (tuỳ chọn: Số hoá đơn). Tên món phải khớp đúng tên đã tạo trong "Cost món ăn"; <b>doanh thu ghi nhận dùng đúng cột "Doanh thu" của file</b> (không tự nhân SL × Đơn giá, không dùng giá cấu hình sẵn trong Cost món ăn) — vì có trường hợp Đơn giá niêm yết không đổi nhưng thực thu khác do khuyến mãi/giảm giá/tặng kèm riêng từng dòng. App tự nhận diện đúng dòng tiêu đề dù file có vài dòng mô tả phía trên (kiểu file xuất từ phần mềm POS), tự bỏ qua các dòng tổng phụ theo hoá đơn và các dòng có Đơn giá = 0đ (dữ liệu rác của máy POS như "Mở két"...). Ngày xuất của từng dòng lấy trực tiếp từ cột "Ngày" trong file (không cần chọn ngày thủ công) — file gộp nhiều ngày vẫn tách đúng theo từng ngày. Form này <b>chỉ xử lý phạm vi: {scopeLabel}</b> — có thể dùng chung 1 file cho cả 2 nơi import (HCB và NVL & Hàng hoá), mỗi nơi tự lọc đúng phần của mình, không bị trùng dữ liệu.</p>
 
       <div className="flex items-center gap-2 mb-3">
         <label className="inline-flex items-center gap-2 cursor-pointer text-sm font-medium text-sky-700 border border-sky-300 bg-sky-50 hover:bg-sky-100 rounded-xl px-4 py-2">
@@ -2008,7 +2027,7 @@ function XuatExcelImportForm({ data, onImport }) {
           <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFile} />
         </label>
         {fileName && (
-          <button type="button" onClick={() => { setFileName(""); setPreview([]); setUnmatched([]); setErrors([]); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
+          <button type="button" onClick={() => { setFileName(""); setPreview([]); setUnmatched([]); setOtherScopeCount(0); setErrors([]); }} className="text-slate-400 hover:text-rose-600 p-1.5" title="Bỏ file đã chọn">
             <X size={16} />
           </button>
         )}
@@ -2023,6 +2042,11 @@ function XuatExcelImportForm({ data, onImport }) {
         <div className="mb-3 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
           <p className="font-medium mb-1 flex items-center gap-1"><AlertTriangle size={12} /> {unmatched.length} tên món không khớp với "Cost món ăn" (sẽ bị bỏ qua):</p>
           <p>{unmatched.join(", ")}</p>
+        </div>
+      )}
+      {otherScopeCount > 0 && (
+        <div className="mb-3 text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-3">
+          Đã tự bỏ qua {otherScopeCount} dòng thuộc phạm vi khác ({scope === "hcb" ? "NVL & Hàng hoá" : "Hàng chuyển bán (HCB)"}) — import file này ở đúng nơi tương ứng nếu cần.
         </div>
       )}
 
@@ -2058,10 +2082,10 @@ function XuatExcelImportForm({ data, onImport }) {
               </tbody>
             </table>
           </div>
-          <PrimaryButton onClick={submit} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Xuất kho theo {preview.length} dòng món bán</PrimaryButton>
+          <PrimaryButton onClick={submit} disabled={importing}>{importing ? <Loader2 size={15} className="animate-spin" /> : <Upload size={15} />} Xuất kho theo {preview.length} dòng món bán ({scopeLabel})</PrimaryButton>
         </>
       )}
-      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã xuất kho thành công theo {done} dòng món bán.</p>}
+      {done !== null && <p className="text-xs text-emerald-600 mt-2">Đã xuất kho thành công theo {done} dòng món bán ({scopeLabel}).</p>}
     </Card>
   );
 }
@@ -2471,10 +2495,10 @@ function XuatHangModule({ data, currentUser, onSubmit, onBulkImportFromBills, on
 
   return (
     <div>
-      <SectionTitle icon={ArrowUpCircle} title="Xuất hàng" subtitle="Ghi nhận tiêu hao nguyên liệu và bán thành phẩm" />
+      <SectionTitle icon={ArrowUpCircle} title="Xuất hàng" subtitle="Ghi nhận tiêu hao NVL & Hàng hoá (không gồm Hàng chuyển bán — xem tab Hàng chuyển bán)" />
       <ReceiptSummaryCard summary={lastReceipt} icon={ArrowUpCircle} actionLabel="Xuất hàng" />
       <DeleteByReceiptCard records={data.exportRecords} onDeleteMany={handleDeleteMany} label="phiếu xuất" />
-      <XuatExcelImportForm key={resetKey} data={data} onImport={handleBulkImport} />
+      <XuatExcelImportForm key={resetKey} data={data} onImport={handleBulkImport} scope="other" />
       <XuatHangList data={data} onDelete={onDelete} />
     </div>
   );
@@ -4493,12 +4517,19 @@ function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onD
 
 // Báo cáo Hàng chuyển bán cho Quản lý/Báo cáo — (1) Báo cáo nhập từ Thu ngân gửi lên,
 // (2) Báo cáo Xuất-Nhập-Tồn (Nhập từ resale_goods_receipts, Xuất từ export_records).
-function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening }) {
+function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening, onBulkImportFromBills }) {
   const [tab, setTab] = useState("nhap"); // "nhap" | "ton" | "kiem_ke"
   const [from, setFrom] = useState(FUND_START_DATE);
   const [to, setTo] = useState(todayISO());
   const hcbProducts = data.products.filter((p) => p.classification === "HCB");
   const [selectedProductId, setSelectedProductId] = useState(hcbProducts[0]?.id || "");
+  const [lastReceipt, setLastReceipt] = useState(null);
+  const [resetKey, setResetKey] = useState(0);
+  const handleBulkImport = async (payload) => {
+    const result = await onBulkImportFromBills(payload);
+    if (result) setLastReceipt(result);
+    return result;
+  };
 
   const receiptsInRange = data.resaleGoodsReceipts.filter((r) => r.invoiceDate >= from && r.invoiceDate <= to);
   const totalQty = receiptsInRange.reduce((s, r) => s + r.quantity, 0);
@@ -4584,6 +4615,8 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening }) {
       ) : tab === "ton" ? (
         <>
           {currentUser.role === "quan_ly" && <StockOpeningForm data={data} currentUser={currentUser} onSubmit={onSaveOpening} />}
+          <ReceiptSummaryCard summary={lastReceipt} icon={ArrowUpCircle} actionLabel="Xuất kho HCB" />
+          <XuatExcelImportForm key={resetKey} data={data} onImport={handleBulkImport} scope="hcb" />
           <div className="grid grid-cols-2 gap-3 mb-5">
             <MetricCard label="Giá trị nhập (kỳ này)" value={fmtMoney(totals.importValue)} icon={ArrowDownCircle} accent="teal" />
             <MetricCard label="Giá trị xuất (kỳ này)" value={fmtMoney(totals.exportValue)} icon={ArrowUpCircle} accent="amber" />
@@ -6558,7 +6591,7 @@ export default function App() {
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
             {tab === "coc" && (canViewReports || isThuNgan) && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
             {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onUpsertRemittedAmount={upsertFundRemittedAmount} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
-            {tab === "hang_chuyen_ban" && canViewReports && <HangChuyenBanQuanLyModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} />}
+            {tab === "hang_chuyen_ban" && canViewReports && <HangChuyenBanQuanLyModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} onBulkImportFromBills={bulkImportXuatFromBills} />}
             {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} onUpdate={updateCashierReceipt} onDelete={deleteCashierReceipt} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "hang_chuyen_ban" && isThuNgan && <HangChuyenBanThuNganModule data={data} currentUser={currentUser} onSubmit={submitResaleGoodsReceipt} onUpdate={updateResaleGoodsReceipt} onDelete={deleteResaleGoodsReceipt} onSubmitStockCount={submitResaleStockCounts} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
