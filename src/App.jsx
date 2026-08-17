@@ -3102,8 +3102,12 @@ function buildFundLedger(dates, cashierReceipts, expenseRecords, deposits, overr
     // "nộp ... cô/chủ") + phần ghi tay bổ sung qua Sổ quỹ (remittedMap, nếu quản lý cộng thêm).
     const autoRemittedCash = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "tien_mat" && isRemittedExpenseName(r.itemName)).reduce((s, r) => s + r.amount, 0);
     const autoRemittedBank = expenseRecords.filter((r) => r.expenseDate === d && r.paymentMethod === "chuyen_khoan" && isRemittedExpenseName(r.itemName)).reduce((s, r) => s + r.amount, 0);
-    const remittedCash = autoRemittedCash + (remittedMap[d]?.cash || 0);
-    const remittedBank = autoRemittedBank + (remittedMap[d]?.bank || 0);
+    // Phần ghi tay (bổ sung) — tách riêng để ô sửa trên UI điền đúng phần này, tránh lấy nhầm
+    // tổng (auto+manual) làm giá trị khởi điểm khi sửa, gây cộng dồn 2 lần.
+    const manualRemittedCash = remittedMap[d]?.cash || 0;
+    const manualRemittedBank = remittedMap[d]?.bank || 0;
+    const remittedCash = autoRemittedCash + manualRemittedCash;
+    const remittedBank = autoRemittedBank + manualRemittedBank;
 
     const ov = overridesMap[d];
     const hasOverride = !!ov;
@@ -3119,7 +3123,7 @@ function buildFundLedger(dates, cashierReceipts, expenseRecords, deposits, overr
       date: d, hasOverride,
       openingCash, openingBank,
       thuNganCash, thuNganBank, thuCocCash, thuCocBank, chiPhiCash, chiPhiBank, chiCocCash, chiCocBank,
-      remittedCash, remittedBank,
+      remittedCash, remittedBank, autoRemittedCash, autoRemittedBank, manualRemittedCash, manualRemittedBank,
       closingCash, closingBank,
     };
   });
@@ -3961,9 +3965,14 @@ function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted, readOnly = fal
   const chiPhiKey = currency === "cash" ? "chiPhiCash" : "chiPhiBank";
   const chiCocKey = currency === "cash" ? "chiCocCash" : "chiCocBank";
   const remittedKey = currency === "cash" ? "remittedCash" : "remittedBank";
+  const autoRemittedKey = currency === "cash" ? "autoRemittedCash" : "autoRemittedBank";
+  const manualRemittedKey = currency === "cash" ? "manualRemittedCash" : "manualRemittedBank";
   const closingKey = currency === "cash" ? "closingCash" : "closingBank";
 
-  const startEdit = (row, field) => { setEditingCell({ date: row.date, field }); setDraftValue(String(field === "opening" ? row[openingKey] : row[remittedKey])); };
+  // QUAN TRỌNG: khi sửa "Nộp cho cô", điền sẵn đúng PHẦN GHI TAY (manualRemittedKey) chứ
+  // KHÔNG điền tổng (remittedKey = tự động + ghi tay) — nếu điền tổng, người dùng nhập lại
+  // đúng số đang thấy sẽ bị cộng dồn thành 2 lần (tự động vẫn còn nguyên + số vừa lưu thêm).
+  const startEdit = (row, field) => { setEditingCell({ date: row.date, field }); setDraftValue(String(field === "opening" ? row[openingKey] : row[manualRemittedKey])); };
   const cancelEdit = () => { setEditingCell(null); setDraftValue(""); };
   const save = async (date, field) => {
     setSaving(true);
@@ -4042,17 +4051,22 @@ function FundLedgerTable({ ledger, onSaveOpening, onSaveRemitted, readOnly = fal
                   <td className="px-3 py-2 text-right text-amber-700">{fmtMoney(row[chiCocKey])}</td>
                   <td className="px-3 py-2 text-right">
                     {!readOnly && editingCell?.date === row.date && editingCell?.field === "remitted" ? (
-                      <div className="flex items-center justify-end gap-1">
-                        <MoneyField value={draftValue} onChange={setDraftValue} className="w-32 !py-1" />
-                        <button type="button" onClick={() => save(row.date, "remitted")} disabled={saving} className="text-emerald-600 hover:text-emerald-700 p-1">
-                          {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
-                        </button>
-                        <button type="button" onClick={cancelEdit} className="text-slate-400 hover:text-rose-600 p-1"><X size={14} /></button>
+                      <div className="flex flex-col items-end gap-0.5">
+                        <div className="flex items-center justify-end gap-1">
+                          <MoneyField value={draftValue} onChange={setDraftValue} className="w-32 !py-1" />
+                          <button type="button" onClick={() => save(row.date, "remitted")} disabled={saving} className="text-emerald-600 hover:text-emerald-700 p-1">
+                            {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={14} />}
+                          </button>
+                          <button type="button" onClick={cancelEdit} className="text-slate-400 hover:text-rose-600 p-1"><X size={14} /></button>
+                        </div>
+                        <p className="text-[11px] text-slate-400 leading-tight">
+                          Tự động: {fmtMoney(row[autoRemittedKey])} + Bạn nhập: {fmtMoney(Number(draftValue) || 0)} = Tổng: {fmtMoney(row[autoRemittedKey] + (Number(draftValue) || 0))}
+                        </p>
                       </div>
                     ) : readOnly ? (
                       <span className="font-medium text-purple-700">{fmtMoney(row[remittedKey])}</span>
                     ) : (
-                      <button type="button" onClick={() => startEdit(row, "remitted")} className="inline-flex items-center gap-1 font-medium text-purple-700 hover:text-purple-800" title="Bấm để nhập số tiền đã nộp">
+                      <button type="button" onClick={() => startEdit(row, "remitted")} className="inline-flex items-center gap-1 font-medium text-purple-700 hover:text-purple-800" title="Bấm để nhập/sửa PHẦN GHI TAY nộp thêm — số này sẽ CỘNG vào phần tự động phát hiện từ Chi phí, không thay thế tổng">
                         {fmtMoney(row[remittedKey])}
                         <Pencil size={11} className="text-slate-300" />
                       </button>
