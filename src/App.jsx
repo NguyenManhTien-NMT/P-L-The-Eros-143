@@ -5565,7 +5565,7 @@ function ExpenseList({ data, currentUser, onDelete, onUpdate, filterCategory, fr
 
 // Bảng tổng hợp Chi phí: tổng theo từng loại (nvl gộp cả nhập kho Excel + phiếu chi lẻ) +
 // chi tiết theo từng khoản mục (gộp các dòng cùng tên, sắp xếp theo tổng tiền giảm dần).
-function ExpenseSummaryTable({ data, from, to }) {
+function ExpenseSummaryTable({ data, from, to, selected, onSelect }) {
   const allExpense = data.expenseRecords.filter((r) => (!from || r.expenseDate >= from) && (!to || r.expenseDate <= to));
   const importInRange = data.importRecords.filter((r) => (!from || r.importDate >= from) && (!to || r.importDate <= to));
 
@@ -5590,6 +5590,7 @@ function ExpenseSummaryTable({ data, from, to }) {
       <div className="p-4 border-b border-slate-100">
         <p className="font-semibold text-slate-800 text-sm">Tổng hợp chi phí theo loại</p>
         <p className="text-xs text-slate-400 mt-0.5">{from || to ? `Từ ${from ? fmtDate(from) : "…"} đến ${to ? fmtDate(to) : "…"}` : "Toàn bộ dữ liệu"}</p>
+        <p className="text-xs text-sky-600 mt-1 flex items-center gap-1"><ChevronRight size={12} /> Bấm vào một dòng để xem chi tiết từng khoản chi của nhóm đó</p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -5602,14 +5603,30 @@ function ExpenseSummaryTable({ data, from, to }) {
             </tr>
           </thead>
           <tbody>
-            {totalsByCategory.map((c) => (
-              <tr key={c.key} className={`border-b border-slate-50 last:border-0 ${c.key === "chua_phan_bo" && c.total > 0 ? "bg-rose-50" : ""}`}>
-                <td className={`px-4 py-2 ${c.key === "chua_phan_bo" && c.total > 0 ? "text-rose-700 font-semibold" : "text-slate-700"}`}>{c.label}</td>
-                <td className={`px-3 py-2 text-right ${c.key === "chua_phan_bo" && c.total > 0 ? "text-rose-600" : "text-slate-500"}`}>{fmtNumber(c.count)}</td>
-                <td className={`px-3 py-2 text-right font-medium ${c.key === "chua_phan_bo" && c.total > 0 ? "text-rose-700" : "text-slate-800"}`}>{fmtMoney(c.total)}</td>
-                <td className={`px-4 py-2 text-right ${c.key === "chua_phan_bo" && c.total > 0 ? "text-rose-600" : "text-slate-500"}`}>{grandTotal > 0 ? `${((c.total / grandTotal) * 100).toFixed(1)}%` : "—"}</td>
-              </tr>
-            ))}
+            {totalsByCategory.map((c) => {
+              const canhBao = c.key === "chua_phan_bo" && c.total > 0;
+              const dangChon = selected === c.key;
+              return (
+                <tr
+                  key={c.key}
+                  onClick={() => onSelect && onSelect(c.key)}
+                  title="Bấm để xem chi tiết các khoản chi của nhóm này"
+                  className={`border-b border-slate-50 last:border-0 transition-colors ${onSelect ? "cursor-pointer" : ""} ${
+                    dangChon ? "bg-sky-100" : canhBao ? "bg-rose-50 hover:bg-rose-100" : "hover:bg-slate-50"
+                  }`}
+                >
+                  <td className={`px-4 py-2 ${canhBao ? "text-rose-700 font-semibold" : dangChon ? "text-sky-900 font-semibold" : "text-slate-700"}`}>
+                    <span className="inline-flex items-center gap-1.5">
+                      {c.label}
+                      {dangChon && <ChevronRight size={13} className="text-sky-700" />}
+                    </span>
+                  </td>
+                  <td className={`px-3 py-2 text-right ${canhBao ? "text-rose-600" : "text-slate-500"}`}>{fmtNumber(c.count)}</td>
+                  <td className={`px-3 py-2 text-right font-medium ${canhBao ? "text-rose-700" : "text-slate-800"}`}>{fmtMoney(c.total)}</td>
+                  <td className={`px-4 py-2 text-right ${canhBao ? "text-rose-600" : "text-slate-500"}`}>{grandTotal > 0 ? `${((c.total / grandTotal) * 100).toFixed(1)}%` : "—"}</td>
+                </tr>
+              );
+            })}
             <tr className="bg-slate-50">
               <td className="px-4 py-2 font-semibold text-slate-800">Tổng cộng (toàn bộ phiếu chi)</td>
               <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmtNumber(totalsByCategory.reduce((s, c) => s + c.count, 0))}</td>
@@ -5658,7 +5675,7 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
           </button>
         )}
       </Card>
-      <ExpenseSummaryTable data={data} from={from} to={to} />
+      <ExpenseSummaryTable data={data} from={from} to={to} selected={category} onSelect={setCategory} />
       <Card className="p-4 sm:p-5 mb-5">
         <SelectField label="Loại chi phí" value={category} onChange={(e) => setCategory(e.target.value)}>
           {EXPENSE_CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
