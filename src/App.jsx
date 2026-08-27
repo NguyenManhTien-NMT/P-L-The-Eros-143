@@ -3069,6 +3069,10 @@ const EXPENSE_CATEGORIES = [
   { key: "marketing", label: "Chi phí Marketing & bán hàng", presetItems: ["Quảng cáo"] },
   { key: "bao_tri_vat_tu", label: "Chi phí bảo trì và vật tư" },
   { key: "khac", label: "Chi phí khác" },
+  // Nhóm tạm để các khoản chi CHƯA RÕ NỘI DUNG (mới chỉ có tên nhà cung cấp / người
+  // nhận, chưa có chứng từ). Ghi vào đây trước để không làm sai các nhóm chi phí thật,
+  // sau khi bổ sung được chứng từ thì mở "Sửa khoản chi phí" và chọn lại nhóm đúng.
+  { key: "chua_phan_bo", label: "⚠ Chưa phân bổ — chờ bổ sung chứng từ" },
 ];
 const EXPENSE_CATEGORY_META = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 const EXPENSE_PAYMENT_METHOD_META = {
@@ -5587,11 +5591,11 @@ function ExpenseSummaryTable({ data, from, to }) {
           </thead>
           <tbody>
             {totalsByCategory.map((c) => (
-              <tr key={c.key} className="border-b border-slate-50 last:border-0">
-                <td className="px-4 py-2 text-slate-700">{c.label}</td>
-                <td className="px-3 py-2 text-right text-slate-500">{fmtNumber(c.count)}</td>
-                <td className="px-3 py-2 text-right font-medium text-slate-800">{fmtMoney(c.total)}</td>
-                <td className="px-4 py-2 text-right text-slate-500">{grandTotal > 0 ? `${((c.total / grandTotal) * 100).toFixed(1)}%` : "—"}</td>
+              <tr key={c.key} className={`border-b border-slate-50 last:border-0 ${c.key === "chua_phan_bo" && c.total > 0 ? "bg-rose-50" : ""}`}>
+                <td className={`px-4 py-2 ${c.key === "chua_phan_bo" && c.total > 0 ? "text-rose-700 font-semibold" : "text-slate-700"}`}>{c.label}</td>
+                <td className={`px-3 py-2 text-right ${c.key === "chua_phan_bo" && c.total > 0 ? "text-rose-600" : "text-slate-500"}`}>{fmtNumber(c.count)}</td>
+                <td className={`px-3 py-2 text-right font-medium ${c.key === "chua_phan_bo" && c.total > 0 ? "text-rose-700" : "text-slate-800"}`}>{fmtMoney(c.total)}</td>
+                <td className={`px-4 py-2 text-right ${c.key === "chua_phan_bo" && c.total > 0 ? "text-rose-600" : "text-slate-500"}`}>{grandTotal > 0 ? `${((c.total / grandTotal) * 100).toFixed(1)}%` : "—"}</td>
               </tr>
             ))}
             <tr className="bg-slate-50">
@@ -5668,6 +5672,18 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
       {category === "bao_tri_vat_tu" && currentUser?.role !== "bao_cao" && <BaoTriVatTuForm currentUser={currentUser} onSubmit={onSubmitExpense} />}
       {(category === "van_hanh" || category === "marketing") && currentUser?.role !== "bao_cao" && <PresetExpenseForm category={category} onSubmit={onSubmitExpense} />}
       {category === "khac" && currentUser?.role !== "bao_cao" && <OtherExpenseForm onSubmit={onSubmitExpense} />}
+      {category === "chua_phan_bo" && (
+        <>
+          <div className="mb-4 flex items-start gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
+            <AlertTriangle size={15} className="shrink-0 mt-0.5" />
+            <span>
+              Nhóm tạm cho các khoản chi <b>chưa rõ nội dung</b> — mới chỉ có tên nhà cung cấp hoặc người nhận, chưa có chứng từ.
+              Các khoản ở đây <b>chưa được tính vào chi phí thật</b> của từng nhóm. Khi bổ sung được chứng từ, bấm <b>Sửa</b> ở dòng tương ứng rồi chọn lại <b>Nhóm chi phí</b> đúng.
+            </span>
+          </div>
+          {currentUser?.role !== "bao_cao" && <OtherExpenseForm onSubmit={onSubmitExpense} />}
+        </>
+      )}
       {currentUser?.role === "bao_cao" && category !== "nvl" && (
         <div className="mb-4 flex items-center gap-2 text-sm text-slate-500 bg-slate-50 border border-slate-200 rounded-xl px-3 py-2">
           <Receipt size={15} /> Tài khoản Báo cáo chỉ xem, đổi nhóm và sửa/xoá chi phí — không nhập khoản chi mới.
