@@ -6069,10 +6069,11 @@ export default function App() {
 
   useEffect(() => {
     (async () => {
-      await refreshAll();
+      // refreshAll() đã trả về đúng dữ liệu vừa tải — dùng lại kết quả đó thay vì
+      // gọi fetchAll() thêm lần nữa (trước đây mỗi lần mở app tải TRÙNG 2 lần).
+      const fresh = await refreshAll();
       const savedId = localStorage.getItem(SESSION_KEY);
       if (savedId) {
-        const fresh = await fetchAll();
         const found = fresh.employees.find((e) => e.id === savedId);
         if (found) setCurrentUser(found);
         else localStorage.removeItem(SESSION_KEY);
@@ -6081,10 +6082,37 @@ export default function App() {
     })();
   }, [refreshAll]);
 
+  // Tự động tải lại dữ liệu. TRƯỚC ĐÂY: setInterval 20 giây, chạy kể cả khi tab đang
+  // ẩn hoặc không ai thao tác — mỗi lần kéo về TOÀN BỘ 20 bảng (~5 MB). Một máy mở app
+  // 1 tiếng tốn ~1 GB, đó là nguyên nhân vượt hạn mức egress của Supabase.
+  // BÂY GIỜ: chỉ tải lại khi (a) đủ REFRESH_INTERVAL_MS và tab đang hiển thị, hoặc
+  // (b) người dùng quay lại tab sau khi rời đi hơn REFRESH_ON_FOCUS_MS.
+  // Cần số liệu mới ngay lập tức thì bấm nút "Tải lại" có sẵn trên thanh tiêu đề.
   useEffect(() => {
     if (!currentUser) return;
-    const t = setInterval(() => { refreshAll(); }, 20000);
-    return () => clearInterval(t);
+    const REFRESH_INTERVAL_MS = 5 * 60 * 1000; // 5 phút
+    const REFRESH_ON_FOCUS_MS = 60 * 1000;     // quay lại tab sau >1 phút thì tải lại
+    let lastRefresh = Date.now();
+
+    const doRefresh = () => { lastRefresh = Date.now(); refreshAll(); };
+
+    const onTick = () => {
+      if (document.visibilityState !== "visible") return; // tab ẩn: không tốn dữ liệu
+      doRefresh();
+    };
+    const onFocus = () => {
+      if (document.visibilityState !== "visible") return;
+      if (Date.now() - lastRefresh > REFRESH_ON_FOCUS_MS) doRefresh();
+    };
+
+    const timer = setInterval(onTick, REFRESH_INTERVAL_MS);
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
   }, [currentUser, refreshAll]);
 
   const handleLogin = (employee) => {
