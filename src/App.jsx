@@ -3073,7 +3073,15 @@ const EXPENSE_CATEGORIES = [
   // nhận, chưa có chứng từ). Ghi vào đây trước để không làm sai các nhóm chi phí thật,
   // sau khi bổ sung được chứng từ thì mở "Sửa khoản chi phí" và chọn lại nhóm đúng.
   { key: "chua_phan_bo", label: "⚠ Chưa phân bổ — chờ bổ sung chứng từ" },
+  // 2 nhóm dưới đây KHÔNG PHẢI CHI PHÍ — chỉ theo dõi dòng tiền ra:
+  // - dong_tien: nộp tiền cho cô/chủ, hoàn & trả cọc khách (tiền chuyển đi, không mất đi)
+  // - tam_ung  : nhân viên ứng lương/mượn tiền (khoản phải thu tạm, khi trừ lương mới
+  //              thành chi phí nhân công — lúc đó đổi nhóm sang "Chi phí vận hành")
+  { key: "dong_tien", label: "◇ Dòng tiền — nộp cô / hoàn cọc (không phải chi phí)" },
+  { key: "tam_ung", label: "◇ Tạm ứng — phải thu tạm (không phải chi phí)" },
 ];
+// Các nhóm không được tính vào "Tổng chi phí thực".
+const NON_EXPENSE_CATEGORIES = ["chua_phan_bo", "dong_tien", "tam_ung"];
 const EXPENSE_CATEGORY_META = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 const EXPENSE_PAYMENT_METHOD_META = {
   tien_mat: { label: "Tiền mặt", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -5572,6 +5580,10 @@ function ExpenseSummaryTable({ data, from, to }) {
     return { key: c.key, label: c.label, total, count };
   });
   const grandTotal = totalsByCategory.reduce((s, c) => s + c.total, 0);
+  // Tổng chi phí THỰC = bỏ các nhóm không phải chi phí (chưa phân bổ, dòng tiền, tạm ứng).
+  const realExpense = totalsByCategory
+    .filter((c) => !NON_EXPENSE_CATEGORIES.includes(c.key))
+    .reduce((acc, c) => ({ total: acc.total + c.total, count: acc.count + c.count }), { total: 0, count: 0 });
 
   return (
     <Card className="p-0 overflow-hidden mb-5">
@@ -5599,10 +5611,16 @@ function ExpenseSummaryTable({ data, from, to }) {
               </tr>
             ))}
             <tr className="bg-slate-50">
-              <td className="px-4 py-2 font-semibold text-slate-800">Tổng cộng</td>
+              <td className="px-4 py-2 font-semibold text-slate-800">Tổng cộng (toàn bộ phiếu chi)</td>
               <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmtNumber(totalsByCategory.reduce((s, c) => s + c.count, 0))}</td>
               <td className="px-3 py-2 text-right font-semibold text-slate-800">{fmtMoney(grandTotal)}</td>
               <td className="px-4 py-2 text-right font-semibold text-slate-800">100%</td>
+            </tr>
+            <tr className="bg-emerald-50 border-t-2 border-emerald-200">
+              <td className="px-4 py-2 font-semibold text-emerald-800">TỔNG CHI PHÍ THỰC (đã loại Chưa phân bổ, Dòng tiền, Tạm ứng)</td>
+              <td className="px-3 py-2 text-right font-semibold text-emerald-800">{fmtNumber(realExpense.count)}</td>
+              <td className="px-3 py-2 text-right font-semibold text-emerald-800">{fmtMoney(realExpense.total)}</td>
+              <td className="px-4 py-2 text-right font-semibold text-emerald-800">{grandTotal > 0 ? `${((realExpense.total / grandTotal) * 100).toFixed(1)}%` : "—"}</td>
             </tr>
           </tbody>
         </table>
