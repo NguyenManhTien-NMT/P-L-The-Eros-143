@@ -6366,18 +6366,18 @@ export default function App() {
     }
 
     // Xoá dữ liệu cũ trùng khoảng ngày + đúng phạm vi (kiểu "file update") trước khi ghi mới.
+    // LƯU Ý: TRƯỚC ĐÂY code lấy toàn bộ id về rồi xoá bằng .in("id", [...]). Khi export_records
+    // đã lớn (vài nghìn dòng trong khoảng ngày), danh sách UUID nhồi vào URL vượt giới hạn độ
+    // dài của máy chủ và trả về "Bad Request" (lỗi tầng HTTP, chưa tới database).
+    // BÂY GIỜ: xoá thẳng theo điều kiện — URL luôn ngắn, không phụ thuộc số dòng.
     const importDates = exportRows.map((r) => r.export_date);
     const minDate = importDates.reduce((a, b) => (a < b ? a : b));
     const maxDate = importDates.reduce((a, b) => (a > b ? a : b));
     const dishIdsInFile = Array.from(new Set(rows.map((r) => r.dishId)));
-    let deleteExportQuery = supabase.from("export_records").select("id").gte("export_date", minDate).lte("export_date", maxDate);
+    let deleteExportQuery = supabase.from("export_records").delete().gte("export_date", minDate).lte("export_date", maxDate);
     deleteExportQuery = scope === "hcb" ? deleteExportQuery.eq("line_type", "HCB") : deleteExportQuery.neq("line_type", "HCB");
-    const { data: oldExportRows, error: findExportErr } = await deleteExportQuery;
-    if (findExportErr) throw findExportErr;
-    if (oldExportRows && oldExportRows.length > 0) {
-      const { error: delExportErr } = await supabase.from("export_records").delete().in("id", oldExportRows.map((r) => r.id));
-      if (delExportErr) throw delExportErr;
-    }
+    const { error: delExportErr } = await deleteExportQuery;
+    if (delExportErr) throw delExportErr;
     if (dishIdsInFile.length > 0) {
       const { error: delSaleErr } = await supabase.from("dish_sales").delete()
         .in("dish_id", dishIdsInFile).gte("sale_date", minDate).lte("sale_date", maxDate);
