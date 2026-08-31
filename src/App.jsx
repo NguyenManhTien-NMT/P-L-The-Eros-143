@@ -4639,7 +4639,7 @@ function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onD
 // Báo cáo Hàng chuyển bán cho Quản lý/Báo cáo — (1) Báo cáo nhập từ Thu ngân gửi lên,
 // (2) Báo cáo Xuất-Nhập-Tồn (Nhập từ resale_goods_receipts, Xuất từ export_records).
 function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening, onBulkImportFromBills }) {
-  const [tab, setTab] = useState("nhap"); // "nhap" | "ton" | "kiem_ke"
+  const [tab, setTab] = useState("chi_phi"); // "nhap" | "ton" | "kiem_ke"
   const [from, setFrom] = useState(FUND_START_DATE);
   const [to, setTo] = useState(todayISO());
   const hcbProducts = data.products.filter((p) => p.classification === "HCB");
@@ -5646,6 +5646,195 @@ function ExpenseSummaryTable({ data, from, to, selected, onSelect }) {
   );
 }
 
+// =============================================================================
+// BÁO CÁO KẾT QUẢ KINH DOANH
+// Doanh thu lấy từ bảng invoice_revenue — dữ liệu import từ file
+// "Doanh thu hàng hoá theo hoá đơn". Giá vốn hàng chuyển bán lấy từ dish_sales.
+// Chi phí lấy từ expense_records + import_records (phiếu nhập NVL).
+// 3 nhóm chua_phan_bo / dong_tien / tam_ung KHÔNG tính vào kết quả kinh doanh.
+// =============================================================================
+function KQKDRow({ label, value, pct, bold, indent, color, note, top }) {
+  return (
+    <tr className={`${top ? "border-t-2 border-slate-300" : "border-b border-slate-50"} ${bold ? "bg-slate-50" : ""}`}>
+      <td className={`px-4 py-2 ${indent ? "pl-10 text-slate-600" : "text-slate-800"} ${bold ? "font-semibold" : ""} ${color || ""}`}>
+        {label}
+        {note && <span className="block text-xs text-slate-400 font-normal">{note}</span>}
+      </td>
+      <td className={`px-3 py-2 text-right tabular-nums ${bold ? "font-semibold" : ""} ${color || "text-slate-800"}`}>{fmtMoney(value)}</td>
+      <td className={`px-4 py-2 text-right tabular-nums text-xs ${color || "text-slate-500"}`}>{pct}</td>
+    </tr>
+  );
+}
+
+function KetQuaKinhDoanhModule({ data }) {
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const inR = (d) => (!d ? false : (!from || d >= from) && (!to || d <= to));
+
+  const kq = useMemo(() => {
+    // --- DOANH THU: từ file "Doanh thu hàng hoá theo hoá đơn" ---
+    const invoices = (data.invoiceRevenue || []).filter((r) => inR(r.invoiceDate));
+    const doanhThu = invoices.reduce((s, r) => s + r.amount, 0);
+    const tienMat = invoices.reduce((s, r) => s + (r.cashAmount || 0), 0);
+    const nganHang = invoices.reduce((s, r) => s + (r.bankAmount || 0), 0);
+
+    // --- GIÁ VỐN HÀNG CHUYỂN BÁN đã bán trong kỳ ---
+    const hcbSales = (data.dishSales || []).filter((s) => inR(s.saleDate) && dishScope(s.dishId, data) === "hcb");
+    const dtHCB = hcbSales.reduce((s, r) => s + r.totalAmount, 0);
+    const gvHCB = hcbSales.reduce((s, r) => s + (r.costAmount || dishTotalCost(r.dishId, data) * r.quantity), 0);
+
+    // --- CHI PHÍ ---
+    const exp = (data.expenseRecords || []).filter((r) => inR(r.expenseDate));
+    const byCat = (k) => exp.filter((r) => r.category === k).reduce((s, r) => s + r.amount, 0);
+    const nCat = (k) => exp.filter((r) => r.category === k).length;
+    const imports = (data.importRecords || []).filter((r) => inR(r.importDate));
+    const muaNVL = imports.reduce((s, r) => s + r.totalAmount, 0) + byCat("nvl");
+
+    const vanHanh = byCat("van_hanh");
+    const marketing = byCat("marketing");
+    const baoTri = byCat("bao_tri_vat_tu");
+    const khac = byCat("khac");
+    const chiPhiHoatDong = vanHanh + marketing + baoTri + khac;
+
+    const chuaPhanBo = byCat("chua_phan_bo");
+    const dongTien = byCat("dong_tien");
+    const tamUng = byCat("tam_ung");
+
+    const giaVon = muaNVL + gvHCB;
+    const laiGop = doanhThu - giaVon;
+    const loiNhuan = laiGop - chiPhiHoatDong;
+
+    // --- Doanh thu theo ngày ---
+    const theoNgay = {};
+    invoices.forEach((r) => { theoNgay[r.invoiceDate] = (theoNgay[r.invoiceDate] || 0) + r.amount; });
+    const chart = Object.entries(theoNgay).sort().map(([d, v]) => ({ ngay: d.slice(8, 10) + "/" + d.slice(5, 7), doanhThu: v }));
+    const soNgay = chart.length;
+
+    return {
+      doanhThu, tienMat, nganHang, soHoaDon: invoices.length, dtHCB, gvHCB,
+      muaNVL, vanHanh, marketing, baoTri, khac, chiPhiHoatDong,
+      chuaPhanBo, dongTien, tamUng, giaVon, laiGop, loiNhuan, chart, soNgay,
+      nChuaPhanBo: nCat("chua_phan_bo"),
+    };
+  }, [data, from, to]);
+
+  const pct = (v) => (kq.doanhThu > 0 ? `${((v / kq.doanhThu) * 100).toFixed(1)}%` : "—");
+  const canhBao = [];
+  if (kq.chuaPhanBo > 0) canhBao.push(`${fmtMoney(kq.chuaPhanBo)} ở nhóm "Chưa phân bổ" (${kq.nChuaPhanBo} khoản) chưa được tính vào kết quả — phân bổ xong con số lợi nhuận sẽ thay đổi.`);
+  if (kq.doanhThu === 0) canhBao.push("Chưa có doanh thu trong kỳ — cần import file \"Doanh thu hàng hoá theo hoá đơn\" ở tab Quỹ.");
+  if (kq.gvHCB === 0 && kq.dtHCB > 0) canhBao.push("Hàng chuyển bán có doanh thu nhưng giá vốn = 0 — chưa nhập giá mua vào hoặc chưa chốt tồn đầu kỳ.");
+
+  return (
+    <div className="animate-[fadeIn_.3s_ease]">
+      <SectionTitle icon={TrendingUp} title="Báo cáo kết quả kinh doanh" subtitle="Doanh thu lấy từ file Doanh thu hàng hoá theo hoá đơn" />
+
+      <Card className="p-4 sm:p-5 mb-5">
+        <p className="text-xs text-slate-400 mb-2">Lọc theo ngày (bỏ trống = toàn bộ dữ liệu)</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+        </div>
+      </Card>
+
+      {canhBao.length > 0 && (
+        <Card className="p-4 mb-5 border-amber-200 bg-amber-50">
+          <p className="text-sm font-medium text-amber-800 flex items-center gap-1.5 mb-1"><AlertTriangle size={14} /> Lưu ý khi đọc báo cáo</p>
+          <ul className="text-sm text-amber-800 list-disc pl-5 space-y-0.5">{canhBao.map((c, i) => <li key={i}>{c}</li>)}</ul>
+        </Card>
+      )}
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        {[
+          { l: "Doanh thu", v: kq.doanhThu, c: "text-sky-700", s: `${fmtNumber(kq.soHoaDon)} hoá đơn` },
+          { l: "Lãi gộp", v: kq.laiGop, c: kq.laiGop >= 0 ? "text-emerald-700" : "text-rose-700", s: `Tỉ suất ${pct(kq.laiGop)}` },
+          { l: "Chi phí hoạt động", v: kq.chiPhiHoatDong, c: "text-amber-700", s: `${pct(kq.chiPhiHoatDong)} doanh thu` },
+          { l: "Lợi nhuận", v: kq.loiNhuan, c: kq.loiNhuan >= 0 ? "text-emerald-700" : "text-rose-700", s: `Tỉ suất ${pct(kq.loiNhuan)}` },
+        ].map((x) => (
+          <Card key={x.l} className="p-4">
+            <p className="text-xs text-slate-400">{x.l}</p>
+            <p className={`text-lg sm:text-xl font-semibold mt-0.5 ${x.c}`}>{fmtMoney(x.v)}</p>
+            <p className="text-xs text-slate-400 mt-0.5">{x.s}</p>
+          </Card>
+        ))}
+      </div>
+
+      <Card className="mb-5">
+        <div className="px-4 sm:px-5 pt-4 pb-2">
+          <p className="font-medium text-slate-800">Kết quả kinh doanh chi tiết</p>
+          <p className="text-xs text-slate-400 mt-0.5">Cột % tính trên doanh thu</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+                <th className="px-4 py-2">Chỉ tiêu</th>
+                <th className="px-3 py-2 text-right">Số tiền</th>
+                <th className="px-4 py-2 text-right">% Doanh thu</th>
+              </tr>
+            </thead>
+            <tbody>
+              <KQKDRow label="DOANH THU" value={kq.doanhThu} pct="100%" bold color="text-sky-700" />
+              <KQKDRow label="Tiền mặt" value={kq.tienMat} pct={pct(kq.tienMat)} indent />
+              <KQKDRow label="Chuyển khoản" value={kq.nganHang} pct={pct(kq.nganHang)} indent />
+              <KQKDRow label="Trong đó: hàng chuyển bán" value={kq.dtHCB} pct={pct(kq.dtHCB)} indent note="Bia, nước ngọt, khăn lạnh…" />
+
+              <KQKDRow label="GIÁ VỐN" value={kq.giaVon} pct={pct(kq.giaVon)} bold top />
+              <KQKDRow label="Mua nguyên vật liệu trong kỳ" value={kq.muaNVL} pct={pct(kq.muaNVL)} indent note="Phiếu nhập hàng + chi phí NVL" />
+              <KQKDRow label="Giá vốn hàng chuyển bán đã bán" value={kq.gvHCB} pct={pct(kq.gvHCB)} indent />
+
+              <KQKDRow label="LÃI GỘP" value={kq.laiGop} pct={pct(kq.laiGop)} bold top color={kq.laiGop >= 0 ? "text-emerald-700" : "text-rose-700"} />
+
+              <KQKDRow label="CHI PHÍ HOẠT ĐỘNG" value={kq.chiPhiHoatDong} pct={pct(kq.chiPhiHoatDong)} bold top color="text-amber-700" />
+              <KQKDRow label="Chi phí vận hành" value={kq.vanHanh} pct={pct(kq.vanHanh)} indent note="Nhân công, điện nước, gas, dịch vụ" />
+              <KQKDRow label="Chi phí Marketing & bán hàng" value={kq.marketing} pct={pct(kq.marketing)} indent />
+              <KQKDRow label="Chi phí bảo trì và vật tư" value={kq.baoTri} pct={pct(kq.baoTri)} indent />
+              <KQKDRow label="Chi phí khác" value={kq.khac} pct={pct(kq.khac)} indent />
+
+              <KQKDRow label="LỢI NHUẬN" value={kq.loiNhuan} pct={pct(kq.loiNhuan)} bold top color={kq.loiNhuan >= 0 ? "text-emerald-700" : "text-rose-700"} />
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card className="mb-5">
+        <div className="px-4 sm:px-5 pt-4 pb-2">
+          <p className="font-medium text-slate-800">Khoản chưa đưa vào kết quả kinh doanh</p>
+          <p className="text-xs text-slate-400 mt-0.5">Đây là dòng tiền và khoản phải thu, không phải chi phí phát sinh</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <tbody>
+              <KQKDRow label="⚠ Chưa phân bổ — chờ bổ sung chứng từ" value={kq.chuaPhanBo} pct={pct(kq.chuaPhanBo)} color={kq.chuaPhanBo > 0 ? "text-rose-700" : ""} />
+              <KQKDRow label="◇ Dòng tiền — nộp cô / hoàn cọc" value={kq.dongTien} pct={pct(kq.dongTien)} />
+              <KQKDRow label="◇ Tạm ứng — phải thu tạm" value={kq.tamUng} pct={pct(kq.tamUng)} />
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      {kq.chart.length > 0 && (
+        <Card className="p-4 sm:p-5">
+          <p className="font-medium text-slate-800 mb-1">Doanh thu theo ngày</p>
+          <p className="text-xs text-slate-400 mb-3">
+            {kq.soNgay} ngày có doanh thu · bình quân {fmtMoney(Math.round(kq.doanhThu / kq.soNgay))}/ngày
+          </p>
+          <div style={{ width: "100%", height: 260 }}>
+            <ResponsiveContainer>
+              <BarChart data={kq.chart} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" vertical={false} />
+                <XAxis dataKey="ngay" tick={{ fontSize: 11, fill: "#94a3b8" }} />
+                <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} tickFormatter={(v) => (v / 1e6).toFixed(0) + "tr"} />
+                <Tooltip formatter={(v) => fmtMoney(v)} labelFormatter={(l) => `Ngày ${l}`} />
+                <Bar dataKey="doanhThu" fill="#0284c7" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDeleteExpense, onUpdateExpense }) {
   const [category, setCategory] = useState("van_hanh");
   const [from, setFrom] = useState("");
@@ -6094,7 +6283,7 @@ class TabErrorBoundary extends React.Component {
 export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [tab, setTab] = useState("nhap");
+  const [tab, setTab] = useState("chi_phi");
   const [toast, setToast] = useState(null);
   const [showChangePassword, setShowChangePassword] = useState(false);
   const [manualRefreshing, setManualRefreshing] = useState(false);
@@ -6169,7 +6358,7 @@ export default function App() {
   const handleLogin = (employee) => {
     setCurrentUser(employee);
     localStorage.setItem(SESSION_KEY, employee.id);
-    setTab(employee.role === "bao_cao" ? "lich_su_nhap" : employee.role === "thu_ngan" ? "thu" : "nhap");
+    setTab(employee.role === "quan_ly" || employee.role === "bao_cao" ? "kqkd" : employee.role === "thu_ngan" ? "thu" : "chi_phi");
   };
   const handleLogout = () => {
     setCurrentUser(null);
@@ -6737,19 +6926,16 @@ export default function App() {
   const isBaoCao = currentUser.role === "bao_cao";
   const isThuNgan = currentUser.role === "thu_ngan";
   const canViewReports = isQuanLy || isBaoCao;
+  // Đã bỏ 3 mục Nhập hàng / Lịch sử nhập hàng / Xuất hàng theo yêu cầu.
+  // Phiếu nhập NVL vẫn ghi được qua Chi phí -> "Chi phí nguyên vật liệu" (cùng bảng import_records).
   const NAV_NHAN_VIEN = [
-    { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
-    { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
-    { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
     { key: "mon_an", label: "Cost món ăn", icon: Package },
     { key: "danh_muc", label: "Danh mục", icon: Boxes },
     { key: "ton_kho", label: "Tồn kho", icon: Warehouse },
   ];
   const NAV_QUAN_LY = [
-    { key: "nhap", label: "Nhập hàng", icon: ArrowDownCircle },
-    { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
-    { key: "xuat", label: "Xuất hàng", icon: ArrowUpCircle },
+    { key: "kqkd", label: "Kết quả kinh doanh", icon: TrendingUp },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
     { key: "coc", label: "Cọc", icon: Coins },
     { key: "quy", label: "Quỹ", icon: Wallet },
@@ -6763,8 +6949,7 @@ export default function App() {
   ];
   // Nhóm 3: Quản lý (Báo cáo) — chỉ xem báo cáo/lịch sử, không có Nhập hàng, Danh mục, Tồn kho, Tài khoản.
   const NAV_BAO_CAO = [
-    { key: "lich_su_nhap", label: "Lịch sử nhập hàng", icon: Inbox },
-    { key: "xuat", label: "Lịch sử xuất hàng", icon: ArrowUpCircle },
+    { key: "kqkd", label: "Kết quả kinh doanh", icon: TrendingUp },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
     { key: "coc", label: "Cọc", icon: Coins },
     { key: "quy", label: "Quỹ", icon: Wallet },
@@ -6865,9 +7050,7 @@ export default function App() {
 
         <div className="max-w-6xl mx-auto px-4 py-6">
           <TabErrorBoundary resetKey={tab}>
-            {tab === "nhap" && !isBaoCao && <NhapHangModule data={data} currentUser={currentUser} onSubmit={submitImport} onBulkImport={bulkImportNhap} />}
-            {tab === "lich_su_nhap" && <LichSuNhapModule data={data} onDelete={deleteImportRecord} onDeleteMany={deleteImportRecordsByIds} />}
-            {tab === "xuat" && <XuatHangModule data={data} currentUser={currentUser} onSubmit={submitExport} onBulkImportFromBills={bulkImportXuatFromBills} onDelete={deleteExportRecord} onDeleteMany={deleteExportRecordsByIds} />}
+            {tab === "kqkd" && canViewReports && <KetQuaKinhDoanhModule data={data} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
             {tab === "coc" && (canViewReports || isThuNgan) && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
             {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onUpsertRemittedAmount={upsertFundRemittedAmount} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
