@@ -367,57 +367,62 @@ async function fetchAllPaginated(queryBuilder, pageSize = 1000) {
   return allRows;
 }
 
-async function fetchAll() {
-  const [emp, sup, rev, exc, prod, open, cost, dish, dishIng, cashierRec, invRev, dep, noti, fundBal, settings, resale, stockCount] = await Promise.all([
-    supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline").limit(50000),
-    supabase.from("suppliers").select("*").order("code").limit(50000),
-    supabase.from("revenue_codes").select("*").order("code").limit(50000),
-    supabase.from("export_codes").select("*").order("code").limit(50000),
-    supabase.from("products").select("*").order("code").limit(50000),
-    supabase.from("stock_opening").select("*").order("as_of_date", { ascending: false }).limit(50000),
-    supabase.from("expense_records").select("*").order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000),
-    supabase.from("dishes").select("*").order("name").limit(50000),
-    supabase.from("dish_ingredients").select("*").order("sort_order").limit(50000),
-    supabase.from("cashier_receipts").select("*").order("receipt_date", { ascending: false }).limit(50000),
-    supabase.from("invoice_revenue").select("*").order("invoice_date", { ascending: false }).limit(50000),
-    supabase.from("deposits").select("*").order("deposit_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000),
-    supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(100),
-    supabase.from("fund_daily_balance").select("*").order("balance_date", { ascending: false }).limit(50000),
-    supabase.from("app_settings").select("*").limit(50000),
-    supabase.from("resale_goods_receipts").select("*").order("invoice_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000),
-    supabase.from("resale_stock_counts").select("*").order("count_date", { ascending: false }).limit(50000),
-  ]);
-  [emp, sup, rev, exc, prod, open, cost, dish, dishIng, cashierRec, invRev, dep, noti, fundBal, settings, resale, stockCount].forEach((r) => { if (r.error) console.error(r.error); });
+// ---------------------------------------------------------------------------
+// TẢI DỮ LIỆU
+// Trước đây fetchAll() luôn kéo về TOÀN BỘ 20 bảng, toàn bộ lịch sử, và được gọi
+// lại sau MỖI thao tác ghi -> ngốn hàng chục GB egress mỗi tháng.
+// Bây giờ:
+//   1. Mỗi bảng là một loader riêng -> refreshAll(["expenseRecords"]) chỉ tải 1 bảng.
+//   2. Các bảng phát sinh theo ngày chỉ tải trong CỬA SỔ DATA_WINDOW_MONTHS tháng
+//      gần nhất. Dữ liệu cũ hơn vẫn nằm nguyên trong database, chỉ không tải về.
+// ---------------------------------------------------------------------------
+const DATA_WINDOW_MONTHS = 12;
+function windowStart() {
+  const d = new Date();
+  d.setMonth(d.getMonth() - DATA_WINDOW_MONTHS);
+  return d.toISOString().slice(0, 10);
+}
 
-  // 4 bảng có khả năng phình to nhanh nhất (dễ vượt giới hạn server) — tải bằng phân trang thật.
-  const [impRows, expRows, dishSaleRows] = await Promise.all([
-    fetchAllPaginated(() => supabase.from("import_records").select("*").order("import_date", { ascending: false }).order("created_at", { ascending: false })),
-    fetchAllPaginated(() => supabase.from("export_records").select("*").order("export_date", { ascending: false }).order("created_at", { ascending: false })),
-    fetchAllPaginated(() => supabase.from("dish_sales").select("*").order("sale_date", { ascending: false })),
-  ]);
+const TABLE_LOADERS = {
+  employees: async () => ((await supabase.from("employees").select("id,username,name,role,must_change_password,password_change_deadline").limit(50000)).data || []).map(mapEmployee),
+  suppliers: async () => ((await supabase.from("suppliers").select("*").order("code").limit(50000)).data || []).map(mapSupplier),
+  revenueCodes: async () => ((await supabase.from("revenue_codes").select("*").order("code").limit(50000)).data || []).map(mapRevenueCode),
+  exportCodes: async () => ((await supabase.from("export_codes").select("*").order("code").limit(50000)).data || []).map(mapExportCode),
+  products: async () => ((await supabase.from("products").select("*").order("code").limit(50000)).data || []).map(mapProduct),
+  // KHÔNG giới hạn ngày: mốc tồn đầu là gốc để tính giá bình quân, cần đủ lịch sử.
+  stockOpenings: async () => ((await supabase.from("stock_opening").select("*").order("as_of_date", { ascending: false }).limit(50000)).data || []).map(mapStockOpening),
+  dishes: async () => ((await supabase.from("dishes").select("*").order("name").limit(50000)).data || []).map(mapDish),
+  dishIngredients: async () => ((await supabase.from("dish_ingredients").select("*").order("sort_order").limit(50000)).data || []).map(mapDishIngredient),
+  settings: async () => Object.fromEntries(((await supabase.from("app_settings").select("*").limit(50000)).data || []).map((r) => [r.key, r.value])),
+  notifications: async () => ((await supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(100)).data || []).map(mapNotification),
 
-  return {
-    employees: (emp.data || []).map(mapEmployee),
-    suppliers: (sup.data || []).map(mapSupplier),
-    revenueCodes: (rev.data || []).map(mapRevenueCode),
-    exportCodes: (exc.data || []).map(mapExportCode),
-    products: (prod.data || []).map(mapProduct),
-    stockOpenings: (open.data || []).map(mapStockOpening),
-    importRecords: impRows.map(mapImportRecord),
-    exportRecords: expRows.map(mapExportRecord),
-    expenseRecords: (cost.data || []).map(mapExpenseRecord),
-    dishes: (dish.data || []).map(mapDish),
-    dishIngredients: (dishIng.data || []).map(mapDishIngredient),
-    dishSales: dishSaleRows.map(mapDishSale),
-    cashierReceipts: (cashierRec.data || []).map(mapCashierReceipt),
-    invoiceRevenue: (invRev.data || []).map(mapInvoiceRevenue),
-    deposits: (dep.data || []).map(mapDeposit),
-    notifications: (noti.data || []).map(mapNotification),
-    fundDailyBalances: (fundBal.data || []).map(mapFundDailyBalance),
-    settings: Object.fromEntries((settings.data || []).map((r) => [r.key, r.value])),
-    resaleGoodsReceipts: (resale.data || []).map(mapResaleReceipt),
-    resaleStockCounts: (stockCount.data || []).map(mapResaleStockCount),
-  };
+  expenseRecords: async () => ((await supabase.from("expense_records").select("*").gte("expense_date", windowStart()).order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000)).data || []).map(mapExpenseRecord),
+  cashierReceipts: async () => ((await supabase.from("cashier_receipts").select("*").gte("receipt_date", windowStart()).order("receipt_date", { ascending: false }).limit(50000)).data || []).map(mapCashierReceipt),
+  invoiceRevenue: async () => ((await supabase.from("invoice_revenue").select("*").gte("invoice_date", windowStart()).order("invoice_date", { ascending: false }).limit(50000)).data || []).map(mapInvoiceRevenue),
+  deposits: async () => ((await supabase.from("deposits").select("*").gte("deposit_date", windowStart()).order("deposit_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000)).data || []).map(mapDeposit),
+  fundDailyBalances: async () => ((await supabase.from("fund_daily_balance").select("*").gte("balance_date", windowStart()).order("balance_date", { ascending: false }).limit(50000)).data || []).map(mapFundDailyBalance),
+  resaleGoodsReceipts: async () => ((await supabase.from("resale_goods_receipts").select("*").gte("invoice_date", windowStart()).order("invoice_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000)).data || []).map(mapResaleReceipt),
+  resaleStockCounts: async () => ((await supabase.from("resale_stock_counts").select("*").gte("count_date", windowStart()).order("count_date", { ascending: false }).limit(50000)).data || []).map(mapResaleStockCount),
+
+  // 3 bảng phình nhanh nhất — phân trang thật, có giới hạn cửa sổ ngày.
+  importRecords: async () => (await fetchAllPaginated(() => supabase.from("import_records").select("*").gte("import_date", windowStart()).order("import_date", { ascending: false }).order("created_at", { ascending: false }))).map(mapImportRecord),
+  exportRecords: async () => (await fetchAllPaginated(() => supabase.from("export_records").select("*").gte("export_date", windowStart()).order("export_date", { ascending: false }).order("created_at", { ascending: false }))).map(mapExportRecord),
+  dishSales: async () => (await fetchAllPaginated(() => supabase.from("dish_sales").select("*").gte("sale_date", windowStart()).order("sale_date", { ascending: false }))).map(mapDishSale),
+};
+
+// fetchAll()            -> tải toàn bộ (dùng khi mở app / bấm nút Tải lại)
+// fetchAll(["deposits"]) -> chỉ tải đúng bảng đó (dùng sau mỗi thao tác ghi)
+async function fetchAll(only) {
+  const keys = Array.isArray(only) && only.length ? only.filter((k) => TABLE_LOADERS[k]) : Object.keys(TABLE_LOADERS);
+  const results = await Promise.all(
+    keys.map(async (k) => {
+      try { return [k, await TABLE_LOADERS[k]()]; }
+      catch (e) { console.error("Lỗi tải bảng " + k, e); return null; }
+    })
+  );
+  const out = {};
+  results.forEach((r) => { if (r) out[r[0]] = r[1]; });
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -6301,9 +6306,11 @@ export default function App() {
 
   const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 
-  const refreshAll = useCallback(async () => {
-    const fresh = await fetchAll();
-    setData(fresh);
+  // refreshAll()                    -> tải lại toàn bộ (mở app, nút Tải lại, tự động 5 phút)
+  // refreshAll(["expenseRecords"])   -> chỉ tải lại đúng bảng vừa thay đổi
+  const refreshAll = useCallback(async (only) => {
+    const fresh = await fetchAll(only);
+    setData((prev) => ({ ...prev, ...fresh }));
     return fresh;
   }, []);
 
@@ -6334,7 +6341,15 @@ export default function App() {
     const REFRESH_ON_FOCUS_MS = 60 * 1000;     // quay lại tab sau >1 phút thì tải lại
     let lastRefresh = Date.now();
 
-    const doRefresh = () => { lastRefresh = Date.now(); refreshAll(); };
+    // Vòng tự động chỉ tải lại các bảng THAY ĐỔI THEO TỪNG PHÚT (phiếu thu/chi, cọc,
+    // quỹ, kiểm kê, thông báo). Danh mục (sản phẩm, món, công thức, nhân viên) và các
+    // bảng chỉ đổi khi import Excel (xuất kho, doanh thu món) không nằm ở đây — chúng
+    // được tải lúc mở app, khi bấm nút Tải lại, và ngay sau thao tác ghi tương ứng.
+    const HOT_TABLES = [
+      "expenseRecords", "cashierReceipts", "deposits", "notifications",
+      "fundDailyBalances", "resaleGoodsReceipts", "resaleStockCounts", "importRecords",
+    ];
+    const doRefresh = () => { lastRefresh = Date.now(); refreshAll(HOT_TABLES); };
 
     const onTick = () => {
       if (document.visibilityState !== "visible") return; // tab ẩn: không tốn dữ liệu
@@ -6369,25 +6384,25 @@ export default function App() {
   const addSupplier = async ({ code, name, paymentType }) => {
     const { error } = await supabase.from("suppliers").insert({ code, name, payment_type: paymentType });
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["suppliers"]);
     showToast("Đã thêm nhà cung cấp");
   };
   const addProduct = async ({ code, name, unit, groupCode, groupName, classification, caseSize }) => {
     const { error } = await supabase.from("products").insert({ code, name, unit, group_code: groupCode, group_name: groupName, classification, case_size: caseSize || 1 });
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["products"]);
     showToast("Đã thêm sản phẩm");
   };
   const addRevenueCode = async ({ code, name }) => {
     const { error } = await supabase.from("revenue_codes").insert({ code, name });
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["revenueCodes"]);
     showToast("Đã thêm mã doanh thu");
   };
   const addExportCode = async ({ code, name }) => {
     const { error } = await supabase.from("export_codes").insert({ code, name });
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["exportCodes"]);
     showToast("Đã thêm mã xuất");
   };
 
@@ -6401,7 +6416,7 @@ export default function App() {
     }));
     const { error } = await supabase.from("import_records").insert(rows);
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["importRecords"]);
     const totalAmount = rows.reduce((s, r) => s + r.total_amount, 0);
     showToast(`Đã lưu phiếu nhập ${receiptCode} (${rows.length} dòng)`);
     return { receiptCode, lineCount: rows.length, totalAmount, supplierName: data.suppliers.find((s) => s.id === supplierId)?.name };
@@ -6430,13 +6445,13 @@ export default function App() {
     const { data: deletedRows, error } = await supabase.from("import_records").delete().eq("id", id).select("id");
     if (error) throw error;
     if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll();
+    await refreshAll(["importRecords"]);
     showToast("Đã xoá dòng nhập hàng");
   };
   const deleteImportRecordsByIds = async (ids) => {
     if (ids.length === 0) return;
     await deleteInChunks("import_records", ids);
-    await refreshAll();
+    await refreshAll(["importRecords"]);
     showToast(`Đã xoá ${ids.length} dòng nhập hàng`);
   };
 
@@ -6445,7 +6460,7 @@ export default function App() {
     const { data: deletedRows, error } = await supabase.from("export_records").delete().eq("id", id).select("id");
     if (error) throw error;
     if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll();
+    await refreshAll(["exportRecords"]);
     showToast("Đã xoá dòng xuất hàng");
   };
   const deleteExportRecordsByIds = async (ids) => {
@@ -6459,7 +6474,7 @@ export default function App() {
       if (saleErr) console.error(saleErr);
     }
     await deleteInChunks("export_records", ids);
-    await refreshAll();
+    await refreshAll(["dishSales"]);
     showToast(`Đã xoá ${ids.length} dòng xuất hàng`);
   };
 
@@ -6473,7 +6488,7 @@ export default function App() {
     }));
     const { error } = await supabase.from("import_records").insert(dbRows);
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["importRecords"]);
     const totalAmount = dbRows.reduce((s, r) => s + r.total_amount, 0);
     showToast(`Đã nhập ${dbRows.length} dòng từ file Excel (phiếu ${receiptCode})`);
     return { receiptCode, lineCount: dbRows.length, totalAmount };
@@ -6490,7 +6505,7 @@ export default function App() {
     }));
     const { error } = await supabase.from("export_records").insert(rows);
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["exportRecords"]);
     const totalAmount = rows.reduce((s, r) => s + r.total_amount, 0);
     showToast(`Đã lưu phiếu xuất ${receiptCode}`);
     return { receiptCode, lineCount: rows.length, totalAmount };
@@ -6580,7 +6595,7 @@ export default function App() {
     if (error) throw error;
     const { error: saleError } = await supabase.from("dish_sales").insert(saleRows);
     if (saleError) console.error(saleError); // không chặn luồng chính nếu lỗi phần thống kê doanh thu
-    await refreshAll();
+    await refreshAll(["dishSales", "exportRecords"]);
     const matchedBills = rows.length - notFoundDishes.size;
     const totalAmount = exportRows.reduce((s, r) => s + r.total_amount, 0);
     showToast(`Đã xuất kho ${exportRows.length} dòng NVL từ ${matchedBills} dòng báo cáo doanh thu (phiếu ${receiptCode})` + (notFoundDishes.size ? ` — bỏ qua ${notFoundDishes.size} tên món không khớp` : ""));
@@ -6616,7 +6631,7 @@ export default function App() {
       type: "chi_phi",
       message: `${currentUser.name} vừa ghi nhận ${rows.length} khoản chi phí "${catLabel}" — tổng ${fmtMoney(total)}`,
     });
-    await refreshAll();
+    await refreshAll(["expenseRecords", "notifications"]);
     showToast(`Đã ghi nhận ${rows.length} khoản chi phí`);
   };
 
@@ -6625,7 +6640,7 @@ export default function App() {
     const { data: deletedRows, error } = await supabase.from("expense_records").delete().eq("id", id).select("id");
     if (error) throw error;
     if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll();
+    await refreshAll(["expenseRecords"]);
     showToast("Đã xoá khoản chi phí");
   };
 
@@ -6639,7 +6654,7 @@ export default function App() {
       .select("id");
     if (error) throw error;
     if ((updatedRows || []).length === 0) throw new Error("Không sửa được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll();
+    await refreshAll(["expenseRecords"]);
     showToast("Đã cập nhật khoản chi phí");
   };
 
@@ -6655,7 +6670,7 @@ export default function App() {
       type: "thu_ngan",
       message: `${currentUser.name} vừa ghi nhận phiếu thu ngày ${fmtDate(receiptDate || todayISO())} — Tiền mặt ${fmtMoney(Number(cashAmount) || 0)}, Ngân hàng ${fmtMoney(Number(bankAmount) || 0)}`,
     });
-    await refreshAll();
+    await refreshAll(["cashierReceipts", "notifications"]);
     showToast("Đã ghi nhận phiếu thu ngân");
   };
   const updateCashierReceipt = async (id, { receiptDate, cashAmount, bankAmount, note }) => {
@@ -6666,14 +6681,14 @@ export default function App() {
       .select("id");
     if (error) throw error;
     if ((updatedRows || []).length === 0) throw new Error("Không sửa được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll();
+    await refreshAll(["cashierReceipts"]);
     showToast("Đã cập nhật phiếu thu ngân");
   };
   const deleteCashierReceipt = async (id) => {
     const { data: deletedRows, error } = await supabase.from("cashier_receipts").delete().eq("id", id).select("id");
     if (error) throw error;
     if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll();
+    await refreshAll(["cashierReceipts"]);
     showToast("Đã xoá phiếu thu ngân");
   };
 
@@ -6690,7 +6705,7 @@ export default function App() {
       type: "coc",
       message: `${currentUser.name} vừa ghi nhận ${direction === "thu" ? "thu cọc từ" : "chi cọc cho"} "${partyName.trim()}" — ${fmtMoney(Number(amount) || 0)}`,
     });
-    await refreshAll();
+    await refreshAll(["deposits", "notifications"]);
     showToast(direction === "thu" ? "Đã ghi nhận khoản thu cọc" : "Đã ghi nhận khoản chi cọc");
   };
   const updateDeposit = async (id, { direction, partyName, amount, paymentMethod, depositDate, status, note }) => {
@@ -6701,14 +6716,14 @@ export default function App() {
       .select("id");
     if (error) throw error;
     if ((updatedRows || []).length === 0) throw new Error("Không sửa được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll();
+    await refreshAll(["deposits"]);
     showToast("Đã cập nhật khoản cọc");
   };
   const deleteDeposit = async (id) => {
     const { data: deletedRows, error } = await supabase.from("deposits").delete().eq("id", id).select("id");
     if (error) throw error;
     if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll();
+    await refreshAll(["deposits"]);
     showToast("Đã xoá khoản cọc");
   };
 
@@ -6739,7 +6754,7 @@ export default function App() {
       type: "hang_chuyen_ban",
       message: `${currentUser.name} vừa nhập hàng chuyển bán "${productName}" — SL ${fmtNumber(quantity)}, tổng ${fmtMoney(totalAmount)}`,
     });
-    await refreshAll();
+    await refreshAll(["notifications", "resaleGoodsReceipts"]);
     showToast("Đã ghi nhận phiếu nhập hàng chuyển bán");
   };
 
@@ -6757,7 +6772,7 @@ export default function App() {
     const { data: updatedRows, error } = await supabase.from("resale_goods_receipts").update(patch).eq("id", id).select("id");
     if (error) throw error;
     if ((updatedRows || []).length === 0) throw new Error("Không sửa được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll();
+    await refreshAll(["resaleGoodsReceipts"]);
     showToast("Đã cập nhật phiếu nhập hàng chuyển bán");
   };
 
@@ -6765,7 +6780,7 @@ export default function App() {
     const { data: deletedRows, error } = await supabase.from("resale_goods_receipts").delete().eq("id", id).select("id");
     if (error) throw error;
     if ((deletedRows || []).length === 0) throw new Error("Không xoá được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll();
+    await refreshAll(["resaleGoodsReceipts"]);
     showToast("Đã xoá phiếu nhập hàng chuyển bán");
   };
 
@@ -6783,7 +6798,7 @@ export default function App() {
       type: "kiem_ke_hcb",
       message: `${currentUser.name} vừa kiểm kê kho hàng chuyển bán ngày ${fmtDate(countDate)} — ${rows.length} mặt hàng`,
     });
-    await refreshAll();
+    await refreshAll(["notifications", "resaleStockCounts"]);
     showToast("Đã lưu phiếu kiểm kê");
   };
 
@@ -6795,7 +6810,7 @@ export default function App() {
       .from("fund_daily_balance")
       .upsert({ balance_date: date, [column]: Number(amount) || 0, updated_by: currentUser.id }, { onConflict: "balance_date" });
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["fundDailyBalances"]);
     showToast("Đã cập nhật tồn quỹ đầu ngày");
   };
 
@@ -6806,7 +6821,7 @@ export default function App() {
       .from("fund_daily_balance")
       .upsert({ balance_date: date, [column]: Number(amount) || 0, updated_by: currentUser.id }, { onConflict: "balance_date" });
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["fundDailyBalances"]);
     showToast("Đã cập nhật tiền nộp cho cô");
   };
 
@@ -6817,21 +6832,21 @@ export default function App() {
       .from("app_settings")
       .upsert({ key: "thu_ngan_edit_enabled", value: enabled ? "true" : "false", updated_by: currentUser.id }, { onConflict: "key" });
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["settings"]);
     showToast(enabled ? "Đã mở khoá cho Thu ngân tự sửa/xoá" : "Đã khoá — Thu ngân không tự sửa/xoá được nữa");
   };
 
   const markNotificationRead = async (id) => {
     const { error } = await supabase.from("notifications").update({ is_read: true }).eq("id", id);
     if (error) { console.error(error); return; }
-    await refreshAll();
+    await refreshAll(["notifications"]);
   };
   const markAllNotificationsRead = async () => {
     const unreadIds = data.notifications.filter((n) => !n.isRead).map((n) => n.id);
     if (unreadIds.length === 0) return;
     const { error } = await supabase.from("notifications").update({ is_read: true }).in("id", unreadIds);
     if (error) { console.error(error); return; }
-    await refreshAll();
+    await refreshAll(["notifications"]);
   };
 
   // Import "Bảng kê hoá đơn" (POS) — Doanh thu bán hàng theo hoá đơn, độc lập với doanh thu
@@ -6846,7 +6861,7 @@ export default function App() {
     }));
     const { error } = await supabase.from("invoice_revenue").upsert(dbRows, { onConflict: "invoice_no" });
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["invoiceRevenue"]);
     showToast(`Đã import ${rows.length} hoá đơn doanh thu`);
   };
 
@@ -6857,14 +6872,14 @@ export default function App() {
       note: note?.trim() || null, created_by: currentUser.id,
     });
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["dishes"]);
     showToast("Đã tạo món ăn");
   };
 
   const deleteDish = async (dishId) => {
     const { error } = await supabase.from("dishes").delete().eq("id", dishId);
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["dishes"]);
     showToast("Đã xoá món ăn");
   };
 
@@ -6882,7 +6897,7 @@ export default function App() {
       const { error: insErr } = await supabase.from("dish_ingredients").insert(rows);
       if (insErr) throw insErr;
     }
-    await refreshAll();
+    await refreshAll(["dishIngredients"]);
     showToast("Đã lưu công thức món ăn");
   };
 
@@ -6892,7 +6907,7 @@ export default function App() {
       product_id: productId, as_of_date: asOfDate, quantity, unit_price: unitPrice, note: note || null, created_by: currentUser.id,
     });
     if (error) throw error;
-    await refreshAll();
+    await refreshAll(["stockOpenings"]);
     showToast("Đã lưu mốc tồn đầu");
   };
 
@@ -6907,7 +6922,7 @@ export default function App() {
       if (error.message?.includes("duplicate")) throw new Error("Tên đăng nhập này đã tồn tại.");
       throw error;
     }
-    await refreshAll();
+    await refreshAll(["employees"]);
     showToast("Đã tạo tài khoản mới — mật khẩu ban đầu: 123456");
   };
 
