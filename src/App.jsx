@@ -3083,6 +3083,9 @@ function AddEmployeeForm({ onAdd }) {
 const EXPENSE_CATEGORIES = [
   { key: "nvl", label: "Chi phí nguyên vật liệu" },
   { key: "van_hanh", label: "Chi phí vận hành", presetItems: ["Nhân công", "Mặt bằng", "Điện", "Nước", "Gas", "Internet", "Điện thoại"] },
+  // Tiền ăn ca của nhân viên — là PHÚC LỢI NHÂN SỰ, không phải giá vốn món bán cho khách.
+  // Ghi thẳng vào nhóm này ngay khi phát sinh, không gộp vào chi phí nguyên vật liệu.
+  { key: "tien_an_nv", label: "Tiền ăn nhân viên" },
   { key: "marketing", label: "Chi phí Marketing & bán hàng", presetItems: ["Quảng cáo"] },
   { key: "bao_tri_vat_tu", label: "Chi phí bảo trì và vật tư" },
   { key: "khac", label: "Chi phí khác" },
