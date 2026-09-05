@@ -3131,6 +3131,10 @@ const EXPENSE_CATEGORIES = [
   // Là TÀI SẢN chuyển sang tháng sau, không phải chi phí của tháng này.
   // Cuối tháng: ghi ÂM ở nvl + DƯƠNG ở đây. Đầu tháng sau: ghi ngược lại.
   { key: "ton_kho", label: "◇ Tồn kho NVL cuối kỳ (chuyển sang tháng sau)" },
+  // Tiền mua bia/nước ngọt/khăn lạnh trả cho NCC (thường trả gom nhiều đợt).
+  // KHÔNG phải chi phí kỳ này: giá vốn hàng chuyển bán đã tính theo LƯỢNG BÁN RA.
+  // Ghi ở đây để sổ quỹ trừ đúng ngày trả, nhưng không tính hai lần vào giá vốn.
+  { key: "mua_hcb", label: "◇ Mua hàng chuyển bán (không phải chi phí)" },
 ];
 // Các nhóm không được tính vào "Tổng chi phí thực".
 // 2 tài khoản ngân hàng. Mọi TIỀN VÀO (thu ngân, thu cọc) đều về TK Cty, nên cột
@@ -3142,7 +3146,7 @@ const BANK_ACCOUNTS = [
 ];
 const BANK_ACCOUNT_LABEL = Object.fromEntries(BANK_ACCOUNTS.map((a) => [a.key, a.label]));
 
-const NON_EXPENSE_CATEGORIES = ["chua_phan_bo", "dong_tien", "tam_ung", "ton_kho"];
+const NON_EXPENSE_CATEGORIES = ["chua_phan_bo", "dong_tien", "tam_ung", "ton_kho", "mua_hcb"];
 const EXPENSE_CATEGORY_META = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 const EXPENSE_PAYMENT_METHOD_META = {
   tien_mat: { label: "Tiền mặt", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -6223,6 +6227,7 @@ function KetQuaKinhDoanhModule({ data }) {
     const dongTien = byCat("dong_tien");
     const tamUng = byCat("tam_ung");
     const tonKho = byCat("ton_kho");
+    const muaHCB = byCat("mua_hcb");
 
     const giaVon = muaNVL + gvHCB;
     const laiGop = doanhThu - giaVon;
@@ -6237,7 +6242,7 @@ function KetQuaKinhDoanhModule({ data }) {
     return {
       doanhThu, tienMat, nganHang, soHoaDon: invoices.length, dtHCB, gvHCB,
       muaNVL, vanHanh, tienAnNV, marketing, baoTri, khac, chiPhiHoatDong,
-      chuaPhanBo, dongTien, tamUng, tonKho, giaVon, laiGop, loiNhuan, chart, soNgay,
+      chuaPhanBo, dongTien, tamUng, tonKho, muaHCB, giaVon, laiGop, loiNhuan, chart, soNgay,
       nChuaPhanBo: nCat("chua_phan_bo"),
     };
   }, [data, from, to]);
@@ -6334,6 +6339,7 @@ function KetQuaKinhDoanhModule({ data }) {
               <KQKDRow label="◇ Dòng tiền — nộp cô / hoàn cọc" value={kq.dongTien} pct={pct(kq.dongTien)} />
               <KQKDRow label="◇ Tạm ứng — phải thu tạm" value={kq.tamUng} pct={pct(kq.tamUng)} />
               <KQKDRow label="◇ Tồn kho NVL cuối kỳ" value={kq.tonKho} pct={pct(kq.tonKho)} note="Nguyên liệu chưa dùng hết, chuyển sang tháng sau" />
+              <KQKDRow label="◇ Mua hàng chuyển bán" value={kq.muaHCB} pct={pct(kq.muaHCB)} note="Tiền trả NCC bia/nước — giá vốn đã tính theo lượng bán ra" />
             </tbody>
           </table>
         </div>
