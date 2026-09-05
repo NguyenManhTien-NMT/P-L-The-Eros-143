@@ -265,6 +265,7 @@ function mapExpenseRecord(r) {
     amount: Number(r.amount) || 0,
     paymentMethod: r.payment_method || "tien_mat",
     expenseDate: r.expense_date, note: r.note || "", createdBy: r.created_by, createdAt: r.created_at,
+      supplierName: r.supplier_name || "",
   };
 }
 function mapDish(d) {
@@ -292,6 +293,15 @@ function mapInvoiceRevenue(r) {
     id: r.id, invoiceNo: r.invoice_no, invoiceDate: r.invoice_date, amount: Number(r.amount) || 0,
     cashAmount: r.cash_amount === null || r.cash_amount === undefined ? null : Number(r.cash_amount),
     bankAmount: r.bank_amount === null || r.bank_amount === undefined ? null : Number(r.bank_amount),
+    createdBy: r.created_by, createdAt: r.created_at,
+  };
+}
+// Mỗi lần TRẢ TIỀN cho một khoản chi phí. Một khoản có thể có nhiều dòng (trả từng phần).
+function mapExpensePayment(r) {
+  return {
+    id: r.id, expenseId: r.expense_id, paymentDate: r.payment_date,
+    amount: Number(r.amount) || 0, paymentMethod: r.payment_method,
+    paidBy: r.paid_by || "", note: r.note || "",
     createdBy: r.created_by, createdAt: r.created_at,
   };
 }
@@ -396,6 +406,7 @@ const TABLE_LOADERS = {
   settings: async () => Object.fromEntries(((await supabase.from("app_settings").select("*").limit(50000)).data || []).map((r) => [r.key, r.value])),
   notifications: async () => ((await supabase.from("notifications").select("*").order("created_at", { ascending: false }).limit(100)).data || []).map(mapNotification),
 
+  expensePayments: async () => ((await supabase.from("expense_payments").select("*").gte("payment_date", windowStart()).order("payment_date", { ascending: false }).limit(50000)).data || []).map(mapExpensePayment),
   expenseRecords: async () => ((await supabase.from("expense_records").select("*").gte("expense_date", windowStart()).order("expense_date", { ascending: false }).order("created_at", { ascending: false }).limit(50000)).data || []).map(mapExpenseRecord),
   cashierReceipts: async () => ((await supabase.from("cashier_receipts").select("*").gte("receipt_date", windowStart()).order("receipt_date", { ascending: false }).limit(50000)).data || []).map(mapCashierReceipt),
   invoiceRevenue: async () => ((await supabase.from("invoice_revenue").select("*").gte("invoice_date", windowStart()).order("invoice_date", { ascending: false }).limit(50000)).data || []).map(mapInvoiceRevenue),
@@ -3103,6 +3114,22 @@ const EXPENSE_PAYMENT_METHOD_META = {
 // (cashier_receipts), Thu/Chi cọc (deposits, lọc theo payment_method), Chi phí (expense_records,
 // lọc theo payment_method). Tồn đầu ngày lấy override trong overridesMap nếu có (dạng
 // {cash, bank}), không thì lấy Tồn cuối của ngày liền trước trong danh sách.
+// Quy đổi từng lần TRẢ TIỀN thành "dòng tiền ra" để sổ quỹ dùng lại nguyên logic cũ.
+// Khoản chi ghi ngày 15/08 nhưng trả 01/09 sẽ trừ quỹ ngày 01/09 — đúng thực tế.
+// Khoản chưa trả không xuất hiện ở đây (nằm ở màn Công nợ phải trả).
+function expenseCashFlows(data) {
+  const byId = Object.fromEntries((data.expenseRecords || []).map((e) => [e.id, e]));
+  return (data.expensePayments || []).map((p) => {
+    const e = byId[p.expenseId];
+    return {
+      expenseDate: p.paymentDate,
+      paymentMethod: p.paymentMethod,
+      amount: p.amount,
+      itemName: e ? e.itemName : "",
+    };
+  });
+}
+
 function buildFundLedger(dates, cashierReceipts, expenseRecords, deposits, overridesMap, remittedMap = {}) {
   let prevCash = null;
   let prevBank = null;
@@ -4911,7 +4938,8 @@ function SoQuyBaoCaoModule({ data }) {
   const ledgerDates = enumerateDatesISO(from, to);
   const overridesMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, { cash: b.openingBalance, bank: b.openingBalanceBank }]));
   const remittedMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, { cash: b.remittedOwnerCash, bank: b.remittedOwnerBank }]));
-  const fundLedger = buildFundLedger(ledgerDates, data.cashierReceipts, data.expenseRecords, data.deposits, overridesMap, remittedMap);
+  // Sổ quỹ dùng NGÀY TRẢ THẬT (expense_payments), không dùng ngày phát sinh chi phí.
+  const fundLedger = buildFundLedger(ledgerDates, data.cashierReceipts, expenseCashFlows(data), data.deposits, overridesMap, remittedMap);
 
   return (
     <div>
@@ -4950,7 +4978,8 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
   const ledgerDates = enumerateDatesISO(from, to);
   const overridesMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, { cash: b.openingBalance, bank: b.openingBalanceBank }]));
   const remittedMap = Object.fromEntries(data.fundDailyBalances.map((b) => [b.date, { cash: b.remittedOwnerCash, bank: b.remittedOwnerBank }]));
-  const fundLedger = buildFundLedger(ledgerDates, data.cashierReceipts, data.expenseRecords, data.deposits, overridesMap, remittedMap);
+  // Sổ quỹ dùng NGÀY TRẢ THẬT (expense_payments), không dùng ngày phát sinh chi phí.
+  const fundLedger = buildFundLedger(ledgerDates, data.cashierReceipts, expenseCashFlows(data), data.deposits, overridesMap, remittedMap);
   const openingBalanceNum = fundLedger.length > 0 ? fundLedger[0].openingCash + fundLedger[0].openingBank : 0;
   const dailyReconciliation = buildDailyReconciliation(ledgerDates, data.cashierReceipts, data.invoiceRevenue);
 
@@ -5273,6 +5302,10 @@ function PresetExpenseForm({ category, onSubmit }) {
   const [amounts, setAmounts] = useState(() => Object.fromEntries(meta.presetItems.map((n) => [n, ""])));
   const [expenseDate, setExpenseDate] = useState(todayISO());
   const [paymentMethod, setPaymentMethod] = useState("tien_mat");
+  const [supplierName, setSupplierName] = useState("");
+  const [paid, setPaid] = useState("yes");
+  const [paymentDate, setPaymentDate] = useState(todayISO());
+  const [paidBy, setPaidBy] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -5305,6 +5338,19 @@ function PresetExpenseForm({ category, onSubmit }) {
           <option value="chuyen_khoan">Chuyển khoản</option>
         </SelectField>
       </div>
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
+        <TextField label="Nhà cung cấp / người nhận tiền" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} placeholder="Để trống nếu không cần theo dõi công nợ" />
+        <SelectField label="Đã thanh toán chưa?" value={paid} onChange={(e) => setPaid(e.target.value)}>
+          <option value="yes">Đã trả — tiền ra ngay</option>
+          <option value="no">Chưa trả — ghi nợ, trả sau</option>
+        </SelectField>
+      </div>
+      {paid === "yes" && (
+        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+          <TextField label="Ngày trả tiền" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} hint="Khác ngày phát sinh nếu trả sau" />
+          <TextField label="Người chi" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} placeholder="Ai bỏ tiền / bấm chuyển khoản" />
+        </div>
+      )}
       <div className="space-y-2 mb-4">
         {meta.presetItems.map((n) => (
           <div key={n} className="flex items-center gap-3">
@@ -5329,6 +5375,10 @@ function OtherExpenseForm({ onSubmit }) {
   const [lines, setLines] = useState([{ key: Math.random().toString(36).slice(2), itemName: "", amount: "" }]);
   const [expenseDate, setExpenseDate] = useState(todayISO());
   const [paymentMethod, setPaymentMethod] = useState("tien_mat");
+  const [supplierName, setSupplierName] = useState("");
+  const [paid, setPaid] = useState("yes");
+  const [paymentDate, setPaymentDate] = useState(todayISO());
+  const [paidBy, setPaidBy] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -5344,6 +5394,8 @@ function OtherExpenseForm({ onSubmit }) {
     setError(""); setSaving(true);
     try {
       await onSubmit({
+        supplierName, paid: paid === "yes", paymentDate, paidBy,
+        supplierName, paid: paid === "yes", paymentDate, paidBy,
         category: "khac", expenseDate, paymentMethod,
         lines: validLines.map((l) => ({ itemName: l.itemName.trim(), amount: Number(l.amount) })),
       });
@@ -5365,6 +5417,19 @@ function OtherExpenseForm({ onSubmit }) {
           <option value="chuyen_khoan">Chuyển khoản</option>
         </SelectField>
       </div>
+      <div className="grid sm:grid-cols-2 gap-3 mb-4">
+        <TextField label="Nhà cung cấp / người nhận tiền" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} placeholder="Để trống nếu không cần theo dõi công nợ" />
+        <SelectField label="Đã thanh toán chưa?" value={paid} onChange={(e) => setPaid(e.target.value)}>
+          <option value="yes">Đã trả — tiền ra ngay</option>
+          <option value="no">Chưa trả — ghi nợ, trả sau</option>
+        </SelectField>
+      </div>
+      {paid === "yes" && (
+        <div className="grid sm:grid-cols-2 gap-3 mb-4">
+          <TextField label="Ngày trả tiền" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} hint="Khác ngày phát sinh nếu trả sau" />
+          <TextField label="Người chi" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} placeholder="Ai bỏ tiền / bấm chuyển khoản" />
+        </div>
+      )}
       <div className="space-y-2 mb-4">
         {lines.map((l) => (
           <div key={l.key} className="flex items-center gap-2">
@@ -5668,6 +5733,212 @@ function KQKDRow({ label, value, pct, bold, indent, color, note, top }) {
       <td className={`px-3 py-2 text-right tabular-nums ${bold ? "font-semibold" : ""} ${color || "text-slate-800"}`}>{fmtMoney(value)}</td>
       <td className={`px-4 py-2 text-right tabular-nums text-xs ${color || "text-slate-500"}`}>{pct}</td>
     </tr>
+  );
+}
+
+// =============================================================================
+// CÔNG NỢ PHẢI TRẢ
+// Chi phí ghi nhận theo NGÀY PHÁT SINH (vào báo cáo kết quả kinh doanh).
+// Tiền ra ghi theo NGÀY TRẢ THẬT (vào sổ quỹ). Chênh lệch giữa 2 mốc = công nợ.
+// Một khoản có thể trả nhiều lần, mỗi lần ghi rõ AI CHI.
+// =============================================================================
+function tinhCongNo(data) {
+  const paidByExpense = {};
+  (data.expensePayments || []).forEach((p) => {
+    if (!paidByExpense[p.expenseId]) paidByExpense[p.expenseId] = { total: 0, list: [] };
+    paidByExpense[p.expenseId].total += p.amount;
+    paidByExpense[p.expenseId].list.push(p);
+  });
+  return (data.expenseRecords || []).map((e) => {
+    const p = paidByExpense[e.id] || { total: 0, list: [] };
+    const conNo = e.amount - p.total;
+    return {
+      ...e, daTra: p.total, conNo,
+      lanTra: p.list.sort((a, b) => (a.paymentDate < b.paymentDate ? -1 : 1)),
+      trangThai: p.total <= 0 ? "chua_tra" : conNo > 0.5 ? "tra_mot_phan" : "da_tra",
+      soNgayTreo: Math.round((Date.now() - new Date(e.expenseDate).getTime()) / 86400000),
+    };
+  });
+}
+
+function FormGhiThanhToan({ khoan, onSubmit, onCancel, goiYNguoiChi }) {
+  const [amount, setAmount] = useState(String(Math.round(khoan.conNo)));
+  const [paymentDate, setPaymentDate] = useState(todayISO());
+  const [paymentMethod, setPaymentMethod] = useState(khoan.paymentMethod || "tien_mat");
+  const [paidBy, setPaidBy] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const submit = async () => {
+    const n = Number(amount);
+    if (!(n > 0)) { setError("Số tiền phải lớn hơn 0."); return; }
+    if (n > khoan.conNo + 0.5) { setError(`Vượt quá số còn nợ (${fmtMoney(khoan.conNo)}).`); return; }
+    if (!paidBy.trim()) { setError("Cần ghi rõ người chi."); return; }
+    setError(""); setSaving(true);
+    try { await onSubmit({ expenseId: khoan.id, amount: n, paymentDate, paymentMethod, paidBy }); onCancel(); }
+    catch (e) { setError(e.message || "Không lưu được."); }
+    finally { setSaving(false); }
+  };
+
+  return (
+    <div className="bg-sky-50 border border-sky-200 rounded-xl p-3 mt-2">
+      <p className="text-xs text-slate-500 mb-2">Còn nợ <b className="text-rose-700">{fmtMoney(khoan.conNo)}</b> — trả ít hơn cũng được, phần còn lại vẫn treo.</p>
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
+        <MoneyField label="Số tiền trả" value={amount} onChange={setAmount} />
+        <TextField label="Ngày trả" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+        <SelectField label="Hình thức" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+          <option value="tien_mat">Tiền mặt</option>
+          <option value="chuyen_khoan">Chuyển khoản</option>
+        </SelectField>
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">Người chi</label>
+          <input list="ds-nguoi-chi" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} placeholder="Tên người chi..."
+            className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
+          <datalist id="ds-nguoi-chi">{goiYNguoiChi.map((n) => <option key={n} value={n} />)}</datalist>
+        </div>
+      </div>
+      {error && <p className="text-xs text-rose-600 mt-2">{error}</p>}
+      <div className="flex gap-2 mt-3">
+        <button onClick={submit} disabled={saving} className="px-3 py-1.5 rounded-xl bg-sky-600 text-white text-sm font-medium disabled:opacity-50">{saving ? "Đang lưu..." : "Lưu thanh toán"}</button>
+        <button onClick={onCancel} className="px-3 py-1.5 rounded-xl border border-slate-300 text-sm text-slate-600">Huỷ</button>
+      </div>
+    </div>
+  );
+}
+
+function CongNoModule({ data, onRecordPayment, onDeletePayment, currentUser }) {
+  const [loc, setLoc] = useState("chua_tra");
+  const [dangTra, setDangTra] = useState(null);
+  const [tuNgay, setTuNgay] = useState("");
+  const [denNgay, setDenNgay] = useState("");
+
+  const all = useMemo(() => tinhCongNo(data), [data]);
+  const goiYNguoiChi = useMemo(
+    () => Array.from(new Set((data.expensePayments || []).map((p) => p.paidBy).filter(Boolean))).sort(),
+    [data.expensePayments]
+  );
+
+  const inR = (d) => (!tuNgay || d >= tuNgay) && (!denNgay || d <= denNgay);
+  const rows = all
+    .filter((r) => inR(r.expenseDate))
+    .filter((r) => (loc === "tat_ca" ? true : loc === "chua_tra" ? r.trangThai !== "da_tra" : r.trangThai === loc))
+    .sort((a, b) => (a.expenseDate < b.expenseDate ? -1 : 1));
+
+  const tongNo = all.filter((r) => r.trangThai !== "da_tra").reduce((s, r) => s + r.conNo, 0);
+  const soKhoanNo = all.filter((r) => r.trangThai !== "da_tra").length;
+  const quaHan30 = all.filter((r) => r.trangThai !== "da_tra" && r.soNgayTreo > 30).reduce((s, r) => s + r.conNo, 0);
+
+  // Chi theo từng người, trong khoảng ngày TRẢ
+  const theoNguoi = useMemo(() => {
+    const m = {};
+    (data.expensePayments || []).forEach((p) => {
+      if (!inR(p.paymentDate)) return;
+      const k = p.paidBy || "(chưa ghi người chi)";
+      if (!m[k]) m[k] = { tienMat: 0, chuyenKhoan: 0, soLan: 0 };
+      m[k][p.paymentMethod === "chuyen_khoan" ? "chuyenKhoan" : "tienMat"] += p.amount;
+      m[k].soLan += 1;
+    });
+    return Object.entries(m).map(([ten, v]) => ({ ten, ...v, tong: v.tienMat + v.chuyenKhoan })).sort((a, b) => b.tong - a.tong);
+  }, [data.expensePayments, tuNgay, denNgay]);
+
+  const BADGE = {
+    chua_tra: ["bg-rose-100 text-rose-700", "Chưa trả"],
+    tra_mot_phan: ["bg-amber-100 text-amber-700", "Trả một phần"],
+    da_tra: ["bg-emerald-100 text-emerald-700", "Đã trả"],
+  };
+
+  return (
+    <div className="animate-[fadeIn_.3s_ease]">
+      <SectionTitle icon={Wallet} title="Công nợ phải trả" subtitle="Khoản đã ghi nhận chi phí nhưng chưa trả hết tiền" />
+
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-5">
+        <Card className="p-4"><p className="text-xs text-slate-400">Tổng còn phải trả</p><p className="text-xl font-semibold text-rose-700 mt-0.5">{fmtMoney(tongNo)}</p><p className="text-xs text-slate-400 mt-0.5">{fmtNumber(soKhoanNo)} khoản</p></Card>
+        <Card className="p-4"><p className="text-xs text-slate-400">Treo quá 30 ngày</p><p className="text-xl font-semibold text-amber-700 mt-0.5">{fmtMoney(quaHan30)}</p></Card>
+        <Card className="p-4"><p className="text-xs text-slate-400">Đã trả trong kỳ lọc</p><p className="text-xl font-semibold text-emerald-700 mt-0.5">{fmtMoney(theoNguoi.reduce((s, r) => s + r.tong, 0))}</p></Card>
+      </div>
+
+      <Card className="p-4 sm:p-5 mb-5">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <TextField label="Từ ngày phát sinh" type="date" value={tuNgay} onChange={(e) => setTuNgay(e.target.value)} />
+          <TextField label="Đến ngày" type="date" value={denNgay} onChange={(e) => setDenNgay(e.target.value)} />
+          <SelectField label="Hiển thị" value={loc} onChange={(e) => setLoc(e.target.value)}>
+            <option value="chua_tra">Còn nợ (chưa trả + trả một phần)</option>
+            <option value="tra_mot_phan">Chỉ khoản trả một phần</option>
+            <option value="da_tra">Đã trả đủ</option>
+            <option value="tat_ca">Tất cả</option>
+          </SelectField>
+        </div>
+      </Card>
+
+      <Card className="mb-5">
+        <div className="px-4 sm:px-5 pt-4 pb-2">
+          <p className="font-medium text-slate-800">Chi theo từng người</p>
+          <p className="text-xs text-slate-400 mt-0.5">Tính theo ngày trả tiền, không phải ngày phát sinh chi phí</p>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
+              <th className="px-4 py-2">Người chi</th><th className="px-3 py-2 text-right">Số lần</th>
+              <th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Chuyển khoản</th>
+              <th className="px-4 py-2 text-right">Tổng chi</th></tr></thead>
+            <tbody>
+              {theoNguoi.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400 text-sm">Chưa có lần thanh toán nào trong kỳ</td></tr>}
+              {theoNguoi.map((r) => (
+                <tr key={r.ten} className="border-b border-slate-50 last:border-0">
+                  <td className={`px-4 py-2 ${r.ten.startsWith("(") ? "text-slate-400 italic" : "text-slate-800 font-medium"}`}>{r.ten}</td>
+                  <td className="px-3 py-2 text-right text-slate-500">{fmtNumber(r.soLan)}</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.tienMat)}</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.chuyenKhoan)}</td>
+                  <td className="px-4 py-2 text-right font-semibold text-slate-800">{fmtMoney(r.tong)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="px-4 sm:px-5 pt-4 pb-2">
+          <p className="font-medium text-slate-800">Danh sách khoản chi</p>
+          <p className="text-xs text-slate-400 mt-0.5">{fmtNumber(rows.length)} khoản</p>
+        </div>
+        <div className="divide-y divide-slate-50">
+          {rows.length === 0 && <p className="px-4 py-8 text-center text-slate-400 text-sm">Không có khoản nào</p>}
+          {rows.map((r) => {
+            const [cls, label] = BADGE[r.trangThai];
+            return (
+              <div key={r.id} className="px-4 sm:px-5 py-3">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-slate-800">{r.itemName}</p>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      {fmtDate(r.expenseDate)}
+                      {r.supplierName ? ` · ${r.supplierName}` : ""}
+                      {r.trangThai !== "da_tra" && r.soNgayTreo > 0 ? ` · treo ${r.soNgayTreo} ngày` : ""}
+                    </p>
+                    {r.lanTra.length > 0 && (
+                      <p className="text-xs text-slate-500 mt-1">
+                        {r.lanTra.map((p) => `${fmtDate(p.paymentDate)}: ${fmtMoney(p.amount)}${p.paidBy ? " — " + p.paidBy : ""}`).join(" · ")}
+                      </p>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <p className="text-sm font-semibold text-slate-800">{fmtMoney(r.amount)}</p>
+                    {r.conNo > 0.5 && <p className="text-xs text-rose-600">Còn nợ {fmtMoney(r.conNo)}</p>}
+                    <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-xs ${cls}`}>{label}</span>
+                  </div>
+                </div>
+                {r.conNo > 0.5 && currentUser?.role !== "bao_cao" && (
+                  dangTra === r.id
+                    ? <FormGhiThanhToan khoan={r} onSubmit={onRecordPayment} onCancel={() => setDangTra(null)} goiYNguoiChi={goiYNguoiChi} />
+                    : <button onClick={() => setDangTra(r.id)} className="mt-2 px-3 py-1.5 rounded-xl bg-sky-600 text-white text-xs font-medium">Ghi thanh toán</button>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </Card>
+    </div>
   );
 }
 
@@ -6616,23 +6887,56 @@ export default function App() {
     }
   };
 
-  const submitExpense = async ({ category, lines, expenseDate, paymentMethod }) => {
+  // paid       : true = đã trả ngay, false = ghi nợ (sẽ trả sau ở màn Công nợ)
+  // paymentDate: ngày trả thật (chỉ dùng khi paid = true)
+  // paidBy     : NGƯỜI CHI — ai bỏ tiền/bấm chuyển khoản
+  // Ghi 1 lần trả tiền cho khoản chi đã có (cho phép trả từng phần, nhiều lần).
+  const recordExpensePayment = async ({ expenseId, amount, paymentDate, paymentMethod, paidBy, note }) => {
+    const { error } = await supabase.from("expense_payments").insert([{
+      expense_id: expenseId, payment_date: paymentDate || todayISO(),
+      amount, payment_method: paymentMethod || "tien_mat",
+      paid_by: paidBy ? paidBy.trim() : null, note: note || null, created_by: currentUser.id,
+    }]);
+    if (error) throw error;
+    await refreshAll(["expensePayments"]);
+    showToast(`Đã ghi thanh toán ${fmtMoney(amount)}`);
+  };
+  const deleteExpensePayment = async (id) => {
+    const { error } = await supabase.from("expense_payments").delete().eq("id", id);
+    if (error) throw error;
+    await refreshAll(["expensePayments"]);
+    showToast("Đã xoá lần thanh toán");
+  };
+
+  const submitExpense = async ({ category, lines, expenseDate, paymentMethod, supplierName, paid = true, paymentDate, paidBy }) => {
     const rows = lines.map((l) => ({
       category, item_name: l.itemName,
       quantity: l.quantity ?? null, unit_price: l.unitPrice ?? null, amount: l.amount,
       payment_method: paymentMethod || "tien_mat",
       expense_date: expenseDate || todayISO(), note: l.note || null, created_by: currentUser.id,
+      supplier_name: supplierName ? supplierName.trim() : null,
     }));
-    const { error } = await supabase.from("expense_records").insert(rows);
+    const { data: inserted, error } = await supabase.from("expense_records").insert(rows).select("id,amount");
     if (error) throw error;
+    // Đã trả ngay -> ghi luôn 1 dòng thanh toán cho mỗi khoản.
+    // Chưa trả    -> không ghi gì, khoản đó thành công nợ phải trả.
+    if (paid && inserted?.length) {
+      const pays = inserted.map((r) => ({
+        expense_id: r.id, payment_date: paymentDate || expenseDate || todayISO(),
+        amount: r.amount, payment_method: paymentMethod || "tien_mat",
+        paid_by: paidBy ? paidBy.trim() : null, created_by: currentUser.id,
+      }));
+      const { error: payErr } = await supabase.from("expense_payments").insert(pays);
+      if (payErr) throw payErr;
+    }
     const total = rows.reduce((s, r) => s + (r.amount || 0), 0);
     const catLabel = EXPENSE_CATEGORY_META[category]?.label || category;
     await pushNotification({
       type: "chi_phi",
       message: `${currentUser.name} vừa ghi nhận ${rows.length} khoản chi phí "${catLabel}" — tổng ${fmtMoney(total)}`,
     });
-    await refreshAll(["expenseRecords", "notifications"]);
-    showToast(`Đã ghi nhận ${rows.length} khoản chi phí`);
+    await refreshAll(["expenseRecords", "expensePayments", "notifications"]);
+    showToast(paid ? `Đã ghi nhận ${rows.length} khoản chi phí` : `Đã ghi nợ ${rows.length} khoản — xem ở tab Công nợ`);
   };
 
   // Xoá 1 khoản chi phí — chỉ dành cho tài khoản Quản lý (kiểm soát ở giao diện ExpenseList).
@@ -6952,6 +7256,7 @@ export default function App() {
   const NAV_QUAN_LY = [
     { key: "kqkd", label: "Kết quả kinh doanh", icon: TrendingUp },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
+    { key: "cong_no", label: "Công nợ phải trả", icon: ClipboardList },
     { key: "coc", label: "Cọc", icon: Coins },
     { key: "quy", label: "Quỹ", icon: Wallet },
     { key: "hang_chuyen_ban", label: "Hàng chuyển bán", icon: Truck },
@@ -6966,6 +7271,7 @@ export default function App() {
   const NAV_BAO_CAO = [
     { key: "kqkd", label: "Kết quả kinh doanh", icon: TrendingUp },
     { key: "chi_phi", label: "Chi phí", icon: Receipt },
+    { key: "cong_no", label: "Công nợ phải trả", icon: ClipboardList },
     { key: "coc", label: "Cọc", icon: Coins },
     { key: "quy", label: "Quỹ", icon: Wallet },
     { key: "hang_chuyen_ban", label: "Hàng chuyển bán", icon: Truck },
@@ -7066,6 +7372,7 @@ export default function App() {
         <div className="max-w-6xl mx-auto px-4 py-6">
           <TabErrorBoundary resetKey={tab}>
             {tab === "kqkd" && canViewReports && <KetQuaKinhDoanhModule data={data} />}
+            {tab === "cong_no" && canViewReports && <CongNoModule data={data} currentUser={currentUser} onRecordPayment={recordExpensePayment} onDeletePayment={deleteExpensePayment} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
             {tab === "coc" && (canViewReports || isThuNgan) && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
             {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onUpsertRemittedAmount={upsertFundRemittedAmount} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
