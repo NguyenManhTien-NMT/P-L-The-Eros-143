@@ -3282,10 +3282,19 @@ function PhieuChiForm({ onSubmit }) {
           <option value="chuyen_khoan">Chuyển khoản</option>
         </SelectField>
         <TextField label="Nhà cung cấp / người nhận tiền" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} placeholder="Để trống nếu không theo dõi công nợ" />
-        <SelectField label="Đã thanh toán chưa?" value={paid} onChange={(e) => setPaid(e.target.value)}>
-          <option value="yes">Đã trả — tiền ra ngay</option>
-          <option value="no">Chưa trả — ghi nợ, trả sau</option>
-        </SelectField>
+        <div>
+          <label className="block text-xs text-slate-500 mb-1">Khoản chi này</label>
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={() => setPaid("yes")}
+              className={`px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${paid === "yes" ? "bg-sky-600 text-white border-sky-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}>
+              Chi luôn hôm nay
+            </button>
+            <button type="button" onClick={() => setPaid("no")}
+              className={`px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${paid === "no" ? "bg-amber-500 text-white border-amber-500" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}>
+              Chuyển qua công nợ
+            </button>
+          </div>
+        </div>
         {paid === "yes" && <TextField label="Ngày trả tiền" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} hint="Khác ngày chi nếu trả sau" />}
         {paid === "yes" && <TextField label="Người chi" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} placeholder="Ai bỏ tiền / bấm chuyển khoản" />}
         {paid === "yes" && paymentMethod === "chuyen_khoan" && (
@@ -3296,8 +3305,12 @@ function PhieuChiForm({ onSubmit }) {
         <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
-      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />} Lưu phiếu chi</PrimaryButton>
-      <p className="text-xs text-slate-400 mt-2">Phiếu chi sau khi lưu sẽ tự động xuất hiện trong tab "Chi phí" đúng nhóm "{EXPENSE_CATEGORY_META[category]?.label}".</p>
+      <PrimaryButton onClick={submit} disabled={saving}>{saving ? <Loader2 size={15} className="animate-spin" /> : <Wallet size={15} />} {paid === "yes" ? "Lưu & ghi chi luôn" : "Lưu vào công nợ"}</PrimaryButton>
+      <p className="text-xs text-slate-400 mt-2">
+        {paid === "yes"
+          ? `Tiền ra ngay hôm nay, trừ luôn vào sổ quỹ. Ghi vào nhóm "${EXPENSE_CATEGORY_META[category]?.label}".`
+          : `Chưa trừ quỹ. Khoản này nằm ở mục "Công nợ chờ thanh toán" bên dưới, khi nào trả thì bấm Thanh toán.`}
+      </p>
     </Card>
   );
 }
@@ -3480,7 +3493,65 @@ function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete, editEnable
   );
 }
 
-function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete, editEnabled }) {
+// Khu vực trả nợ cũ ngay trên màn Phiếu chi — thu ngân không phải chuyển tab.
+function CongNoChoThanhToan({ data, onRecordPayment }) {
+  const [dangTra, setDangTra] = useState(null);
+  const [moRong, setMoRong] = useState(false);
+  const noList = useMemo(
+    () => tinhCongNo(data).filter((r) => r.conNo > 0.5).sort((a, b) => (a.expenseDate < b.expenseDate ? -1 : 1)),
+    [data]
+  );
+  const goiYNguoiChi = useMemo(
+    () => Array.from(new Set((data.expensePayments || []).map((p) => p.paidBy).filter(Boolean))).sort(),
+    [data.expensePayments]
+  );
+  const tongNo = noList.reduce((s2, r) => s2 + r.conNo, 0);
+  if (noList.length === 0) return null;
+  const hienThi = moRong ? noList : noList.slice(0, 5);
+
+  return (
+    <Card className="mb-5 border-amber-200">
+      <div className="px-4 sm:px-5 pt-4 pb-2 flex items-start justify-between gap-3 flex-wrap">
+        <div>
+          <p className="font-medium text-slate-800">Công nợ chờ thanh toán</p>
+          <p className="text-xs text-slate-400 mt-0.5">Khoản đã ghi chi phí nhưng chưa trả tiền — trả xong mới trừ quỹ</p>
+        </div>
+        <div className="text-right">
+          <p className="text-lg font-semibold text-rose-700">{fmtMoney(tongNo)}</p>
+          <p className="text-xs text-slate-400">{fmtNumber(noList.length)} khoản</p>
+        </div>
+      </div>
+      <div className="divide-y divide-slate-50">
+        {hienThi.map((r) => (
+          <div key={r.id} className="px-4 sm:px-5 py-3">
+            <div className="flex items-start justify-between gap-3 flex-wrap">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-800">{r.itemName}</p>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  {fmtDate(r.expenseDate)}{r.supplierName ? ` · ${r.supplierName}` : ""}{r.soNgayTreo > 0 ? ` · treo ${r.soNgayTreo} ngày` : ""}
+                </p>
+              </div>
+              <div className="text-right shrink-0">
+                <p className="text-sm font-semibold text-rose-700">{fmtMoney(r.conNo)}</p>
+                {r.daTra > 0 && <p className="text-xs text-slate-400">đã trả {fmtMoney(r.daTra)}</p>}
+              </div>
+            </div>
+            {dangTra === r.id
+              ? <FormGhiThanhToan khoan={r} onSubmit={onRecordPayment} onCancel={() => setDangTra(null)} goiYNguoiChi={goiYNguoiChi} />
+              : <button onClick={() => setDangTra(r.id)} className="mt-2 px-3 py-1.5 rounded-xl bg-sky-600 text-white text-xs font-medium">Thanh toán</button>}
+          </div>
+        ))}
+      </div>
+      {noList.length > 5 && (
+        <button onClick={() => setMoRong(!moRong)} className="w-full px-4 py-2.5 text-xs text-sky-600 hover:bg-slate-50 border-t border-slate-100">
+          {moRong ? "Thu gọn" : `Xem tiếp ${noList.length - 5} khoản còn lại`}
+        </button>
+      )}
+    </Card>
+  );
+}
+
+function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete, editEnabled, onRecordPayment }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [category, setCategory] = useState("all");
@@ -3510,6 +3581,8 @@ function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete, editE
       )}
 
       <PhieuChiForm onSubmit={onSubmit} />
+
+      <CongNoChoThanhToan data={data} onRecordPayment={onRecordPayment} />
 
       <Card className="p-4 sm:p-5 mb-5">
         <p className="text-xs font-medium text-slate-500 mb-2">Lọc theo ngày &amp; loại chi phí</p>
@@ -7516,7 +7589,7 @@ export default function App() {
             {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onUpsertRemittedAmount={upsertFundRemittedAmount} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
             {tab === "hang_chuyen_ban" && canViewReports && <HangChuyenBanQuanLyModule data={data} currentUser={currentUser} onSaveOpening={saveStockOpening} onBulkImportFromBills={bulkImportXuatFromBills} />}
             {tab === "thu" && isThuNgan && <ThuModule data={data} currentUser={currentUser} onSubmit={submitCashierReceipt} onUpdate={updateCashierReceipt} onDelete={deleteCashierReceipt} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
-            {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
+            {tab === "chi" && isThuNgan && <ChiPhieuModule data={data} currentUser={currentUser} onSubmit={submitExpense} onUpdate={updateExpenseRecord} onDelete={deleteExpenseRecord} onRecordPayment={recordExpensePayment} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "hang_chuyen_ban" && isThuNgan && <HangChuyenBanThuNganModule data={data} currentUser={currentUser} onSubmit={submitResaleGoodsReceipt} onUpdate={updateResaleGoodsReceipt} onDelete={deleteResaleGoodsReceipt} onSubmitStockCount={submitResaleStockCounts} editEnabled={data.settings?.thu_ngan_edit_enabled !== "false"} />}
             {tab === "so_quy" && isThuNgan && <SoQuyBaoCaoModule data={data} />}
             {tab === "mon_an" && <MonAnModule data={data} onAddDish={addDish} onSaveRecipe={saveDishRecipe} onDeleteDish={deleteDish} />}
