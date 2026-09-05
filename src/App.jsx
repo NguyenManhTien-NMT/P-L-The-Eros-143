@@ -56,6 +56,32 @@ function fmtDate(d) {
 function todayISO() {
   return formatDateLocal(new Date());
 }
+// Ngày đầu tháng hiện tại — dùng làm mặc định cho các màn có danh sách dài,
+// để mỗi lần mở chỉ thấy tháng này thay vì toàn bộ lịch sử.
+function firstOfMonthISO() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
+}
+function monthRangeISO(offset) {
+  const d = new Date();
+  const first = new Date(d.getFullYear(), d.getMonth() + offset, 1);
+  const last = new Date(d.getFullYear(), d.getMonth() + offset + 1, 0);
+  const f = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`;
+  return [f(first), f(last)];
+}
+
+// 3 nút bấm nhanh đặt cạnh ô lọc ngày: Tháng này / Tháng trước / Toàn bộ.
+function NutLocNhanh({ setFrom, setTo }) {
+  const nut = "px-3 py-1.5 rounded-xl border border-slate-300 text-xs text-slate-600 hover:bg-slate-50";
+  return (
+    <div className="flex flex-wrap gap-2 mt-3">
+      <button type="button" className={nut} onClick={() => { const [a, b] = monthRangeISO(0); setFrom(a); setTo(b); }}>Tháng này</button>
+      <button type="button" className={nut} onClick={() => { const [a, b] = monthRangeISO(-1); setFrom(a); setTo(b); }}>Tháng trước</button>
+      <button type="button" className={nut} onClick={() => { setFrom(""); setTo(""); }}>Toàn bộ</button>
+    </div>
+  );
+}
+
 function daysAgoISO(n) {
   const d = new Date();
   d.setDate(d.getDate() - n);
@@ -1826,6 +1852,7 @@ function LichSuNhapModule({ data, onDelete, onDeleteMany }) {
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
+        <NutLocNhanh setFrom={setFrom} setTo={setTo} />
         <div className="flex items-center justify-between mt-3">
           <div className="flex items-center gap-2">
             <GhostButton onClick={resetFilters}><X size={14} /> Xoá bộ lọc</GhostButton>
@@ -2847,6 +2874,7 @@ function BaoCaoXuatModule({ data }) {
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
+        <NutLocNhanh setFrom={setFrom} setTo={setTo} />
       </Card>
       <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-5">
         <MetricCard label="Tổng doanh thu" value={fmtMoney(byRevenue.totals.doanhThu)} icon={TrendingUp} accent="teal" />
@@ -3382,6 +3410,7 @@ function ThuModule({ data, currentUser, onSubmit, onUpdate, onDelete, editEnable
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
+        <NutLocNhanh setFrom={setFrom} setTo={setTo} />
         {(from || to) && (
           <button type="button" onClick={() => { setFrom(""); setTo(""); }} className="text-xs text-sky-700 hover:underline mt-2">Bỏ lọc ngày</button>
         )}
@@ -3929,6 +3958,7 @@ function DepositModule({ data, currentUser, onSubmit, onUpdate, onDelete }) {
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
+        <NutLocNhanh setFrom={setFrom} setTo={setTo} />
         {(from || to) && (
           <button type="button" onClick={() => { setFrom(""); setTo(""); }} className="text-xs text-sky-700 hover:underline mt-2">Bỏ lọc ngày</button>
         )}
@@ -4691,7 +4721,7 @@ function HangChuyenBanThuNganModule({ data, currentUser, onSubmit, onUpdate, onD
 // (2) Báo cáo Xuất-Nhập-Tồn (Nhập từ resale_goods_receipts, Xuất từ export_records).
 function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening, onBulkImportFromBills }) {
   const [tab, setTab] = useState("chi_phi"); // "nhap" | "ton" | "kiem_ke"
-  const [from, setFrom] = useState(FUND_START_DATE);
+  const [from, setFrom] = useState(firstOfMonthISO());
   const [to, setTo] = useState(todayISO());
   const hcbProducts = data.products.filter((p) => p.classification === "HCB");
   const [selectedProductId, setSelectedProductId] = useState(hcbProducts[0]?.id || "");
@@ -4951,7 +4981,7 @@ function HangChuyenBanQuanLyModule({ data, currentUser, onSaveOpening, onBulkImp
 }
 
 function SoQuyBaoCaoModule({ data }) {
-  const [from, setFrom] = useState(FUND_START_DATE);
+  const [from, setFrom] = useState(firstOfMonthISO());
   const [to, setTo] = useState(todayISO());
 
   const ledgerDates = enumerateDatesISO(from, to);
@@ -4969,6 +4999,7 @@ function SoQuyBaoCaoModule({ data }) {
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
+        <NutLocNhanh setFrom={setFrom} setTo={setTo} />
       </Card>
 
       <FundLedgerTable ledger={fundLedger} readOnly />
@@ -4977,7 +5008,7 @@ function SoQuyBaoCaoModule({ data }) {
 }
 
 function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpeningBalance, onUpsertRemittedAmount, onSetThuNganEditEnabled }) {
-  const [from, setFrom] = useState(FUND_START_DATE);
+  const [from, setFrom] = useState(firstOfMonthISO());
   const [to, setTo] = useState(todayISO());
   const [viewMode, setViewMode] = useState("ngay"); // "ngay" | "tongthe"
   const thuNganEditEnabled = data.settings?.thu_ngan_edit_enabled !== "false";
@@ -5070,6 +5101,7 @@ function QuyModule({ data, currentUser, onBulkImportInvoiceRevenue, onUpsertOpen
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
+        <NutLocNhanh setFrom={setFrom} setTo={setTo} />
       </Card>
 
       <div className="grid grid-cols-2 gap-3 mb-5">
@@ -6017,8 +6049,8 @@ function CongNoModule({ data, onRecordPayment, onDeletePayment, currentUser }) {
 }
 
 function KetQuaKinhDoanhModule({ data }) {
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(firstOfMonthISO());
+  const [to, setTo] = useState(todayISO());
   const inR = (d) => (!d ? false : (!from || d >= from) && (!to || d <= to));
 
   const kq = useMemo(() => {
@@ -6087,6 +6119,7 @@ function KetQuaKinhDoanhModule({ data }) {
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
+        <NutLocNhanh setFrom={setFrom} setTo={setTo} />
       </Card>
 
       {canhBao.length > 0 && (
@@ -6192,8 +6225,8 @@ function KetQuaKinhDoanhModule({ data }) {
 
 function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDeleteExpense, onUpdateExpense }) {
   const [category, setCategory] = useState("van_hanh");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  const [from, setFrom] = useState(firstOfMonthISO());
+  const [to, setTo] = useState(todayISO());
   const meta = EXPENSE_CATEGORY_META[category];
 
   // Công nợ nguyên vật liệu: các phiếu nhập NVL có tình trạng thanh toán = Công nợ.
@@ -6213,6 +6246,7 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
           <TextField label="Từ ngày" type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           <TextField label="Đến ngày" type="date" value={to} onChange={(e) => setTo(e.target.value)} />
         </div>
+        <NutLocNhanh setFrom={setFrom} setTo={setTo} />
         {(from || to) && (
           <button type="button" onClick={() => { setFrom(""); setTo(""); }} className="text-xs text-sky-700 hover:underline mt-2">
             Bỏ lọc ngày
