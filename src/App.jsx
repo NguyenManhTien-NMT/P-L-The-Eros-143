@@ -5769,6 +5769,13 @@ function KQKDRow({ label, value, pct, bold, indent, color, note, top }) {
 // Tiền ra ghi theo NGÀY TRẢ THẬT (vào sổ quỹ). Chênh lệch giữa 2 mốc = công nợ.
 // Một khoản có thể trả nhiều lần, mỗi lần ghi rõ AI CHI.
 // =============================================================================
+// Bút toán phân loại lại (VD tách tiền ăn nhân viên khỏi NVL) KHÔNG phải khoản phải
+// trả — tiền đã ra từ các khoản chi gốc rồi. Đánh dấu bằng [DIEU_CHINH] ở đầu ghi chú
+// và loại khỏi màn Công nợ, nếu không sẽ bị đòi thanh toán lần hai.
+function laButToanDieuChinh(e) {
+  return (e.note || "").trim().startsWith("[DIEU_CHINH]") || e.amount < 0;
+}
+
 function tinhCongNo(data) {
   const paidByExpense = {};
   (data.expensePayments || []).forEach((p) => {
@@ -5776,7 +5783,7 @@ function tinhCongNo(data) {
     paidByExpense[p.expenseId].total += p.amount;
     paidByExpense[p.expenseId].list.push(p);
   });
-  return (data.expenseRecords || []).map((e) => {
+  return (data.expenseRecords || []).filter((e) => !laButToanDieuChinh(e)).map((e) => {
     const p = paidByExpense[e.id] || { total: 0, list: [] };
     const conNo = e.amount - p.total;
     return {
