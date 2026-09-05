@@ -3099,6 +3099,10 @@ const EXPENSE_CATEGORIES = [
   //              thành chi phí nhân công — lúc đó đổi nhóm sang "Chi phí vận hành")
   { key: "dong_tien", label: "◇ Dòng tiền — nộp cô / hoàn cọc (không phải chi phí)" },
   { key: "tam_ung", label: "◇ Tạm ứng — phải thu tạm (không phải chi phí)" },
+  // Tồn kho NVL cuối kỳ: nguyên liệu đã mua nhưng CHƯA dùng hết trong tháng.
+  // Là TÀI SẢN chuyển sang tháng sau, không phải chi phí của tháng này.
+  // Cuối tháng: ghi ÂM ở nvl + DƯƠNG ở đây. Đầu tháng sau: ghi ngược lại.
+  { key: "ton_kho", label: "◇ Tồn kho NVL cuối kỳ (chuyển sang tháng sau)" },
 ];
 // Các nhóm không được tính vào "Tổng chi phí thực".
 // 2 tài khoản ngân hàng. Mọi TIỀN VÀO (thu ngân, thu cọc) đều về TK Cty, nên cột
@@ -3110,7 +3114,7 @@ const BANK_ACCOUNTS = [
 ];
 const BANK_ACCOUNT_LABEL = Object.fromEntries(BANK_ACCOUNTS.map((a) => [a.key, a.label]));
 
-const NON_EXPENSE_CATEGORIES = ["chua_phan_bo", "dong_tien", "tam_ung"];
+const NON_EXPENSE_CATEGORIES = ["chua_phan_bo", "dong_tien", "tam_ung", "ton_kho"];
 const EXPENSE_CATEGORY_META = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 const EXPENSE_PAYMENT_METHOD_META = {
   tien_mat: { label: "Tiền mặt", color: "bg-emerald-50 text-emerald-700 border-emerald-200" },
@@ -6034,6 +6038,7 @@ function KetQuaKinhDoanhModule({ data }) {
     const byCat = (k) => exp.filter((r) => r.category === k).reduce((s, r) => s + r.amount, 0);
     const nCat = (k) => exp.filter((r) => r.category === k).length;
     const imports = (data.importRecords || []).filter((r) => inR(r.importDate));
+    // Mua NVL trong kỳ đã trừ phần kết chuyển tồn kho (dòng âm nằm sẵn trong nhóm nvl).
     const muaNVL = imports.reduce((s, r) => s + r.totalAmount, 0) + byCat("nvl");
 
     const vanHanh = byCat("van_hanh");
@@ -6046,6 +6051,7 @@ function KetQuaKinhDoanhModule({ data }) {
     const chuaPhanBo = byCat("chua_phan_bo");
     const dongTien = byCat("dong_tien");
     const tamUng = byCat("tam_ung");
+    const tonKho = byCat("ton_kho");
 
     const giaVon = muaNVL + gvHCB;
     const laiGop = doanhThu - giaVon;
@@ -6060,7 +6066,7 @@ function KetQuaKinhDoanhModule({ data }) {
     return {
       doanhThu, tienMat, nganHang, soHoaDon: invoices.length, dtHCB, gvHCB,
       muaNVL, vanHanh, tienAnNV, marketing, baoTri, khac, chiPhiHoatDong,
-      chuaPhanBo, dongTien, tamUng, giaVon, laiGop, loiNhuan, chart, soNgay,
+      chuaPhanBo, dongTien, tamUng, tonKho, giaVon, laiGop, loiNhuan, chart, soNgay,
       nChuaPhanBo: nCat("chua_phan_bo"),
     };
   }, [data, from, to]);
@@ -6155,6 +6161,7 @@ function KetQuaKinhDoanhModule({ data }) {
               <KQKDRow label="⚠ Chưa phân bổ — chờ bổ sung chứng từ" value={kq.chuaPhanBo} pct={pct(kq.chuaPhanBo)} color={kq.chuaPhanBo > 0 ? "text-rose-700" : ""} />
               <KQKDRow label="◇ Dòng tiền — nộp cô / hoàn cọc" value={kq.dongTien} pct={pct(kq.dongTien)} />
               <KQKDRow label="◇ Tạm ứng — phải thu tạm" value={kq.tamUng} pct={pct(kq.tamUng)} />
+              <KQKDRow label="◇ Tồn kho NVL cuối kỳ" value={kq.tonKho} pct={pct(kq.tonKho)} note="Nguyên liệu chưa dùng hết, chuyển sang tháng sau" />
             </tbody>
           </table>
         </div>
