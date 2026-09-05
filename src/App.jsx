@@ -3239,6 +3239,11 @@ function PhieuChiForm({ onSubmit }) {
   const [amount, setAmount] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("tien_mat");
   const [note, setNote] = useState("");
+  const [supplierName, setSupplierName] = useState("");
+  const [paid, setPaid] = useState("yes");
+  const [paymentDate, setPaymentDate] = useState(todayISO());
+  const [paidBy, setPaidBy] = useState("");
+  const [bankAccount, setBankAccount] = useState("tk_cty");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -3249,7 +3254,11 @@ function PhieuChiForm({ onSubmit }) {
     if (!amount || Number(amount) <= 0) { setError("Vui lòng nhập số tiền hợp lệ."); return; }
     setError(""); setSaving(true);
     try {
-      await onSubmit({ category, expenseDate, paymentMethod, lines: [{ itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null }] });
+      await onSubmit({
+        category, expenseDate, paymentMethod,
+        supplierName, paid: paid === "yes", paymentDate, paidBy, bankAccount,
+        lines: [{ itemName: itemName.trim(), amount: Number(amount), note: note.trim() || null }],
+      });
       setItemName(""); setAmount(""); setNote("");
     } catch (e) {
       setError(e.message || "Không lưu được, vui lòng thử lại.");
@@ -3272,6 +3281,18 @@ function PhieuChiForm({ onSubmit }) {
           <option value="tien_mat">Tiền mặt</option>
           <option value="chuyen_khoan">Chuyển khoản</option>
         </SelectField>
+        <TextField label="Nhà cung cấp / người nhận tiền" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} placeholder="Để trống nếu không theo dõi công nợ" />
+        <SelectField label="Đã thanh toán chưa?" value={paid} onChange={(e) => setPaid(e.target.value)}>
+          <option value="yes">Đã trả — tiền ra ngay</option>
+          <option value="no">Chưa trả — ghi nợ, trả sau</option>
+        </SelectField>
+        {paid === "yes" && <TextField label="Ngày trả tiền" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} hint="Khác ngày chi nếu trả sau" />}
+        {paid === "yes" && <TextField label="Người chi" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} placeholder="Ai bỏ tiền / bấm chuyển khoản" />}
+        {paid === "yes" && paymentMethod === "chuyen_khoan" && (
+          <SelectField label="Chi từ tài khoản" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)}>
+            {BANK_ACCOUNTS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+          </SelectField>
+        )}
         <TextField label="Ghi chú (tuỳ chọn)" value={note} onChange={(e) => setNote(e.target.value)} className="sm:col-span-2" />
       </div>
       {error && <p className="text-xs text-rose-600 mb-2 flex items-center gap-1"><AlertTriangle size={12} /> {error}</p>}
@@ -7399,6 +7420,7 @@ export default function App() {
   const NAV_THU_NGAN = [
     { key: "thu", label: "Thu ngân", icon: Wallet },
     { key: "chi", label: "Phiếu chi", icon: Receipt },
+    { key: "cong_no", label: "Công nợ phải trả", icon: ClipboardList },
     { key: "coc", label: "Cọc", icon: Coins },
     { key: "hang_chuyen_ban", label: "Hàng chuyển bán", icon: Truck },
     { key: "so_quy", label: "Sổ quỹ", icon: BarChart3 },
@@ -7488,7 +7510,7 @@ export default function App() {
         <div className="max-w-6xl mx-auto px-4 py-6">
           <TabErrorBoundary resetKey={tab}>
             {tab === "kqkd" && canViewReports && <KetQuaKinhDoanhModule data={data} />}
-            {tab === "cong_no" && canViewReports && <CongNoModule data={data} currentUser={currentUser} onRecordPayment={recordExpensePayment} onDeletePayment={deleteExpensePayment} />}
+            {tab === "cong_no" && (canViewReports || isThuNgan) && <CongNoModule data={data} currentUser={currentUser} onRecordPayment={recordExpensePayment} onDeletePayment={deleteExpensePayment} />}
             {tab === "chi_phi" && <ChiPhiModule data={data} currentUser={currentUser} onSubmitExpense={submitExpense} onSubmitImport={submitImport} onDeleteExpense={deleteExpenseRecord} onUpdateExpense={updateExpenseRecord} />}
             {tab === "coc" && (canViewReports || isThuNgan) && <DepositModule data={data} currentUser={currentUser} onSubmit={submitDeposit} onUpdate={updateDeposit} onDelete={deleteDeposit} />}
             {tab === "quy" && canViewReports && <QuyModule data={data} currentUser={currentUser} onBulkImportInvoiceRevenue={bulkImportInvoiceRevenue} onUpsertOpeningBalance={upsertFundOpeningBalance} onUpsertRemittedAmount={upsertFundRemittedAmount} onSetThuNganEditEnabled={setThuNganEditEnabled} />}
