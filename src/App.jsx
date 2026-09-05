@@ -302,6 +302,7 @@ function mapExpensePayment(r) {
     id: r.id, expenseId: r.expense_id, paymentDate: r.payment_date,
     amount: Number(r.amount) || 0, paymentMethod: r.payment_method,
     paidBy: r.paid_by || "", note: r.note || "",
+    bankAccount: r.bank_account || (r.payment_method === "chuyen_khoan" ? "tk_cty" : ""),
     createdBy: r.created_by, createdAt: r.created_at,
   };
 }
@@ -3097,6 +3098,15 @@ const EXPENSE_CATEGORIES = [
   { key: "tam_ung", label: "◇ Tạm ứng — phải thu tạm (không phải chi phí)" },
 ];
 // Các nhóm không được tính vào "Tổng chi phí thực".
+// 2 tài khoản ngân hàng. Mọi TIỀN VÀO (thu ngân, thu cọc) đều về TK Cty, nên cột
+// "Ngân hàng" trong Sổ quỹ = TK Cty. Chi từ TK cô KHÔNG trừ vào cột đó — tiền
+// không ra từ tài khoản công ty — mà theo dõi riêng ở mục Đối chiếu tài khoản cô.
+const BANK_ACCOUNTS = [
+  { key: "tk_cty", label: "TK Công ty (Anh Nam)" },
+  { key: "tk_co", label: "TK cô" },
+];
+const BANK_ACCOUNT_LABEL = Object.fromEntries(BANK_ACCOUNTS.map((a) => [a.key, a.label]));
+
 const NON_EXPENSE_CATEGORIES = ["chua_phan_bo", "dong_tien", "tam_ung"];
 const EXPENSE_CATEGORY_META = Object.fromEntries(EXPENSE_CATEGORIES.map((c) => [c.key, c]));
 const EXPENSE_PAYMENT_METHOD_META = {
@@ -3119,7 +3129,9 @@ const EXPENSE_PAYMENT_METHOD_META = {
 // Khoản chưa trả không xuất hiện ở đây (nằm ở màn Công nợ phải trả).
 function expenseCashFlows(data) {
   const byId = Object.fromEntries((data.expenseRecords || []).map((e) => [e.id, e]));
-  return (data.expensePayments || []).map((p) => {
+  return (data.expensePayments || [])
+    .filter((p) => !(p.paymentMethod === "chuyen_khoan" && p.bankAccount === "tk_co"))
+    .map((p) => {
     const e = byId[p.expenseId];
     return {
       expenseDate: p.paymentDate,
@@ -5306,6 +5318,7 @@ function PresetExpenseForm({ category, onSubmit }) {
   const [paid, setPaid] = useState("yes");
   const [paymentDate, setPaymentDate] = useState(todayISO());
   const [paidBy, setPaidBy] = useState("");
+  const [bankAccount, setBankAccount] = useState("tk_cty");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -5349,6 +5362,11 @@ function PresetExpenseForm({ category, onSubmit }) {
         <div className="grid sm:grid-cols-2 gap-3 mb-4">
           <TextField label="Ngày trả tiền" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} hint="Khác ngày phát sinh nếu trả sau" />
           <TextField label="Người chi" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} placeholder="Ai bỏ tiền / bấm chuyển khoản" />
+          {paymentMethod === "chuyen_khoan" && (
+            <SelectField label="Chi từ tài khoản" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)}>
+              {BANK_ACCOUNTS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+            </SelectField>
+          )}
         </div>
       )}
       <div className="space-y-2 mb-4">
@@ -5379,6 +5397,7 @@ function OtherExpenseForm({ onSubmit }) {
   const [paid, setPaid] = useState("yes");
   const [paymentDate, setPaymentDate] = useState(todayISO());
   const [paidBy, setPaidBy] = useState("");
+  const [bankAccount, setBankAccount] = useState("tk_cty");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -5394,8 +5413,8 @@ function OtherExpenseForm({ onSubmit }) {
     setError(""); setSaving(true);
     try {
       await onSubmit({
-        supplierName, paid: paid === "yes", paymentDate, paidBy,
-        supplierName, paid: paid === "yes", paymentDate, paidBy,
+        supplierName, paid: paid === "yes", paymentDate, paidBy, bankAccount,
+        supplierName, paid: paid === "yes", paymentDate, paidBy, bankAccount,
         category: "khac", expenseDate, paymentMethod,
         lines: validLines.map((l) => ({ itemName: l.itemName.trim(), amount: Number(l.amount) })),
       });
@@ -5428,6 +5447,11 @@ function OtherExpenseForm({ onSubmit }) {
         <div className="grid sm:grid-cols-2 gap-3 mb-4">
           <TextField label="Ngày trả tiền" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} hint="Khác ngày phát sinh nếu trả sau" />
           <TextField label="Người chi" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} placeholder="Ai bỏ tiền / bấm chuyển khoản" />
+          {paymentMethod === "chuyen_khoan" && (
+            <SelectField label="Chi từ tài khoản" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)}>
+              {BANK_ACCOUNTS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+            </SelectField>
+          )}
         </div>
       )}
       <div className="space-y-2 mb-4">
@@ -5766,6 +5790,7 @@ function FormGhiThanhToan({ khoan, onSubmit, onCancel, goiYNguoiChi }) {
   const [paymentDate, setPaymentDate] = useState(todayISO());
   const [paymentMethod, setPaymentMethod] = useState(khoan.paymentMethod || "tien_mat");
   const [paidBy, setPaidBy] = useState("");
+  const [bankAccount, setBankAccount] = useState("tk_cty");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -5775,7 +5800,7 @@ function FormGhiThanhToan({ khoan, onSubmit, onCancel, goiYNguoiChi }) {
     if (n > khoan.conNo + 0.5) { setError(`Vượt quá số còn nợ (${fmtMoney(khoan.conNo)}).`); return; }
     if (!paidBy.trim()) { setError("Cần ghi rõ người chi."); return; }
     setError(""); setSaving(true);
-    try { await onSubmit({ expenseId: khoan.id, amount: n, paymentDate, paymentMethod, paidBy }); onCancel(); }
+    try { await onSubmit({ expenseId: khoan.id, amount: n, paymentDate, paymentMethod, paidBy, bankAccount }); onCancel(); }
     catch (e) { setError(e.message || "Không lưu được."); }
     finally { setSaving(false); }
   };
@@ -5796,6 +5821,11 @@ function FormGhiThanhToan({ khoan, onSubmit, onCancel, goiYNguoiChi }) {
             className="w-full px-3 py-2 rounded-xl border border-slate-300 text-sm focus:outline-none focus:ring-2 focus:ring-sky-500/40" />
           <datalist id="ds-nguoi-chi">{goiYNguoiChi.map((n) => <option key={n} value={n} />)}</datalist>
         </div>
+        {paymentMethod === "chuyen_khoan" && (
+          <SelectField label="Chi từ tài khoản" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)}>
+            {BANK_ACCOUNTS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+          </SelectField>
+        )}
       </div>
       {error && <p className="text-xs text-rose-600 mt-2">{error}</p>}
       <div className="flex gap-2 mt-3">
@@ -5834,12 +5864,24 @@ function CongNoModule({ data, onRecordPayment, onDeletePayment, currentUser }) {
     (data.expensePayments || []).forEach((p) => {
       if (!inR(p.paymentDate)) return;
       const k = p.paidBy || "(chưa ghi người chi)";
-      if (!m[k]) m[k] = { tienMat: 0, chuyenKhoan: 0, soLan: 0 };
-      m[k][p.paymentMethod === "chuyen_khoan" ? "chuyenKhoan" : "tienMat"] += p.amount;
+      if (!m[k]) m[k] = { tienMat: 0, tkCty: 0, tkCo: 0, soLan: 0 };
+      if (p.paymentMethod === "chuyen_khoan") m[k][p.bankAccount === "tk_co" ? "tkCo" : "tkCty"] += p.amount;
+      else m[k].tienMat += p.amount;
       m[k].soLan += 1;
     });
-    return Object.entries(m).map(([ten, v]) => ({ ten, ...v, tong: v.tienMat + v.chuyenKhoan })).sort((a, b) => b.tong - a.tong);
+    return Object.entries(m).map(([ten, v]) => ({ ten, ...v, tong: v.tienMat + v.tkCty + v.tkCo })).sort((a, b) => b.tong - a.tong);
   }, [data.expensePayments, tuNgay, denNgay]);
+
+  // Đối chiếu tài khoản cô: nhà hàng nộp sang bao nhiêu, cô chi hộ lại bao nhiêu.
+  const doiChieuCo = useMemo(() => {
+    const daNop = (data.expenseRecords || [])
+      .filter((e) => inR(e.expenseDate) && isRemittedExpenseName(e.itemName))
+      .reduce((s2, e) => s2 + e.amount, 0);
+    const coChiHo = (data.expensePayments || [])
+      .filter((p) => inR(p.paymentDate) && p.paymentMethod === "chuyen_khoan" && p.bankAccount === "tk_co")
+      .reduce((s2, p) => s2 + p.amount, 0);
+    return { daNop, coChiHo, chenh: daNop - coChiHo };
+  }, [data.expenseRecords, data.expensePayments, tuNgay, denNgay]);
 
   const BADGE = {
     chua_tra: ["bg-rose-100 text-rose-700", "Chưa trả"],
@@ -5870,6 +5912,21 @@ function CongNoModule({ data, onRecordPayment, onDeletePayment, currentUser }) {
         </div>
       </Card>
 
+      <Card className="p-4 sm:p-5 mb-5 border-violet-200 bg-violet-50/40">
+        <p className="font-medium text-slate-800 mb-1">Đối chiếu tài khoản cô</p>
+        <p className="text-xs text-slate-500 mb-3">
+          Tài khoản cô không nhận tiền vào từ hoạt động nhà hàng, nên theo dõi dạng công nợ hai chiều.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div><p className="text-xs text-slate-400">Nhà hàng đã nộp cho cô</p><p className="text-lg font-semibold text-violet-700 mt-0.5">{fmtMoney(doiChieuCo.daNop)}</p></div>
+          <div><p className="text-xs text-slate-400">Cô chi hộ từ TK cô</p><p className="text-lg font-semibold text-violet-700 mt-0.5">{fmtMoney(doiChieuCo.coChiHo)}</p></div>
+          <div>
+            <p className="text-xs text-slate-400">{doiChieuCo.chenh >= 0 ? "Cô đang giữ của nhà hàng" : "Nhà hàng đang nợ cô"}</p>
+            <p className={`text-lg font-semibold mt-0.5 ${doiChieuCo.chenh >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{fmtMoney(Math.abs(doiChieuCo.chenh))}</p>
+          </div>
+        </div>
+      </Card>
+
       <Card className="mb-5">
         <div className="px-4 sm:px-5 pt-4 pb-2">
           <p className="font-medium text-slate-800">Chi theo từng người</p>
@@ -5879,16 +5936,19 @@ function CongNoModule({ data, onRecordPayment, onDeletePayment, currentUser }) {
           <table className="w-full text-sm">
             <thead><tr className="text-left text-xs text-slate-400 border-b border-slate-100">
               <th className="px-4 py-2">Người chi</th><th className="px-3 py-2 text-right">Số lần</th>
-              <th className="px-3 py-2 text-right">Tiền mặt</th><th className="px-3 py-2 text-right">Chuyển khoản</th>
+              <th className="px-3 py-2 text-right">Tiền mặt</th>
+              <th className="px-3 py-2 text-right">TK Công ty</th>
+              <th className="px-3 py-2 text-right">TK cô</th>
               <th className="px-4 py-2 text-right">Tổng chi</th></tr></thead>
             <tbody>
-              {theoNguoi.length === 0 && <tr><td colSpan={5} className="px-4 py-6 text-center text-slate-400 text-sm">Chưa có lần thanh toán nào trong kỳ</td></tr>}
+              {theoNguoi.length === 0 && <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-400 text-sm">Chưa có lần thanh toán nào trong kỳ</td></tr>}
               {theoNguoi.map((r) => (
                 <tr key={r.ten} className="border-b border-slate-50 last:border-0">
                   <td className={`px-4 py-2 ${r.ten.startsWith("(") ? "text-slate-400 italic" : "text-slate-800 font-medium"}`}>{r.ten}</td>
                   <td className="px-3 py-2 text-right text-slate-500">{fmtNumber(r.soLan)}</td>
                   <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.tienMat)}</td>
-                  <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.chuyenKhoan)}</td>
+                  <td className="px-3 py-2 text-right text-slate-700">{fmtMoney(r.tkCty)}</td>
+                  <td className="px-3 py-2 text-right text-violet-700">{fmtMoney(r.tkCo)}</td>
                   <td className="px-4 py-2 text-right font-semibold text-slate-800">{fmtMoney(r.tong)}</td>
                 </tr>
               ))}
@@ -5918,7 +5978,7 @@ function CongNoModule({ data, onRecordPayment, onDeletePayment, currentUser }) {
                     </p>
                     {r.lanTra.length > 0 && (
                       <p className="text-xs text-slate-500 mt-1">
-                        {r.lanTra.map((p) => `${fmtDate(p.paymentDate)}: ${fmtMoney(p.amount)}${p.paidBy ? " — " + p.paidBy : ""}`).join(" · ")}
+                        {r.lanTra.map((p) => `${fmtDate(p.paymentDate)}: ${fmtMoney(p.amount)}${p.paidBy ? " — " + p.paidBy : ""}${p.bankAccount ? " (" + (BANK_ACCOUNT_LABEL[p.bankAccount] || p.bankAccount) + ")" : ""}`).join(" · ")}
                       </p>
                     )}
                   </div>
@@ -6891,10 +6951,11 @@ export default function App() {
   // paymentDate: ngày trả thật (chỉ dùng khi paid = true)
   // paidBy     : NGƯỜI CHI — ai bỏ tiền/bấm chuyển khoản
   // Ghi 1 lần trả tiền cho khoản chi đã có (cho phép trả từng phần, nhiều lần).
-  const recordExpensePayment = async ({ expenseId, amount, paymentDate, paymentMethod, paidBy, note }) => {
+  const recordExpensePayment = async ({ expenseId, amount, paymentDate, paymentMethod, paidBy, note, bankAccount }) => {
     const { error } = await supabase.from("expense_payments").insert([{
       expense_id: expenseId, payment_date: paymentDate || todayISO(),
       amount, payment_method: paymentMethod || "tien_mat",
+      bank_account: (paymentMethod === "chuyen_khoan") ? (bankAccount || "tk_cty") : null,
       paid_by: paidBy ? paidBy.trim() : null, note: note || null, created_by: currentUser.id,
     }]);
     if (error) throw error;
@@ -6908,7 +6969,7 @@ export default function App() {
     showToast("Đã xoá lần thanh toán");
   };
 
-  const submitExpense = async ({ category, lines, expenseDate, paymentMethod, supplierName, paid = true, paymentDate, paidBy }) => {
+  const submitExpense = async ({ category, lines, expenseDate, paymentMethod, supplierName, paid = true, paymentDate, paidBy, bankAccount }) => {
     const rows = lines.map((l) => ({
       category, item_name: l.itemName,
       quantity: l.quantity ?? null, unit_price: l.unitPrice ?? null, amount: l.amount,
@@ -6924,6 +6985,7 @@ export default function App() {
       const pays = inserted.map((r) => ({
         expense_id: r.id, payment_date: paymentDate || expenseDate || todayISO(),
         amount: r.amount, payment_method: paymentMethod || "tien_mat",
+        bank_account: (paymentMethod === "chuyen_khoan") ? (bankAccount || "tk_cty") : null,
         paid_by: paidBy ? paidBy.trim() : null, created_by: currentUser.id,
       }));
       const { error: payErr } = await supabase.from("expense_payments").insert(pays);
