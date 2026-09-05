@@ -3639,7 +3639,7 @@ function ChiPhieuModule({ data, currentUser, onSubmit, onUpdate, onDelete, editE
       </Card>
       {editing && editEnabled && (
         <EditExpenseModal
-          expense={editing}
+          expense={{ ...editing, ...(tinhCongNo(data).find((x) => x.id === editing.id) || {}) }}
           onSave={onUpdate}
           onClose={() => setEditing(null)}
         />
@@ -5617,6 +5617,11 @@ function EditExpenseModal({ expense, onSave, onClose }) {
   const [quantity, setQuantity] = useState(expense.quantity === null || expense.quantity === undefined ? "" : String(expense.quantity));
   const [unitPrice, setUnitPrice] = useState(expense.unitPrice === null || expense.unitPrice === undefined ? "" : String(expense.unitPrice));
   const [paymentMethod, setPaymentMethod] = useState(expense.paymentMethod || "tien_mat");
+  const [supplierName, setSupplierName] = useState(expense.supplierName || "");
+  const [paid, setPaid] = useState(expense.daTra > 0.5 ? "yes" : "no");
+  const [paymentDate, setPaymentDate] = useState(expense.lanTra?.[0]?.paymentDate || expense.expenseDate);
+  const [paidBy, setPaidBy] = useState(expense.lanTra?.[0]?.paidBy || "");
+  const [bankAccount, setBankAccount] = useState(expense.lanTra?.[0]?.bankAccount || "tk_cty");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -5630,7 +5635,8 @@ function EditExpenseModal({ expense, onSave, onClose }) {
         amount: Number(amount),
         quantity: quantity === "" ? null : Number(quantity),
         unitPrice: unitPrice === "" ? null : Number(unitPrice),
-        paymentMethod,
+        paymentMethod, supplierName,
+        paid: paid === "yes", paymentDate, paidBy, bankAccount,
       });
       onClose();
     } catch (e) {
@@ -5662,6 +5668,34 @@ function EditExpenseModal({ expense, onSave, onClose }) {
             <option value="tien_mat">Tiền mặt</option>
             <option value="chuyen_khoan">Chuyển khoản</option>
           </SelectField>
+          <TextField label="Nhà cung cấp / người nhận tiền" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} placeholder="Để trống nếu không theo dõi công nợ" />
+          <div>
+            <label className="block text-xs text-slate-500 mb-1">Trạng thái thanh toán</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button type="button" onClick={() => setPaid("yes")}
+                className={`px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${paid === "yes" ? "bg-sky-600 text-white border-sky-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}>
+                Đã trả
+              </button>
+              <button type="button" onClick={() => setPaid("no")}
+                className={`px-3 py-2 rounded-xl text-sm font-medium border transition-colors ${paid === "no" ? "bg-amber-500 text-white border-amber-500" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-50"}`}>
+                Còn nợ
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              {paid === "yes" ? "Ghi nhận đã trả đủ, trừ vào sổ quỹ theo ngày trả bên dưới." : "Xoá mọi lần trả đã ghi, khoản này quay lại danh sách công nợ."}
+            </p>
+          </div>
+          {paid === "yes" && (
+            <>
+              <TextField label="Ngày trả tiền" type="date" value={paymentDate} onChange={(e) => setPaymentDate(e.target.value)} />
+              <TextField label="Người chi" value={paidBy} onChange={(e) => setPaidBy(e.target.value)} placeholder="Ai bỏ tiền / bấm chuyển khoản" />
+              {paymentMethod === "chuyen_khoan" && (
+                <SelectField label="Chi từ tài khoản" value={bankAccount} onChange={(e) => setBankAccount(e.target.value)}>
+                  {BANK_ACCOUNTS.map((a) => <option key={a.key} value={a.key}>{a.label}</option>)}
+                </SelectField>
+              )}
+            </>
+          )}
           {error && <p className="text-sm text-rose-600 flex items-center gap-1.5"><AlertTriangle size={14} /> {error}</p>}
           <div className="flex gap-2">
             <PrimaryButton type="button" onClick={submit} disabled={saving}>{saving ? "Đang lưu..." : "Lưu thay đổi"}</PrimaryButton>
@@ -5903,7 +5937,18 @@ function KQKDRow({ label, value, pct, bold, indent, color, note, top }) {
 // trả — tiền đã ra từ các khoản chi gốc rồi. Đánh dấu bằng [DIEU_CHINH] ở đầu ghi chú
 // và loại khỏi màn Công nợ, nếu không sẽ bị đòi thanh toán lần hai.
 function laButToanDieuChinh(e) {
-  return (e.note || "").trim().startsWith("[DIEU_CHINH]") || e.amount < 0;
+  const note = (e.note || "").trim();
+  const ten = (e.itemName || "").toLowerCase();
+  return (
+    note.startsWith("[DIEU_CHINH]") ||
+    e.amount < 0 ||                                   // dòng âm không bao giờ là khoản phải trả
+    e.category === "ton_kho" ||                       // kết chuyển tồn kho
+    note.toLowerCase().includes("không phát sinh tiền") ||
+    ten.startsWith("điều chỉnh:") ||
+    ten.startsWith("kết chuyển") ||
+    ten.startsWith("tồn kho nvl") ||
+    ten.startsWith("tiền ăn nhân viên tháng")         // bút toán phân bổ cuối tháng
+  );
 }
 
 function tinhCongNo(data) {
@@ -7160,15 +7205,38 @@ export default function App() {
 
   // Sửa 1 khoản chi phí — áp dụng cho mọi khoản chi trong bảng expense_records, kể
   // cả khoản do tài khoản Thu ngân gửi lên (dùng chung 1 bảng, không phân biệt người tạo).
-  const updateExpenseRecord = async (id, { category, itemName, expenseDate, amount, quantity, unitPrice, paymentMethod }) => {
+  // Sửa khoản chi. Nếu truyền thêm paid/paymentDate/paidBy/bankAccount thì đồng thời
+  // cập nhật trạng thái thanh toán: đánh dấu ĐÃ TRẢ (tạo dòng thanh toán đủ số tiền)
+  // hoặc CHUYỂN VỀ CÔNG NỢ (xoá hết dòng thanh toán của khoản đó).
+  const updateExpenseRecord = async (id, { category, itemName, expenseDate, amount, quantity, unitPrice, paymentMethod, supplierName, paid, paymentDate, paidBy, bankAccount }) => {
     const { data: updatedRows, error } = await supabase
       .from("expense_records")
-      .update({ category, item_name: itemName, expense_date: expenseDate, amount, quantity, unit_price: unitPrice, payment_method: paymentMethod || "tien_mat" })
+      .update({
+        category, item_name: itemName, expense_date: expenseDate, amount, quantity,
+        unit_price: unitPrice, payment_method: paymentMethod || "tien_mat",
+        ...(supplierName !== undefined ? { supplier_name: supplierName ? supplierName.trim() : null } : {}),
+      })
       .eq("id", id)
       .select("id");
     if (error) throw error;
     if ((updatedRows || []).length === 0) throw new Error("Không sửa được — có thể bị chặn quyền (RLS) trên Supabase.");
-    await refreshAll(["expenseRecords"]);
+
+    if (paid !== undefined) {
+      const { error: delErr } = await supabase.from("expense_payments").delete().eq("expense_id", id);
+      if (delErr) throw delErr;
+      if (paid) {
+        const { error: insErr } = await supabase.from("expense_payments").insert([{
+          expense_id: id, payment_date: paymentDate || expenseDate, amount,
+          payment_method: paymentMethod || "tien_mat",
+          bank_account: (paymentMethod === "chuyen_khoan") ? (bankAccount || "tk_cty") : null,
+          paid_by: paidBy ? paidBy.trim() : null, created_by: currentUser.id,
+        }]);
+        if (insErr) throw insErr;
+      }
+      await refreshAll(["expenseRecords", "expensePayments"]);
+    } else {
+      await refreshAll(["expenseRecords"]);
+    }
     showToast("Đã cập nhật khoản chi phí");
   };
 
