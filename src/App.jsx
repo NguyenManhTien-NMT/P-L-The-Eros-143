@@ -5389,7 +5389,7 @@ function PresetExpenseForm({ category, onSubmit }) {
 }
 
 // Chi phí "Khác" — các khoản không thuộc 4 nhóm còn lại, tự đặt tên khoản chi.
-function OtherExpenseForm({ onSubmit }) {
+function OtherExpenseForm({ onSubmit, category = "khac", title = "Chi phí khác" }) {
   const [lines, setLines] = useState([{ key: Math.random().toString(36).slice(2), itemName: "", amount: "" }]);
   const [expenseDate, setExpenseDate] = useState(todayISO());
   const [paymentMethod, setPaymentMethod] = useState("tien_mat");
@@ -5415,7 +5415,7 @@ function OtherExpenseForm({ onSubmit }) {
       await onSubmit({
         supplierName, paid: paid === "yes", paymentDate, paidBy, bankAccount,
         supplierName, paid: paid === "yes", paymentDate, paidBy, bankAccount,
-        category: "khac", expenseDate, paymentMethod,
+        category, expenseDate, paymentMethod,
         lines: validLines.map((l) => ({ itemName: l.itemName.trim(), amount: Number(l.amount) })),
       });
       setLines([{ key: Math.random().toString(36).slice(2), itemName: "", amount: "" }]);
@@ -5428,7 +5428,7 @@ function OtherExpenseForm({ onSubmit }) {
 
   return (
     <Card className="p-4 sm:p-5 mb-5">
-      <p className="font-semibold text-slate-800 text-sm mb-3">Chi phí khác</p>
+      <p className="font-semibold text-slate-800 text-sm mb-3">{title}</p>
       <div className="grid sm:grid-cols-2 gap-3 mb-4">
         <TextField label="Ngày phát sinh" type="date" value={expenseDate} onChange={(e) => setExpenseDate(e.target.value)} />
         <SelectField label="Hình thức" value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
@@ -6027,10 +6027,11 @@ function KetQuaKinhDoanhModule({ data }) {
     const muaNVL = imports.reduce((s, r) => s + r.totalAmount, 0) + byCat("nvl");
 
     const vanHanh = byCat("van_hanh");
+    const tienAnNV = byCat("tien_an_nv");
     const marketing = byCat("marketing");
     const baoTri = byCat("bao_tri_vat_tu");
     const khac = byCat("khac");
-    const chiPhiHoatDong = vanHanh + marketing + baoTri + khac;
+    const chiPhiHoatDong = vanHanh + tienAnNV + marketing + baoTri + khac;
 
     const chuaPhanBo = byCat("chua_phan_bo");
     const dongTien = byCat("dong_tien");
@@ -6048,7 +6049,7 @@ function KetQuaKinhDoanhModule({ data }) {
 
     return {
       doanhThu, tienMat, nganHang, soHoaDon: invoices.length, dtHCB, gvHCB,
-      muaNVL, vanHanh, marketing, baoTri, khac, chiPhiHoatDong,
+      muaNVL, vanHanh, tienAnNV, marketing, baoTri, khac, chiPhiHoatDong,
       chuaPhanBo, dongTien, tamUng, giaVon, laiGop, loiNhuan, chart, soNgay,
       nChuaPhanBo: nCat("chua_phan_bo"),
     };
@@ -6122,6 +6123,7 @@ function KetQuaKinhDoanhModule({ data }) {
 
               <KQKDRow label="CHI PHÍ HOẠT ĐỘNG" value={kq.chiPhiHoatDong} pct={pct(kq.chiPhiHoatDong)} bold top color="text-amber-700" />
               <KQKDRow label="Chi phí vận hành" value={kq.vanHanh} pct={pct(kq.vanHanh)} indent note="Nhân công, điện nước, gas, dịch vụ" />
+              <KQKDRow label="Tiền ăn nhân viên" value={kq.tienAnNV} pct={pct(kq.tienAnNV)} indent note="Phúc lợi nhân sự, không tính vào giá vốn" />
               <KQKDRow label="Chi phí Marketing & bán hàng" value={kq.marketing} pct={pct(kq.marketing)} indent />
               <KQKDRow label="Chi phí bảo trì và vật tư" value={kq.baoTri} pct={pct(kq.baoTri)} indent />
               <KQKDRow label="Chi phí khác" value={kq.khac} pct={pct(kq.khac)} indent />
@@ -6232,6 +6234,7 @@ function ChiPhiModule({ data, currentUser, onSubmitExpense, onSubmitImport, onDe
       {category === "bao_tri_vat_tu" && currentUser?.role !== "bao_cao" && <BaoTriVatTuForm currentUser={currentUser} onSubmit={onSubmitExpense} />}
       {(category === "van_hanh" || category === "marketing") && currentUser?.role !== "bao_cao" && <PresetExpenseForm category={category} onSubmit={onSubmitExpense} />}
       {category === "khac" && currentUser?.role !== "bao_cao" && <OtherExpenseForm onSubmit={onSubmitExpense} />}
+      {category === "tien_an_nv" && currentUser?.role !== "bao_cao" && <OtherExpenseForm onSubmit={onSubmitExpense} category="tien_an_nv" title="Tiền ăn nhân viên" />}
       {category === "chua_phan_bo" && (
         <>
           <div className="mb-4 flex items-start gap-2 text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-xl px-3 py-2">
